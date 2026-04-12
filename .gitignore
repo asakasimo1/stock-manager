@@ -1,0 +1,7 @@
+.env
+.token_cache.json
+data/
+__pycache__/
+*.pyc
+.DS_Store
+trader.log
