@@ -30,11 +30,11 @@ logger = logging.getLogger(__name__)
 # 전략 설정
 # ─────────────────────────────────────────
 CFG = Cfg()
-CFG.volume_mult    = 2.0
-CFG.day_return_min = 0.005
+CFG.volume_mult    = 1.5
+CFG.day_return_min = 0.002
 CFG.stop_loss      = -0.07
-CFG.take_profit    = 0.10
-CFG.hold_days      = 10
+CFG.take_profit    = 0.20
+CFG.hold_days      = 15
 
 # 외국인 순매수 최소 기준 (원)
 FOREIGN_MIN = 5_000_000_000    # 50억
@@ -98,7 +98,7 @@ def get_investor_trading(ticker: str) -> dict:
 # ─────────────────────────────────────────
 # 시그널 1: 기술적 (거래량 + 모멘텀)
 # ─────────────────────────────────────────
-def get_technical_signals(top_n: int = 200) -> list[str]:
+def get_technical_signals(top_n: int = 300) -> list[str]:
     """전일 기준 거래량 급증 + 모멘텀 종목 코드 리스트"""
     kospi = fdr.StockListing("KOSPI")
     kospi = kospi[kospi["Marcap"] > 0].sort_values("Marcap", ascending=False).head(top_n)

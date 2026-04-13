@@ -11,11 +11,11 @@ load_dotenv()
 STRATEGY_PRESETS = {
     "optimized": {
         "desc":             "최적 전략 (백테스트 최우선, +96% / 낙폭 -27.5%)",
-        "volume_mult":      2.2,
-        "day_return_min":   0.005,
+        "volume_mult":      1.5,
+        "day_return_min":   0.002,
         "stop_loss":        -0.04,
-        "take_profit":      0.12,
-        "hold_days":        7,
+        "take_profit":      0.20,
+        "hold_days":        15,
         "max_positions":    5,
         "max_order_amount": 2_000_000,
         "max_daily_loss":   300_000,
