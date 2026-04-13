@@ -73,6 +73,16 @@ def load_strategy(name: str) -> tuple[Cfg, dict]:
         preset = STRATEGY_PRESETS["optimized"]
         name   = "optimized"
 
+    # 환경변수로 주문 금액·손실 한도 오버라이드 가능
+    # GitHub Secrets에서 MAX_ORDER_AMOUNT=100000 처럼 설정
+    preset = dict(preset)  # 원본 보호
+    env_order = os.getenv("MAX_ORDER_AMOUNT")
+    env_loss  = os.getenv("MAX_DAILY_LOSS")
+    if env_order:
+        preset["max_order_amount"] = int(env_order)
+    if env_loss:
+        preset["max_daily_loss"] = int(env_loss)
+
     cfg = Cfg()
     cfg.volume_mult    = preset["volume_mult"]
     cfg.day_return_min = preset["day_return_min"]
