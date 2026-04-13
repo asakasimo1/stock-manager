@@ -7,13 +7,20 @@ trading_meta: daily_pnl, initial_cash, bot_active
 """
 
 import os
-from datetime import date
+from datetime import date, datetime, timezone, timedelta
 from dotenv import load_dotenv
 from supabase import create_client, Client
 
 load_dotenv()
 
 _client: Client = None
+
+KST = timezone(timedelta(hours=9))
+
+
+def _today_kst() -> str:
+    """KST 기준 오늘 날짜 (YYYY-MM-DD)"""
+    return datetime.now(KST).strftime("%Y-%m-%d")
 
 
 def get_client() -> Client:
@@ -67,7 +74,7 @@ def delete_position(ticker: str):
 # ─────────────────────────────────────────
 def get_watchlist() -> list:
     """오늘 날짜 매수 후보 반환"""
-    today = str(date.today())
+    today = _today_kst()
     rows = (get_client().table("watchlist")
             .select("*").eq("signal_date", today).execute().data)
     return [{"ticker":     r["ticker"],
@@ -78,7 +85,7 @@ def get_watchlist() -> list:
 
 def set_watchlist(candidates: list):
     """오늘 watchlist 교체"""
-    today = str(date.today())
+    today = _today_kst()
     get_client().table("watchlist").delete().eq("signal_date", today).execute()
     if candidates:
         rows = [{"ticker":     c["ticker"],
@@ -147,7 +154,7 @@ def delete_factor_position(ticker: str):
 # 팩터 월간 선정 종목
 # ─────────────────────────────────────────
 def set_factor_watchlist(candidates: list):
-    today = str(date.today())
+    today = _today_kst()
     get_client().table("factor_watchlist").delete().eq("rebalance_date", today).execute()
     if candidates:
         rows = [{
