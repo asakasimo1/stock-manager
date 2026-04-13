@@ -12,7 +12,7 @@ STRATEGY_PRESETS = {
     "optimized": {
         "desc":             "최적 전략 (백테스트 최우선, +96% / 낙폭 -27.5%)",
         "volume_mult":      1.5,
-        "day_return_min":   0.002,
+        "day_return_min":   0.005,
         "stop_loss":        -0.04,
         "take_profit":      0.20,
         "hold_days":        15,

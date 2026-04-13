@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 # ─────────────────────────────────────────
 CFG = Cfg()
 CFG.volume_mult    = 1.5
-CFG.day_return_min = 0.002
+CFG.day_return_min = 0.005
 CFG.stop_loss      = -0.07
 CFG.take_profit    = 0.20
 CFG.hold_days      = 15
