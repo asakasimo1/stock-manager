@@ -1,0 +1,101 @@
+name: 자동매매 봇
+
+on:
+  schedule:
+    # 모든 시간은 UTC 기준 (KST = UTC+9)
+    - cron: '50 23 * * 0-4'   # 08:50 KST — 신호 생성 (일~목 UTC = 월~금 KST)
+    - cron: '5 0 * * 1-5'     # 09:05 KST — 매수
+    - cron: '*/10 0-6 * * 1-5' # 09:00~15:50 KST 매 10분 — 모니터링
+    - cron: '20 6 * * 1-5'    # 15:20 KST — 마감 청산
+    - cron: '35 6 * * 1-5'    # 15:35 KST — 일간 리포트
+  workflow_dispatch:           # 수동 실행 (테스트용)
+    inputs:
+      job:
+        description: '실행할 job (signals/buy/monitor/close/report)'
+        required: true
+        default: 'monitor'
+
+env:
+  KIS_APP_KEY:    ${{ secrets.KIS_APP_KEY }}
+  KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET }}
+  KIS_ACCOUNT_NO: ${{ secrets.KIS_ACCOUNT_NO }}
+  PAPER_TRADE:    ${{ secrets.PAPER_TRADE }}
+  STRATEGY:       ${{ secrets.STRATEGY }}
+  SUPABASE_URL:   ${{ secrets.SUPABASE_URL }}
+  SUPABASE_KEY:   ${{ secrets.SUPABASE_KEY }}
+
+jobs:
+  # ── 08:50 신호 생성 ──────────────────────────
+  signals:
+    if: github.event.schedule == '50 23 * * 0-4' || (github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'signals')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ hashFiles('requirements.txt') }}
+      - run: pip install -r requirements.txt finance-datareader supabase
+      - run: python job_signals.py
+
+  # ── 09:05 매수 ───────────────────────────────
+  buy:
+    if: github.event.schedule == '5 0 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'buy')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ hashFiles('requirements.txt') }}
+      - run: pip install -r requirements.txt finance-datareader supabase apscheduler
+      - run: python job_buy.py
+
+  # ── 매 10분 모니터링 ─────────────────────────
+  monitor:
+    if: github.event.schedule == '*/10 0-6 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'monitor')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ hashFiles('requirements.txt') }}
+      - run: pip install -r requirements.txt supabase apscheduler
+      - run: python job_monitor.py
+
+  # ── 15:20 마감 청산 ──────────────────────────
+  close:
+    if: github.event.schedule == '20 6 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'close')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ hashFiles('requirements.txt') }}
+      - run: pip install -r requirements.txt supabase apscheduler
+      - run: python job_close.py
+
+  # ── 15:35 일간 리포트 ────────────────────────
+  report:
+    if: github.event.schedule == '35 6 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'report')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ hashFiles('requirements.txt') }}
+      - run: pip install -r requirements.txt supabase apscheduler
+      - run: python job_report.py
