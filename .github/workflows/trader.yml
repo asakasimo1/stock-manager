@@ -8,25 +8,28 @@ on:
     - cron: '*/10 0-6 * * 1-5' # 09:00~15:50 KST 매 10분 — 모니터링
     - cron: '20 6 * * 1-5'    # 15:20 KST — 마감 청산
     - cron: '35 6 * * 1-5'    # 15:35 KST — 일간 리포트
+    - cron: '10 0 1-7 * 1'    # 매월 첫 번째 월요일 09:10 KST — 팩터 리밸런싱
   workflow_dispatch:           # 수동 실행 (테스트용)
     inputs:
       job:
-        description: '실행할 job (signals/buy/monitor/close/report)'
+        description: '실행할 job (signals/buy/monitor/close/report/factor_rebalance)'
         required: true
         default: 'monitor'
 
 env:
-  KIS_APP_KEY:       ${{ secrets.KIS_APP_KEY }}
-  KIS_APP_SECRET:    ${{ secrets.KIS_APP_SECRET }}
-  KIS_ACCOUNT_NO:    ${{ secrets.KIS_ACCOUNT_NO }}
-  PAPER_TRADE:       ${{ secrets.PAPER_TRADE }}
-  STRATEGY:          ${{ secrets.STRATEGY }}
-  SUPABASE_URL:      ${{ secrets.SUPABASE_URL }}
-  SUPABASE_KEY:      ${{ secrets.SUPABASE_KEY }}
-  MAX_ORDER_AMOUNT:     ${{ secrets.MAX_ORDER_AMOUNT }}
-  MAX_DAILY_LOSS:       ${{ secrets.MAX_DAILY_LOSS }}
-  TELEGRAM_BOT_TOKEN:   ${{ secrets.TELEGRAM_BOT_TOKEN }}
-  TELEGRAM_CHAT_ID:     ${{ secrets.TELEGRAM_CHAT_ID }}
+  KIS_APP_KEY:           ${{ secrets.KIS_APP_KEY }}
+  KIS_APP_SECRET:        ${{ secrets.KIS_APP_SECRET }}
+  KIS_ACCOUNT_NO:        ${{ secrets.KIS_ACCOUNT_NO }}
+  PAPER_TRADE:           ${{ secrets.PAPER_TRADE }}
+  STRATEGY:              ${{ secrets.STRATEGY }}
+  SUPABASE_URL:          ${{ secrets.SUPABASE_URL }}
+  SUPABASE_KEY:          ${{ secrets.SUPABASE_KEY }}
+  MAX_ORDER_AMOUNT:      ${{ secrets.MAX_ORDER_AMOUNT }}
+  MAX_DAILY_LOSS:        ${{ secrets.MAX_DAILY_LOSS }}
+  TELEGRAM_BOT_TOKEN:    ${{ secrets.TELEGRAM_BOT_TOKEN }}
+  TELEGRAM_CHAT_ID:      ${{ secrets.TELEGRAM_CHAT_ID }}
+  MAX_FACTOR_POSITIONS:  ${{ secrets.MAX_FACTOR_POSITIONS }}
+  FACTOR_ORDER_AMOUNT:   ${{ secrets.FACTOR_ORDER_AMOUNT }}
 
 jobs:
   # ── 08:50 신호 생성 ──────────────────────────
@@ -103,3 +106,18 @@ jobs:
           key: pip-${{ hashFiles('requirements.txt') }}
       - run: pip install -r requirements.txt supabase apscheduler
       - run: python job_report.py
+
+  # ── 매월 첫 번째 월요일 09:10 팩터 리밸런싱 ──
+  factor_rebalance:
+    if: github.event.schedule == '10 0 1-7 * 1' || (github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'factor_rebalance')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ hashFiles('requirements.txt') }}
+      - run: pip install -r requirements.txt supabase pykrx
+      - run: python job_factor_rebalance.py

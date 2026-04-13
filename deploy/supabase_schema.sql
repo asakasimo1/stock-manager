@@ -37,3 +37,40 @@ create table if not exists trading_meta (
 alter table positions    disable row level security;
 alter table watchlist    disable row level security;
 alter table trading_meta disable row level security;
+
+
+-- =============================================
+-- 멀티팩터 장기 포트폴리오 테이블
+-- =============================================
+
+-- 팩터 포지션 (월 리밸런싱 장기 보유)
+create table if not exists factor_positions (
+  ticker         text primary key,
+  name           text not null default '',
+  buy_price      numeric not null,
+  qty            integer not null,
+  buy_date       date not null,
+  score          numeric,          -- 편입 당시 팩터 점수
+  pbr            numeric,
+  per            numeric,
+  roe            numeric,
+  momentum_12m   numeric,
+  created_at     timestamptz default now()
+);
+
+-- 팩터 월간 선정 종목 (리밸런싱 후보)
+create table if not exists factor_watchlist (
+  id             bigint generated always as identity primary key,
+  ticker         text not null,
+  name           text not null default '',
+  score          numeric,
+  pbr            numeric,
+  per            numeric,
+  roe            numeric,
+  momentum_12m   numeric,
+  rebalance_date date not null default current_date,
+  created_at     timestamptz default now()
+);
+
+alter table factor_positions  disable row level security;
+alter table factor_watchlist  disable row level security;

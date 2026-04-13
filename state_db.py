@@ -101,3 +101,63 @@ def set_meta(key: str, value):
     get_client().table("trading_meta").upsert(
         {"key": key, "value": value}
     ).execute()
+
+
+# ─────────────────────────────────────────
+# 팩터 포지션 (월간 리밸런싱 장기 보유)
+# ─────────────────────────────────────────
+def get_factor_positions() -> dict:
+    rows = get_client().table("factor_positions").select("*").execute().data
+    result = {}
+    for r in rows:
+        result[r["ticker"]] = {
+            "name":         r["name"],
+            "buy_price":    float(r["buy_price"]),
+            "qty":          int(r["qty"]),
+            "buy_date":     date.fromisoformat(r["buy_date"]),
+            "score":        float(r.get("score") or 0),
+            "pbr":          float(r.get("pbr") or 0),
+            "per":          float(r.get("per") or 0),
+            "roe":          float(r.get("roe") or 0),
+            "momentum_12m": float(r.get("momentum_12m") or 0),
+        }
+    return result
+
+
+def upsert_factor_position(ticker: str, pos: dict):
+    get_client().table("factor_positions").upsert({
+        "ticker":         ticker,
+        "name":           pos.get("name", ""),
+        "buy_price":      pos["buy_price"],
+        "qty":            pos["qty"],
+        "buy_date":       str(pos["buy_date"]),
+        "score":          pos.get("score"),
+        "pbr":            pos.get("pbr"),
+        "per":            pos.get("per"),
+        "roe":            pos.get("roe"),
+        "momentum_12m":   pos.get("momentum_12m"),
+    }).execute()
+
+
+def delete_factor_position(ticker: str):
+    get_client().table("factor_positions").delete().eq("ticker", ticker).execute()
+
+
+# ─────────────────────────────────────────
+# 팩터 월간 선정 종목
+# ─────────────────────────────────────────
+def set_factor_watchlist(candidates: list):
+    today = str(date.today())
+    get_client().table("factor_watchlist").delete().eq("rebalance_date", today).execute()
+    if candidates:
+        rows = [{
+            "ticker":         c["ticker"],
+            "name":           c.get("name", ""),
+            "score":          float(c.get("score", 0)),
+            "pbr":            float(c.get("pbr", 0)),
+            "per":            float(c.get("per", 0)),
+            "roe":            float(c.get("roe", 0)),
+            "momentum_12m":   float(c.get("momentum_12m", 0)),
+            "rebalance_date": today,
+        } for c in candidates]
+        get_client().table("factor_watchlist").insert(rows).execute()
