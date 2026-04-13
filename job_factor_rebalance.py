@@ -26,8 +26,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger(__name__)
 
 # ── 설정 ─────────────────────────────────────
-MAX_FACTOR_POSITIONS = int(os.getenv("MAX_FACTOR_POSITIONS", "10"))   # 최대 보유 종목
-FACTOR_ORDER_AMOUNT  = int(os.getenv("FACTOR_ORDER_AMOUNT",  "0"))    # 0이면 균등 분배
+MAX_FACTOR_POSITIONS = int(os.getenv("MAX_FACTOR_POSITIONS") or "10")   # 최대 보유 종목
+FACTOR_ORDER_AMOUNT  = int(os.getenv("FACTOR_ORDER_AMOUNT")  or "0")    # 0이면 균등 분배
 
 
 def main():
