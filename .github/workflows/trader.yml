@@ -30,6 +30,8 @@ env:
   TELEGRAM_CHAT_ID:      ${{ secrets.TELEGRAM_CHAT_ID }}
   MAX_FACTOR_POSITIONS:  ${{ secrets.MAX_FACTOR_POSITIONS }}
   FACTOR_ORDER_AMOUNT:   ${{ secrets.FACTOR_ORDER_AMOUNT }}
+  GIST_ID:               ${{ secrets.GIST_ID }}
+  GH_TOKEN:              ${{ secrets.GH_TOKEN }}
 
 jobs:
   # ── 08:50 신호 생성 ──────────────────────────

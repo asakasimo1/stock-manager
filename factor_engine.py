@@ -42,19 +42,47 @@ def _trading_day(offset_days: int = 0) -> str:
 
 
 def get_kospi200_tickers() -> list[str]:
-    """KOSPI 200 구성 종목 티커 목록"""
-    today = _trading_day()
-    try:
-        tickers = stock.get_index_portfolio_deposit_file("1028", today)
-        return tickers
-    except Exception as e:
-        logger.warning("KOSPI200 조회 실패, 전체 KOSPI 사용: %s", e)
-        return stock.get_market_ticker_list(today, market="KOSPI")
+    """KOSPI 200 구성 종목 티커 목록 (당일 데이터 없으면 전일 사용)"""
+    for offset in (0, 1, 2):
+        date_str = _trading_day(offset)
+        try:
+            tickers = stock.get_index_portfolio_deposit_file("1028", date_str)
+            if tickers:
+                return tickers
+        except Exception as e:
+            logger.warning("KOSPI200 조회 실패 (%s): %s", date_str, e)
+
+    # 모두 실패 시 전체 KOSPI로 폴백
+    logger.warning("KOSPI200 구성 조회 실패 — 전체 KOSPI 사용")
+    for offset in (0, 1, 2):
+        try:
+            return stock.get_market_ticker_list(_trading_day(offset), market="KOSPI")
+        except Exception:
+            pass
+    return []
 
 
 def fetch_fundamentals(date_str: str) -> pd.DataFrame:
-    """pykrx로 PER·PBR·EPS·BPS 수집"""
-    df = stock.get_market_fundamental_by_ticker(date_str, market="KOSPI")
+    """pykrx로 PER·PBR·EPS·BPS 수집.
+    당일 장중에는 데이터가 없으므로 빈 DataFrame 시 전일로 재시도."""
+    REQUIRED_COLS = {"BPS", "PER", "PBR", "EPS"}
+    df = pd.DataFrame()
+
+    for d_str in (date_str, _trading_day(1), _trading_day(2)):
+        try:
+            raw = stock.get_market_fundamental_by_ticker(d_str, market="KOSPI")
+            if not raw.empty and REQUIRED_COLS.issubset(set(raw.columns)):
+                df = raw
+                if d_str != date_str:
+                    logger.info("펀더멘털 데이터: %s → %s로 폴백", date_str, d_str)
+                break
+        except Exception as e:
+            logger.warning("펀더멘털 조회 실패 (%s): %s", d_str, e)
+
+    if df.empty:
+        logger.error("펀더멘털 데이터 수집 불가 — 빈 DataFrame 반환")
+        return pd.DataFrame(columns=["ticker", "BPS", "PER", "PBR", "EPS", "DIV", "DPS", "ROE"])
+
     # columns: BPS, PER, PBR, EPS, DIV, DPS
     df.index.name = "ticker"
     df = df.reset_index()

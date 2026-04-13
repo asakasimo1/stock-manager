@@ -9,6 +9,7 @@ from strategy import load_strategy
 import kis_api
 import state_db
 import notify
+import gist_writer
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -58,6 +59,13 @@ def main():
             daily_pnl += pnl
             state_db.delete_position(ticker)
             state_db.set_meta("daily_pnl", daily_pnl)
+
+            gist_writer.log_trade(
+                ticker=ticker, name=pos.get("name", ""),
+                trade_type="sell", price=cur_price, qty=pos["qty"],
+                pnl=pnl, pnl_pct=pnl_pct, reason=reason,
+                order_no=result["order_no"],
+            )
 
             emoji = "🔴" if reason == "손절" else "💰"
             notify.send(

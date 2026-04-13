@@ -10,6 +10,7 @@ from strategy import load_strategy
 import kis_api
 import state_db
 import notify
+import gist_writer
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -91,6 +92,12 @@ def main():
             amount = qty * cur_price
             logger.info("매수 주문  %s(%s)  %d주  약 %d원  주문번호: %s",
                         ticker, sig.get("name",""), qty, amount, result["order_no"])
+
+            gist_writer.log_trade(
+                ticker=ticker, name=sig.get("name", ""),
+                trade_type="buy", price=cur_price, qty=qty,
+                order_no=result["order_no"],
+            )
 
             notify.send(
                 f"🟢 <b>매수</b>  {sig.get('name','')} ({ticker})\n"
