@@ -6,10 +6,10 @@ Supabase watchlist를 읽어 매수 주문 후 positions에 저장
 import os, time, logging
 from datetime import date
 from dotenv import load_dotenv
-from backtest import Cfg
 from strategy import load_strategy
 import kis_api
 import state_db
+import notify
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -34,10 +34,11 @@ def main():
     if daily_pnl <= -MAX_DAILY_LOSS:
         logger.warning("당일 손실 한도 초과 (%d원) — 매수 중단", daily_pnl)
         state_db.set_meta("bot_active", False)
+        notify.send(f"⛔ 당일 손실 한도 초과 ({daily_pnl:+,}원) — 봇 중단")
         return
 
-    watchlist  = state_db.get_watchlist()
-    positions  = state_db.get_positions()
+    watchlist = state_db.get_watchlist()
+    positions = state_db.get_positions()
 
     if not watchlist:
         logger.info("매수 후보 없음")
@@ -47,7 +48,6 @@ def main():
     if not state_db.get_meta("initial_cash"):
         bal = kis_api.get_balance()
         state_db.set_meta("initial_cash", bal["total_eval"])
-        # 기존 보유 종목 동기화
         for h in bal["holdings"]:
             if h["ticker"] not in positions:
                 pos = {
@@ -68,8 +68,7 @@ def main():
 
     slots = MAX_POSITIONS - len(positions)
     if slots <= 0:
-        logger.info("보유 종목 꽉 참 (%d/%d) — 매수 건너뜀",
-                    len(positions), MAX_POSITIONS)
+        logger.info("보유 종목 꽉 참 (%d/%d) — 매수 건너뜀", len(positions), MAX_POSITIONS)
         return
 
     for sig in watchlist[:slots]:
@@ -85,12 +84,20 @@ def main():
             alloc = min(cash // slots, MAX_ORDER_AMOUNT)
             qty   = int(alloc / cur_price)
             if qty <= 0:
-                logger.warning("%s 수량 0 — 건너뜀 (가격: %d)", ticker, cur_price)
+                logger.warning("%s 수량 0 — 건너뜀 (가격: %d원)", ticker, cur_price)
                 continue
 
             result = kis_api.place_order(ticker, "BUY", qty)
+            amount = qty * cur_price
             logger.info("매수 주문  %s(%s)  %d주  약 %d원  주문번호: %s",
-                        ticker, sig.get("name",""), qty, qty * cur_price, result["order_no"])
+                        ticker, sig.get("name",""), qty, amount, result["order_no"])
+
+            notify.send(
+                f"🟢 <b>매수</b>  {sig.get('name','')} ({ticker})\n"
+                f"  {qty}주 × {cur_price:,}원 = <b>{amount:,}원</b>\n"
+                f"  손절 {CFG.stop_loss*100:.0f}%  익절 +{CFG.take_profit*100:.0f}%\n"
+                f"  주문번호: {result['order_no']}"
+            )
 
             pos = {
                 "buy_price": cur_price,
@@ -101,11 +108,12 @@ def main():
                 "name":      sig.get("name", ""),
             }
             state_db.upsert_position(ticker, pos)
-            cash -= qty * cur_price
+            cash -= amount
             time.sleep(0.3)
 
         except Exception as e:
             logger.error("%s 매수 실패: %s", ticker, e)
+            notify.send(f"❌ 매수 실패: {ticker} — {e}")
 
 
 if __name__ == "__main__":

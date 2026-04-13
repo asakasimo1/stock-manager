@@ -8,6 +8,7 @@ from datetime import date
 from dotenv import load_dotenv
 import kis_api
 import state_db
+import notify
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -28,13 +29,25 @@ def main():
 
         logger.info("당일 실현 손익 : %+d원", daily_pnl)
         logger.info("총 자산        : %d원  (당일 수익률 %+.2f%%)", total, day_ret)
-        logger.info("보유 종목 수   : %d", len(bal["holdings"]))
+
+        # 텔레그램 리포트
+        emoji  = "📈" if daily_pnl >= 0 else "📉"
+        msg    = (
+            f"{emoji} <b>일간 리포트 — {date.today()}</b>\n"
+            f"  당일 손익: <b>{daily_pnl:+,}원</b>\n"
+            f"  총 자산:   {total:,}원  ({day_ret:+.2f}%)\n"
+            f"  보유 종목: {len(bal['holdings'])}개"
+        )
         for h in bal["holdings"]:
+            msg += f"\n  • {h['name']} {h['qty']}주  {h['pnl_pct']:+.2f}%"
             logger.info("  %s %s  %d주  손익 %+.2f%%",
                         h["ticker"], h["name"], h["qty"], h["pnl_pct"])
 
+        notify.send(msg)
+
     except Exception as e:
         logger.exception("리포트 오류: %s", e)
+        notify.send(f"❌ 리포트 오류: {e}")
 
     # 다음날 준비
     state_db.set_meta("daily_pnl", 0)

@@ -23,8 +23,10 @@ env:
   STRATEGY:          ${{ secrets.STRATEGY }}
   SUPABASE_URL:      ${{ secrets.SUPABASE_URL }}
   SUPABASE_KEY:      ${{ secrets.SUPABASE_KEY }}
-  MAX_ORDER_AMOUNT:  ${{ secrets.MAX_ORDER_AMOUNT }}
-  MAX_DAILY_LOSS:    ${{ secrets.MAX_DAILY_LOSS }}
+  MAX_ORDER_AMOUNT:     ${{ secrets.MAX_ORDER_AMOUNT }}
+  MAX_DAILY_LOSS:       ${{ secrets.MAX_DAILY_LOSS }}
+  TELEGRAM_BOT_TOKEN:   ${{ secrets.TELEGRAM_BOT_TOKEN }}
+  TELEGRAM_CHAT_ID:     ${{ secrets.TELEGRAM_CHAT_ID }}
 
 jobs:
   # ── 08:50 신호 생성 ──────────────────────────
