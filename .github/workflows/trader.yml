@@ -17,6 +17,7 @@ on:
         default: 'monitor'
 
 env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   KIS_APP_KEY:           ${{ secrets.KIS_APP_KEY }}
   KIS_APP_SECRET:        ${{ secrets.KIS_APP_SECRET }}
   KIS_ACCOUNT_NO:        ${{ secrets.KIS_ACCOUNT_NO }}
