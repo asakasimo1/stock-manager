@@ -6,7 +6,7 @@ Job 4 — 15:20 마감 청산
 import os, time, logging
 from datetime import date
 from dotenv import load_dotenv
-from trader import load_strategy
+from strategy import load_strategy
 import kis_api
 import state_db
 

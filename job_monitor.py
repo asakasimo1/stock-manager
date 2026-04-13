@@ -5,7 +5,7 @@ Job 3 — 09:00~15:59 매 10분 모니터링
 
 import os, time, logging
 from dotenv import load_dotenv
-from trader import load_strategy
+from strategy import load_strategy
 import kis_api
 import state_db
 

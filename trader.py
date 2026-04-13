@@ -31,7 +31,7 @@ from dotenv import load_dotenv
 from apscheduler.schedulers.blocking import BlockingScheduler
 
 import kis_api
-from backtest import Cfg
+from strategy import load_strategy, STRATEGY_PRESETS
 from signals import get_double_signals
 
 load_dotenv()
@@ -47,83 +47,7 @@ logger = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────
-# 전략 프리셋
-# ─────────────────────────────────────────
-STRATEGY_PRESETS = {
-    "optimized": {
-        "desc":            "최적 전략 (백테스트 최우선, +96% / 낙폭 -27.5%)",
-        "volume_mult":     2.2,
-        "day_return_min":  0.005,
-        "stop_loss":       -0.04,
-        "take_profit":     0.12,
-        "hold_days":       7,
-        "max_positions":   5,
-        "max_order_amount": 2_000_000,
-        "max_daily_loss":   300_000,
-    },
-    "war_risk": {
-        "desc":            "전쟁/지정학 리스크 장기화 — 빠른 손절·단기 보유",
-        "volume_mult":     2.5,
-        "day_return_min":  0.01,
-        "stop_loss":       -0.03,
-        "take_profit":     0.08,
-        "hold_days":       4,
-        "max_positions":   3,
-        "max_order_amount": 1_000_000,
-        "max_daily_loss":   150_000,
-    },
-    "hold": {
-        "desc":            "버티기 — 전쟁 종전·반등 기대, 익절폭 크게·장기 보유",
-        "volume_mult":     2.0,
-        "day_return_min":  0.005,
-        "stop_loss":       -0.07,
-        "take_profit":     0.20,
-        "hold_days":       20,
-        "max_positions":   5,
-        "max_order_amount": 2_000_000,
-        "max_daily_loss":   400_000,
-    },
-    "defensive": {
-        "desc":            "방어형 — 강한 신호만 진입, 손실 최소화",
-        "volume_mult":     3.0,
-        "day_return_min":  0.01,
-        "stop_loss":       -0.03,
-        "take_profit":     0.08,
-        "hold_days":       5,
-        "max_positions":   2,
-        "max_order_amount": 1_000_000,
-        "max_daily_loss":   100_000,
-    },
-    "aggressive": {
-        "desc":            "공격형 — 손절 여유, 장기 익절 추구",
-        "volume_mult":     2.0,
-        "day_return_min":  0.005,
-        "stop_loss":       -0.07,
-        "take_profit":     0.15,
-        "hold_days":       15,
-        "max_positions":   5,
-        "max_order_amount": 2_000_000,
-        "max_daily_loss":   500_000,
-    },
-}
-
-
-def load_strategy(name: str) -> tuple[Cfg, dict]:
-    """전략 이름으로 CFG + 안전장치 설정 반환"""
-    preset = STRATEGY_PRESETS.get(name)
-    if preset is None:
-        logger.warning("알 수 없는 전략 '%s' → 'optimized' 사용", name)
-        preset = STRATEGY_PRESETS["optimized"]
-        name = "optimized"
-
-    cfg = Cfg()
-    cfg.volume_mult    = preset["volume_mult"]
-    cfg.day_return_min = preset["day_return_min"]
-    cfg.stop_loss      = preset["stop_loss"]
-    cfg.take_profit    = preset["take_profit"]
-    cfg.hold_days      = preset["hold_days"]
-    cfg.max_positions  = preset["max_positions"]
-    return cfg, preset
+# 전략 프리셋 (strategy.py 에서 import)
 
 
 # ─────────────────────────────────────────
@@ -415,7 +339,7 @@ def main():
 
     logger.info("스케줄 등록 완료:")
     for job in scheduler.get_jobs():
-        logger.info("  %s  →  %s", job.id, job.next_run_time)
+        logger.info("  %s", job.id)
 
     try:
         scheduler.start()

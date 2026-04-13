@@ -7,7 +7,7 @@ import os, time, logging
 from datetime import date
 from dotenv import load_dotenv
 from backtest import Cfg
-from trader import load_strategy
+from strategy import load_strategy
 import kis_api
 import state_db
 
