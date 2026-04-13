@@ -16,13 +16,15 @@ on:
         default: 'monitor'
 
 env:
-  KIS_APP_KEY:    ${{ secrets.KIS_APP_KEY }}
-  KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET }}
-  KIS_ACCOUNT_NO: ${{ secrets.KIS_ACCOUNT_NO }}
-  PAPER_TRADE:    ${{ secrets.PAPER_TRADE }}
-  STRATEGY:       ${{ secrets.STRATEGY }}
-  SUPABASE_URL:   ${{ secrets.SUPABASE_URL }}
-  SUPABASE_KEY:   ${{ secrets.SUPABASE_KEY }}
+  KIS_APP_KEY:       ${{ secrets.KIS_APP_KEY }}
+  KIS_APP_SECRET:    ${{ secrets.KIS_APP_SECRET }}
+  KIS_ACCOUNT_NO:    ${{ secrets.KIS_ACCOUNT_NO }}
+  PAPER_TRADE:       ${{ secrets.PAPER_TRADE }}
+  STRATEGY:          ${{ secrets.STRATEGY }}
+  SUPABASE_URL:      ${{ secrets.SUPABASE_URL }}
+  SUPABASE_KEY:      ${{ secrets.SUPABASE_KEY }}
+  MAX_ORDER_AMOUNT:  ${{ secrets.MAX_ORDER_AMOUNT }}
+  MAX_DAILY_LOSS:    ${{ secrets.MAX_DAILY_LOSS }}
 
 jobs:
   # ── 08:50 신호 생성 ──────────────────────────
