@@ -4,11 +4,12 @@ Job 5 — 15:35 일간 리포트
 """
 
 import logging
-from datetime import date
+from datetime import date, datetime, timezone, timedelta
 from dotenv import load_dotenv
 import kis_api
 import state_db
 import notify
+import gist_writer
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -44,6 +45,31 @@ def main():
                         h["ticker"], h["name"], h["qty"], h["pnl_pct"])
 
         notify.send(msg)
+
+        # Gist에 계좌 잔액 저장 (stock_analyzer 대시보드용)
+        now_kst = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d %H:%M")
+        account_data = {
+            "updated_at":  now_kst,
+            "cash":        bal["cash"],
+            "total_eval":  bal["total_eval"],
+            "day_pnl":     daily_pnl,
+            "day_ret":     round(day_ret, 2),
+            "holdings": [
+                {
+                    "ticker":     h["ticker"],
+                    "name":       h["name"],
+                    "qty":        h["qty"],
+                    "avg_price":  h["avg_price"],
+                    "eval_price": h["eval_price"],
+                    "pnl_pct":    round(h["pnl_pct"], 2),
+                    "eval_amt":   h["eval_price"] * h["qty"],
+                    "buy_amt":    h["avg_price"] * h["qty"],
+                }
+                for h in bal["holdings"]
+            ],
+        }
+        gist_writer._write_gist({"account_balance.json": account_data})
+        logger.info("계좌 잔액 Gist 저장 완료")
 
     except Exception as e:
         logger.exception("리포트 오류: %s", e)
