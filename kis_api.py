@@ -160,7 +160,7 @@ def get_balance() -> dict:
       holdings       [{ticker, name, qty, avg_price, eval_price, pnl_pct}]
     """
     cano, acnt = _account_parts()
-    tr_id = "VTTC8908R" if PAPER else "TTTC8908R"
+    tr_id = "VTTC8434R" if PAPER else "TTTC8434R"
 
     resp = requests.get(
         f"{BASE_URL}/uapi/domestic-stock/v1/trading/inquire-balance",
@@ -175,6 +175,13 @@ def get_balance() -> dict:
             "FUND_STTL_ICLD_YN":     "N",
             "FNCG_AMT_AUTO_RDPT_YN": "N",
             "PRCS_DVSN":             "00",
+            "PDNO":                  "",
+            "ORD_UNPR":              "0",
+            "ORD_DVSN":              "00",
+            "RVSE_CNCL_DVSN_CD":     "",
+            "ORD_QTY":               "0",
+            "CMA_EVLU_AMT_ICLD_YN":  "N",
+            "OVRS_ICLD_YN":          "N",
             "CTX_AREA_FK100":        "",
             "CTX_AREA_NK100":        "",
         },
