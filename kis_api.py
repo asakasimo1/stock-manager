@@ -209,7 +209,7 @@ def get_balance() -> dict:
             "ticker":    item.get("pdno"),
             "name":      item.get("prdt_name"),
             "qty":       qty,
-            "avg_price": int(item.get("pchs_avg_pric", 0)),
+            "avg_price": int(float(item.get("pchs_avg_pric", 0))),
             "eval_price":int(item.get("prpr", 0)),
             "pnl_pct":   float(item.get("evlu_pfls_rt", 0)),
         })
