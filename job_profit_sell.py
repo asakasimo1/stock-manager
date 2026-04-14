@@ -111,6 +111,16 @@ def run(ticker: str, qty: int, buy_price: int,
                             close_hour, close_min)
                 break
 
+            # 실제 보유 수량 확인 (다른 경로로 이미 매도됐으면 종료)
+            actual = get_holding(ticker)
+            if actual is None:
+                logger.warning("⚠️  잔고에 %s 보유 없음 — 이미 매도된 것으로 판단, 종료", ticker)
+                break
+            if actual["qty"] < qty:
+                logger.warning("⚠️  보유 수량 변경 감지 (%d주 → %d주) — 수량 조정",
+                                qty, actual["qty"])
+                qty = actual["qty"]
+
             info = kis_api.get_price(ticker)
             cur_price = int(info["stck_prpr"])
             net_pnl   = calc_net_pnl(buy_price, cur_price, qty)
