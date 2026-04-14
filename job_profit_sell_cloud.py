@@ -8,10 +8,11 @@ from datetime import datetime, timezone, timedelta
 import kis_api
 import gist_writer
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-logger = logging.getLogger(__name__)
-
 KST           = timezone(timedelta(hours=9))
+
+logging.Formatter.converter = lambda *args: datetime.now(KST).timetuple()
+logging.basicConfig(level=logging.INFO, format="%(asctime)s KST %(levelname)s %(message)s")
+logger = logging.getLogger(__name__)
 BUY_FEE_RATE  = 0.00015            # 매수 수수료 0.015%
 SELL_FEE_RATE = 0.00015 + 0.0018   # 매도 수수료 + 증권거래세 0.195%
 

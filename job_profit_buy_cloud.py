@@ -12,16 +12,27 @@ from datetime import datetime, timezone, timedelta
 import kis_api
 import gist_writer
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-logger = logging.getLogger(__name__)
-
 KST = timezone(timedelta(hours=9))
+
+logging.Formatter.converter = lambda *args: datetime.now(KST).timetuple()
+logging.basicConfig(level=logging.INFO, format="%(asctime)s KST %(levelname)s %(message)s")
+logger = logging.getLogger(__name__)
 
 
 def main():
     logger.info("매수 잡 체크 시작")
 
-    jobs = gist_writer._read_gist_file("profit_buy_jobs.json") or []
+    raw = gist_writer._read_gist_file("profit_buy_jobs.json")
+    if raw is None:
+        logger.warning("Gist에서 profit_buy_jobs.json 읽기 실패 (파일 없음 or 토큰 오류)")
+        return
+    jobs = raw if isinstance(raw, list) else []
+    logger.info("Gist에서 총 %d개 잡 로드 (전체 상태 포함)", len(jobs))
+    for j in jobs:
+        logger.info("  · %s(%s) status=%s phase=%s",
+                    j.get("name", "?"), j.get("ticker", "?"),
+                    j.get("status", "?"), j.get("phase", "-"))
+
     active = [j for j in jobs if j.get("status") == "active"]
 
     if not active:
