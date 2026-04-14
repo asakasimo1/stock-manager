@@ -254,7 +254,9 @@ def place_order(ticker: str, side: str, qty: int,
         json=body,
         timeout=10,
     )
-    resp.raise_for_status()
+    if not resp.ok:
+        logger.error("주문 HTTP 오류 %s: %s", resp.status_code, resp.text[:300])
+        resp.raise_for_status()
     data = resp.json()
 
     if data.get("rt_cd") != "0":
