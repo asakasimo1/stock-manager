@@ -6,3 +6,5 @@ python-dotenv>=1.0.0
 tqdm>=4.65.0
 supabase>=2.0.0
 requests>=2.31.0
+finance-datareader>=0.9.50
+apscheduler>=3.10.0

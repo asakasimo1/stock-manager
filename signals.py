@@ -105,10 +105,13 @@ def get_technical_signals(top_n: int = 300) -> list[str]:
     tickers = kospi["Code"].tolist()
     names   = dict(zip(kospi["Code"], kospi["Name"]))
 
+    # vol_lookback=20이므로 여유있게 60일치만 조회 (전체기간 조회 시 timeout 방지)
+    start_date = (datetime.today() - timedelta(days=60)).strftime("%Y-%m-%d")
+
     frames = []
     for code in tickers:
         try:
-            df = fdr.DataReader(code, periods=30)
+            df = fdr.DataReader(code, start=start_date)
             if df is None or df.empty:
                 continue
             df = df.reset_index().rename(columns={

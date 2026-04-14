@@ -51,7 +51,7 @@ jobs:
         with:
           path: ~/.cache/pip
           key: pip-${{ hashFiles('requirements.txt') }}
-      - run: pip install -r requirements.txt finance-datareader supabase
+      - run: pip install -r requirements.txt
       - run: python job_signals.py
 
   # ── 09:05 매수 ───────────────────────────────
@@ -66,7 +66,7 @@ jobs:
         with:
           path: ~/.cache/pip
           key: pip-${{ hashFiles('requirements.txt') }}
-      - run: pip install -r requirements.txt finance-datareader supabase apscheduler
+      - run: pip install -r requirements.txt
       - run: python job_buy.py
 
   # ── 매 10분 모니터링 ─────────────────────────
@@ -81,7 +81,7 @@ jobs:
         with:
           path: ~/.cache/pip
           key: pip-${{ hashFiles('requirements.txt') }}
-      - run: pip install -r requirements.txt supabase apscheduler
+      - run: pip install -r requirements.txt
       - run: python job_monitor.py
 
   # ── 15:20 마감 청산 ──────────────────────────
@@ -96,7 +96,7 @@ jobs:
         with:
           path: ~/.cache/pip
           key: pip-${{ hashFiles('requirements.txt') }}
-      - run: pip install -r requirements.txt supabase apscheduler
+      - run: pip install -r requirements.txt
       - run: python job_close.py
 
   # ── 15:35 일간 리포트 ────────────────────────
@@ -111,7 +111,7 @@ jobs:
         with:
           path: ~/.cache/pip
           key: pip-${{ hashFiles('requirements.txt') }}
-      - run: pip install -r requirements.txt supabase apscheduler
+      - run: pip install -r requirements.txt
       - run: python job_report.py
 
   # ── 매월 첫 번째 월요일 09:10 팩터 리밸런싱 ──
@@ -126,7 +126,7 @@ jobs:
         with:
           path: ~/.cache/pip
           key: pip-${{ hashFiles('requirements.txt') }}
-      - run: pip install -r requirements.txt supabase pykrx
+      - run: pip install -r requirements.txt
       - run: python job_factor_rebalance.py
 
   # ── 매 5분 수익매도 체크 (KRX 정규 + NXT 장전/장후) ──────────
