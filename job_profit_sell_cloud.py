@@ -65,16 +65,22 @@ def main():
                 net_pct = (cur_price * (1 - SELL_FEE_RATE) / buy_price - 1) * 100
                 label = f"{net_pct:+.2f}% / 목표 {target_value:+.2f}%"
 
-            logger.info("%s(%s) 현재가 %d원  %s  [목표단가 %d원]",
-                        name, ticker, cur_price, label, target_price)
+            force_sell = job.get("force_sell", False)
+            if force_sell:
+                logger.info("%s(%s) 즉시 매도 요청 감지 — 현재가 %d원", name, ticker, cur_price)
+            else:
+                logger.info("%s(%s) 현재가 %d원  %s  [목표단가 %d원]",
+                            name, ticker, cur_price, label, target_price)
 
-            if cur_price >= target_price:
-                logger.info("★ 목표 달성! 매도 실행 — %s %d주 @ %d원", ticker, qty, cur_price)
+            if force_sell or cur_price >= target_price:
+                reason = "즉시매도(수동)" if force_sell else "목표달성"
+                logger.info("★ %s! 매도 실행 — %s %d주 @ %d원", reason, ticker, qty, cur_price)
                 result = kis_api.place_order(ticker, "SELL", qty, order_type="market")
                 job["status"]      = "done"
                 job["sell_price"]  = cur_price
                 job["executed_at"] = datetime.now(KST).strftime("%Y-%m-%d %H:%M")
                 job["order_no"]    = result.get("order_no", "")
+                job["force_sell"]  = False
                 changed = True
                 logger.info("매도 주문 완료  주문번호: %s", job["order_no"])
 
