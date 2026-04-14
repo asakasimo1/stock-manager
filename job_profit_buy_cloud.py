@@ -24,10 +24,10 @@ def main():
 
     raw = gist_writer._read_gist_file("profit_buy_jobs.json")
     if raw is None:
-        logger.warning("Gist에서 profit_buy_jobs.json 읽기 실패 (파일 없음 or 토큰 오류)")
+        logger.error("Gist 읽기 실패 — GH_TOKEN 권한(gist scope) 또는 GIST_ID 확인 필요")
         return
     jobs = raw if isinstance(raw, list) else []
-    logger.info("Gist에서 총 %d개 잡 로드 (전체 상태 포함)", len(jobs))
+    logger.info("Gist에서 총 %d개 잡 로드", len(jobs))
     for j in jobs:
         logger.info("  · %s(%s) status=%s phase=%s",
                     j.get("name", "?"), j.get("ticker", "?"),

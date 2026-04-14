@@ -73,19 +73,26 @@ def _write_trades(records: list):
 
 
 def _read_gist_file(filename: str):
-    """Gist에서 특정 파일 읽기 → 파싱된 JSON 반환 (실패 시 None)"""
+    """Gist에서 특정 파일 읽기 → 파싱된 JSON 반환
+    - 파일 없음(미생성) → [] 반환
+    - 인증 오류 / 네트워크 오류 → None 반환
+    """
     if not GIST_ID or not GH_TOKEN:
+        print(f"[Gist] GIST_ID 또는 GH_TOKEN 미설정")
         return None
     try:
         r = requests.get(f"https://api.github.com/gists/{GIST_ID}",
                          headers=_headers(), timeout=10)
         if not r.ok:
+            print(f"[Gist] API 오류 {r.status_code}: {r.text[:200]}")
             return None
         files = r.json().get("files", {})
-        if filename in files:
-            return json.loads(files[filename].get("content", "null"))
+        if filename not in files:
+            print(f"[Gist] '{filename}' 파일이 Gist에 없음 — 빈 목록 반환")
+            return []   # 파일 미생성 → 빈 목록 (오류 아님)
+        return json.loads(files[filename].get("content", "[]"))
     except Exception as e:
-        print(f"[Gist] 파일 읽기 실패 ({filename}): {e}")
+        print(f"[Gist] 파일 읽기 예외 ({filename}): {e}")
     return None
 
 
