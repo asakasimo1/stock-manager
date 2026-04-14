@@ -72,6 +72,46 @@ def _write_trades(records: list):
     return False
 
 
+def _read_gist_file(filename: str):
+    """Gist에서 특정 파일 읽기 → 파싱된 JSON 반환 (실패 시 None)"""
+    if not GIST_ID or not GH_TOKEN:
+        return None
+    try:
+        r = requests.get(f"https://api.github.com/gists/{GIST_ID}",
+                         headers=_headers(), timeout=10)
+        if not r.ok:
+            return None
+        files = r.json().get("files", {})
+        if filename in files:
+            return json.loads(files[filename].get("content", "null"))
+    except Exception as e:
+        print(f"[Gist] 파일 읽기 실패 ({filename}): {e}")
+    return None
+
+
+def _write_gist(files_dict: dict) -> bool:
+    """임의 파일을 Gist에 저장. files_dict = {filename: python_object}"""
+    if not GIST_ID or not GH_TOKEN:
+        print("[Gist] GIST_ID 또는 GH_TOKEN 미설정 — 저장 건너뜀")
+        return False
+    try:
+        payload = {
+            "files": {
+                name: {"content": json.dumps(data, ensure_ascii=False, indent=2)}
+                for name, data in files_dict.items()
+            }
+        }
+        r = requests.patch(f"https://api.github.com/gists/{GIST_ID}",
+                           headers=_headers(), json=payload, timeout=15)
+        if r.ok:
+            print(f"[Gist] 저장 완료: {list(files_dict.keys())}")
+            return True
+        print(f"[Gist] 저장 실패 {r.status_code}: {r.text[:200]}")
+    except Exception as e:
+        print(f"[Gist] 저장 예외: {e}")
+    return False
+
+
 def log_trade(
     ticker: str,
     name: str,
