@@ -13,7 +13,7 @@ on:
   workflow_dispatch:           # 수동 실행 (테스트용)
     inputs:
       job:
-        description: '실행할 job (signals/buy/monitor/close/report/factor_rebalance/profit_sell)'
+        description: '실행할 job (signals/buy/monitor/close/report/factor_rebalance/profit_sell/cycle)'
         required: true
         default: 'monitor'
 
@@ -141,3 +141,4 @@ jobs:
       - run: pip install -r requirements.txt
       - run: python job_profit_buy_cloud.py
       - run: python job_profit_sell_cloud.py
+      - run: python job_cycle_cloud.py
