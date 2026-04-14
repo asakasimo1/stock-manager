@@ -4,6 +4,7 @@ Job 3 — 09:00~15:59 매 10분 모니터링
 """
 
 import os, time, logging
+from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 from strategy import load_strategy
 import kis_api
@@ -82,5 +83,43 @@ def main():
             notify.send(f"❌ 매도 실패: {ticker} — {e}")
 
 
+def update_account_balance():
+    """잔고를 Gist에 저장 (stock_analyzer 자동매매 탭 실시간 반영)"""
+    try:
+        bal     = kis_api.get_balance()
+        KST     = timezone(timedelta(hours=9))
+        now_kst = datetime.now(KST).strftime("%Y-%m-%d %H:%M")
+        daily_pnl = state_db.get_meta("daily_pnl", 0) or 0
+        total     = bal["total_eval"]
+        initial   = state_db.get_meta("initial_cash") or total
+        day_ret   = (total - initial) / initial * 100 if initial else 0
+
+        account_data = {
+            "updated_at": now_kst,
+            "cash":       bal["cash"],
+            "total_eval": total,
+            "day_pnl":    daily_pnl,
+            "day_ret":    round(day_ret, 2),
+            "holdings": [
+                {
+                    "ticker":     h["ticker"],
+                    "name":       h["name"],
+                    "qty":        h["qty"],
+                    "avg_price":  h["avg_price"],
+                    "eval_price": h["eval_price"],
+                    "pnl_pct":    round(h["pnl_pct"], 2),
+                    "eval_amt":   h["eval_price"] * h["qty"],
+                    "buy_amt":    h["avg_price"] * h["qty"],
+                }
+                for h in bal["holdings"]
+            ],
+        }
+        gist_writer._write_gist({"account_balance.json": account_data})
+        logger.info("계좌 잔액 Gist 업데이트 완료 (보유 %d종목)", len(bal["holdings"]))
+    except Exception as e:
+        logger.warning("계좌 잔액 업데이트 실패: %s", e)
+
+
 if __name__ == "__main__":
     main()
+    update_account_balance()
