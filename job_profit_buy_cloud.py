@@ -20,7 +20,12 @@ logger = logging.getLogger(__name__)
 
 
 def main():
-    logger.info("매수 잡 체크 시작")
+    if not kis_api.is_any_market_open():
+        logger.info("거래 시간 외 (KRX/NXT 모두 닫힘) — 종료")
+        return
+
+    nxt_mode = kis_api._is_nxt_time()
+    logger.info("매수 잡 체크 시작 [%s]", "NXT 시간대" if nxt_mode else "KRX 정규")
 
     raw = gist_writer._read_gist_file("profit_buy_jobs.json")
     if raw is None:

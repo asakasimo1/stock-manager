@@ -15,7 +15,7 @@ KIS API 모듈 — 한국투자증권 Open API 연동
 """
 
 import os, json, time, logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone, time as dt_time
 from pathlib import Path
 
 import requests
@@ -39,6 +39,25 @@ BASE_URL = (
 )
 
 TOKEN_FILE = Path(".token_cache.json")   # 토큰 로컬 캐시 (git 무시)
+
+_KST = timezone(timedelta(hours=9))
+
+# ─────────────────────────────────────────
+# NXT (넥스트트레이드) 시간 감지
+# 장전: 08:00~09:00 / 장후: 15:30~20:00 KST
+# ─────────────────────────────────────────
+def _is_nxt_time() -> bool:
+    t = datetime.now(_KST).time()
+    return (dt_time(8, 0) <= t < dt_time(9, 0) or
+            dt_time(15, 30) <= t < dt_time(20, 0))
+
+def is_any_market_open() -> bool:
+    """KRX 또는 NXT 거래 가능 시간 (08:00~20:00 KST 평일)"""
+    now = datetime.now(_KST)
+    if now.weekday() >= 5:   # 토·일 제외
+        return False
+    t = now.time()
+    return dt_time(8, 0) <= t < dt_time(20, 0)
 
 
 # ─────────────────────────────────────────
@@ -134,8 +153,31 @@ def get_price(ticker: str) -> dict:
       stck_hgpr  고가
       stck_lwpr  저가
       acml_vol   누적거래량
+
+    NXT 시간대(장전/장후)에는 NXT 시세(NX 마켓) 우선 조회,
+    실패 시 KRX 시세(J 마켓)로 폴백.
     """
-    tr_id = "FHKST01010100"   # 시세 조회는 모의/실계좌 동일
+    tr_id = "FHKST01010100"
+
+    # NXT 시간대: NXT 가격 우선 조회
+    if not PAPER and _is_nxt_time():
+        try:
+            resp = requests.get(
+                f"{BASE_URL}/uapi/domestic-stock/v1/quotations/inquire-price",
+                headers=_headers(tr_id),
+                params={"fid_cond_mrkt_div_code": "NX", "fid_input_iscd": ticker},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            if data.get("rt_cd") == "0" and int(data["output"].get("stck_prpr", 0)) > 0:
+                logger.debug("NXT 시세 조회 성공: %s %s원", ticker, data["output"]["stck_prpr"])
+                return data["output"]
+            logger.debug("NXT 시세 없음(%s) — KRX 폴백", ticker)
+        except Exception as e:
+            logger.debug("NXT 시세 조회 실패(%s) — KRX 폴백: %s", ticker, e)
+
+    # KRX 시세 (기본)
     resp = requests.get(
         f"{BASE_URL}/uapi/domestic-stock/v1/quotations/inquire-price",
         headers=_headers(tr_id),
@@ -231,10 +273,19 @@ def place_order(ticker: str, side: str, qty: int,
     """
     cano, acnt = _account_parts()
 
-    if side == "BUY":
-        tr_id = "VTTC0802U" if PAPER else "TTTC0802U"
+    nxt = (not PAPER) and _is_nxt_time()
+
+    if PAPER:
+        # 모의투자: NXT 미지원 → KRX TR ID 사용
+        tr_id = "VTTC0802U" if side == "BUY" else "VTTC0801U"
+    elif nxt:
+        # 실계좌 + NXT 시간대: NXT TR ID 사용
+        # 참고: https://apiportal.koreainvestment.com
+        tr_id = "TTTS3012U" if side == "BUY" else "TTTS3013U"
+        logger.info("NXT 시간대 주문 — TR_ID: %s", tr_id)
     else:
-        tr_id = "VTTC0801U" if PAPER else "TTTC0801U"
+        # 실계좌 + KRX 정규시간
+        tr_id = "TTTC0802U" if side == "BUY" else "TTTC0801U"
 
     ord_dvsn = "01" if order_type == "market" else "00"  # 01=시장가, 00=지정가
     ord_unpr = "0" if order_type == "market" else str(price)

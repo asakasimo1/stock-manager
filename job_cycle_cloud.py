@@ -41,7 +41,12 @@ def now_kst() -> str:
 
 
 def main():
-    logger.info("사이클 잡 체크 시작")
+    if not kis_api.is_any_market_open():
+        logger.info("거래 시간 외 (KRX/NXT 모두 닫힘) — 종료")
+        return
+
+    nxt_mode = kis_api._is_nxt_time()
+    logger.info("사이클 잡 체크 시작 [%s]", "NXT 시간대" if nxt_mode else "KRX 정규")
 
     jobs = gist_writer._read_gist_file("profit_cycle_jobs.json") or []
     active = [j for j in jobs if j.get("status") not in ("done", "cancelled", "stopped")]

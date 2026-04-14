@@ -8,7 +8,7 @@ from datetime import datetime, timezone, timedelta
 import kis_api
 import gist_writer
 
-KST           = timezone(timedelta(hours=9))
+KST = timezone(timedelta(hours=9))
 
 logging.Formatter.converter = lambda *args: datetime.now(KST).timetuple()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s KST %(levelname)s %(message)s")
@@ -30,7 +30,12 @@ def calc_target_price(buy_price: int, qty: int,
 
 
 def main():
-    logger.info("수익매도 체크 시작")
+    if not kis_api.is_any_market_open():
+        logger.info("거래 시간 외 (KRX/NXT 모두 닫힘) — 종료")
+        return
+
+    nxt_mode = kis_api._is_nxt_time()
+    logger.info("수익매도 체크 시작 [%s]", "NXT 시간대" if nxt_mode else "KRX 정규")
 
     jobs = gist_writer._read_gist_file("profit_sell_jobs.json") or []
     active = [j for j in jobs if j.get("status") == "active"]
