@@ -76,6 +76,12 @@ def main():
             info      = kis_api.get_price(ticker)
             cur_price = int(info["stck_prpr"])
 
+            # 주문 방식 결정:
+            #   order_dvsn="limit"  → 항상 지정가 (UI에서 사용자 명시)
+            #   order_dvsn="market" → 시장가, 단 NXT 시간대는 자동으로 지정가 전환
+            order_dvsn = job.get("order_dvsn", "market")
+            use_limit  = (order_dvsn == "limit") or nxt_mode
+
             # ── phase: waiting_buy (최초 매수 대기) ──────────────
             if phase == "waiting_buy":
                 buy_price = int(job.get("buy_price", 0))
@@ -91,10 +97,11 @@ def main():
                             logger.warning("%s 금액 부족 — 매수 불가", name)
                             continue
                         job["qty"] = qty
-                    # NXT 시간대: 지정가(limit) 강제 — NXT는 시장가 미지원
-                    if nxt_mode:
+                    # 지정가: UI 명시 or NXT 시간대 자동 전환
+                    if use_limit:
+                        reason = "사용자 지정가" if order_dvsn == "limit" else "NXT"
                         result = kis_api.place_order(ticker, "BUY", qty, price=cur_price, order_type="limit")
-                        order_label = f"지정가({cur_price:,}원) [NXT]"
+                        order_label = f"지정가({cur_price:,}원) [{reason}]"
                     else:
                         result = kis_api.place_order(ticker, "BUY", qty, order_type="market")
                         order_label = "시장가"
@@ -118,10 +125,11 @@ def main():
                             name, ticker, cycle_no, cur_price, sell_price,
                             "★ 매도" if should_sell else "대기")
                 if should_sell:
-                    # NXT 시간대: 지정가(cur_price) — 이미 목표가 이상이므로 즉시 체결
-                    if nxt_mode:
+                    # 지정가: UI 명시 or NXT 시간대 자동 전환
+                    if use_limit:
+                        reason = "사용자 지정가" if order_dvsn == "limit" else "NXT"
                         result = kis_api.place_order(ticker, "SELL", qty, price=cur_price, order_type="limit")
-                        order_label = f"지정가({cur_price:,}원) [NXT]"
+                        order_label = f"지정가({cur_price:,}원) [{reason}]"
                     else:
                         result = kis_api.place_order(ticker, "SELL", qty, order_type="market")
                         order_label = "시장가"
@@ -149,10 +157,11 @@ def main():
                             name, ticker, cycle_no, cur_price, rebuy_price,
                             "★ 재매수" if should_buy else "대기")
                 if should_buy:
-                    # NXT 시간대: 지정가(cur_price) — 이미 재매수가 이하이므로 즉시 체결
-                    if nxt_mode:
+                    # 지정가: UI 명시 or NXT 시간대 자동 전환
+                    if use_limit:
+                        reason = "사용자 지정가" if order_dvsn == "limit" else "NXT"
                         result = kis_api.place_order(ticker, "BUY", qty, price=cur_price, order_type="limit")
-                        order_label = f"지정가({cur_price:,}원) [NXT]"
+                        order_label = f"지정가({cur_price:,}원) [{reason}]"
                     else:
                         result = kis_api.place_order(ticker, "BUY", qty, order_type="market")
                         order_label = "시장가"
