@@ -139,4 +139,5 @@ jobs:
           path: ~/.cache/pip
           key: pip-${{ hashFiles('requirements.txt') }}
       - run: pip install -r requirements.txt
+      - run: python job_profit_buy_cloud.py
       - run: python job_profit_sell_cloud.py
