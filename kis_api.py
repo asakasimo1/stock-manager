@@ -276,32 +276,33 @@ def place_order(ticker: str, side: str, qty: int,
     nxt = (not PAPER) and _is_nxt_time()
 
     if PAPER:
-        # 모의투자: NXT 미지원 → KRX TR ID 사용
+        # 모의투자: NXT 미지원 → KRX TR_ID 사용
         tr_id = "VTTC0802U" if side == "BUY" else "VTTC0801U"
-    elif nxt:
-        # 실계좌 + NXT 시간대: 국내주식 TR_ID 동일 사용 (TTTS는 해외주식 전용)
-        tr_id = "TTTC0802U" if side == "BUY" else "TTTC0801U"
-        # NXT 프리마켓/애프터마켓은 시장가 불가 → 지정가로 자동 전환
-        if order_type == "market":
-            price_info = get_price(ticker)
-            price = int(price_info["stck_prpr"])
-            order_type = "limit"
-            logger.info("NXT 시간대 — 시장가→지정가 전환: %s %d원", ticker, price)
-        logger.info("NXT 시간대 주문 — TR_ID: %s  지정가: %d원", tr_id, price)
     else:
-        # 실계좌 + KRX 정규시간
+        # 실계좌: KRX·NXT 동일 TR_ID, body의 ORD_SVR_DVSN_CD로 시장 구분
         tr_id = "TTTC0802U" if side == "BUY" else "TTTC0801U"
+
+    # NXT 시간대: 시장가 불가 → 지정가 자동 전환
+    if nxt and order_type == "market":
+        price_info = get_price(ticker)
+        price = int(price_info["stck_prpr"])
+        order_type = "limit"
+        logger.info("NXT 시간대 — 시장가→지정가 전환: %s %d원", ticker, price)
+
+    if nxt:
+        logger.info("NXT 시간대 주문 — TR_ID: %s  지정가: %d원", tr_id, price)
 
     ord_dvsn = "01" if order_type == "market" else "00"  # 01=시장가, 00=지정가
     ord_unpr = "0" if order_type == "market" else str(price)
 
     body = {
-        "CANO":         cano,
-        "ACNT_PRDT_CD": acnt,
-        "PDNO":         ticker,
-        "ORD_DVSN":     ord_dvsn,
-        "ORD_QTY":      str(qty),
-        "ORD_UNPR":     ord_unpr,
+        "CANO":             cano,
+        "ACNT_PRDT_CD":     acnt,
+        "PDNO":             ticker,
+        "ORD_DVSN":         ord_dvsn,
+        "ORD_QTY":          str(qty),
+        "ORD_UNPR":         ord_unpr,
+        "ORD_SVR_DVSN_CD":  "N" if nxt else "0",  # N=NXT, 0=KRX
     }
 
     resp = requests.post(
