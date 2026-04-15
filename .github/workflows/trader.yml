@@ -16,9 +16,20 @@ on:
   workflow_dispatch:           # 수동 실행 (테스트용)
     inputs:
       job:
-        description: '실행할 job (signals/buy/monitor/close/report/factor_rebalance/profit_sell/cycle)'
+        description: '실행할 job (signals/buy/test_today/monitor/close/report/factor_rebalance/profit_sell/cycle)'
         required: true
         default: 'monitor'
+        type: choice
+        options:
+          - test_today
+          - signals
+          - buy
+          - monitor
+          - close
+          - report
+          - factor_rebalance
+          - profit_sell
+          - cycle
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -39,6 +50,24 @@ env:
   GH_TOKEN:              ${{ secrets.GH_TOKEN }}
 
 jobs:
+  # ── 오늘 테스트: 신호 생성 → 즉시 매수 연속 실행 ──
+  test_today:
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'test_today'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ hashFiles('requirements.txt') }}
+      - run: pip install -r requirements.txt
+      - name: 신호 생성 (job_signals.py)
+        run: python job_signals.py
+      - name: 매수 주문 (job_buy.py)
+        run: python job_buy.py
+
   # ── 08:50 신호 생성 ──────────────────────────
   signals:
     if: github.event.schedule == '50 23 * * 0-4' || (github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'signals')
