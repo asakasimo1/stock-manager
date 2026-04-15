@@ -15,8 +15,12 @@ import gist_writer
 KST = timezone(timedelta(hours=9))
 
 logging.Formatter.converter = lambda *args: datetime.now(KST).timetuple()
+_fmt = logging.Formatter("%(asctime)s KST %(levelname)s %(message)s")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s KST %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
+_fh = logging.FileHandler("profit_buy_cloud.log", encoding="utf-8")
+_fh.setFormatter(_fmt)
+logger.addHandler(_fh)
 
 
 def main():

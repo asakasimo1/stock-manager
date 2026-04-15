@@ -11,8 +11,12 @@ import gist_writer
 KST = timezone(timedelta(hours=9))
 
 logging.Formatter.converter = lambda *args: datetime.now(KST).timetuple()
+_fmt = logging.Formatter("%(asctime)s KST %(levelname)s %(message)s")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s KST %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
+_fh = logging.FileHandler("profit_sell_cloud.log", encoding="utf-8")
+_fh.setFormatter(_fmt)
+logger.addHandler(_fh)
 BUY_FEE_RATE  = 0.00015            # 매수 수수료 0.015%
 SELL_FEE_RATE = 0.00015 + 0.0018   # 매도 수수료 + 증권거래세 0.195%
 

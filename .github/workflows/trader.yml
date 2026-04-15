@@ -181,6 +181,15 @@ jobs:
       - run: python job_profit_buy_cloud.py
       - run: python job_profit_sell_cloud.py
       - run: python job_cycle_cloud.py
+      - name: 로그 파일 커밋
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git pull --rebase origin main || true
+          git add profit_buy_cloud.log profit_sell_cloud.log cycle_cloud.log
+          git diff --cached --quiet || git commit -m "logs: profit/cycle 업데이트 $(date +'%Y-%m-%d %H:%M') KST [skip ci]"
+          git push https://x-access-token:${{ secrets.GH_TOKEN }}@github.com/${{ github.repository }}.git HEAD:main
 
   # ── 케이티알파(036030) 목표가 모니터링 (KRX 09:00~15:35 매 5분) ──
   monitor_036030:
@@ -225,6 +234,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add monitor_036030.log
+          git add monitor_036030.log profit_buy_cloud.log profit_sell_cloud.log cycle_cloud.log
           git diff --cached --quiet || git commit -m "logs: 3일 경과 로그 정리 [skip ci]"
           git push https://x-access-token:${{ secrets.GH_TOKEN }}@github.com/${{ github.repository }}.git HEAD:main

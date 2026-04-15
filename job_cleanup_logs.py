@@ -18,7 +18,12 @@ SUMMARY_N  = 10     # 오래된 구간 요약 줄 수
 # 요약에 남길 핵심 키워드
 KEY_WORDS  = ["시작", "매도 완료", "목표 도달", "오류", "장 마감", "목표 미달성", "종료"]
 
-LOG_FILES  = ["monitor_036030.log"]
+LOG_FILES  = [
+    "monitor_036030.log",
+    "profit_buy_cloud.log",
+    "profit_sell_cloud.log",
+    "cycle_cloud.log",
+]
 
 
 def _parse_dt(line: str) -> datetime | None:
