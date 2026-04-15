@@ -9,3 +9,7 @@
 2026-04-15 14:08:20,969 KST ERROR 티로보틱스(117730) 처리 실패: 403 Client Error: Forbidden for url: https://openapi.koreainvestment.com:9443/oauth2/tokenP
 2026-04-15 14:08:24,177 KST ERROR 빅텍(065450) 처리 실패: 403 Client Error: Forbidden for url: https://openapi.koreainvestment.com:9443/oauth2/tokenP
 2026-04-15 14:08:24,178 KST INFO 사이클 잡 체크 완료
+2026-04-15 14:56:42,590 KST INFO 사이클 잡 체크 시작 [KRX 정규]
+2026-04-15 14:56:42,744 KST INFO 활성 잡 1개 처리
+2026-04-15 14:56:45,322 KST INFO 빅텍(065450) [rebuy #1] 현재가=5440 재매수가=5303 → 대기
+2026-04-15 14:56:45,322 KST INFO 사이클 잡 체크 완료
