@@ -175,6 +175,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: true
       - uses: actions/setup-python@v5
         with: { python-version: '3.12' }
       - uses: actions/cache@v4
@@ -193,8 +196,8 @@ jobs:
           git pull --rebase origin main || true
           git add profit_buy_cloud.log profit_sell_cloud.log cycle_cloud.log
           git diff --cached --quiet || git commit -m "logs: profit/cycle 업데이트 $(date +'%Y-%m-%d %H:%M') KST [skip ci]"
-          git push https://x-access-token:${{ secrets.GH_TOKEN }}@github.com/${{ github.repository }}.git HEAD:main
-    
+          git push origin HEAD:main
+
   # ── 케이티알파(036030) 목표가 모니터링 (KRX 09:00~15:35 매 5분) ──
   monitor_036030:
     if: >
@@ -203,6 +206,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: true
       - uses: actions/setup-python@v5
         with: { python-version: '3.12' }
       - uses: actions/cache@v4
@@ -220,7 +226,7 @@ jobs:
           git pull --rebase origin main || true
           git add monitor_036030.log
           git diff --cached --quiet || git commit -m "logs: 036030 모니터링 $(date +'%Y-%m-%d %H:%M') KST [skip ci]"
-          git push https://x-access-token:${{ secrets.GH_TOKEN }}@github.com/${{ github.repository }}.git HEAD:main
+          git push origin HEAD:main
 
   # ── 08:00 KST 로그 정리 (3일 이상 경과 → 10줄 요약) ────
   cleanup_logs:
@@ -230,6 +236,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: true
       - uses: actions/setup-python@v5
         with: { python-version: '3.12' }
       - name: 로그 정리 실행
@@ -240,4 +249,4 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add monitor_036030.log profit_buy_cloud.log profit_sell_cloud.log cycle_cloud.log
           git diff --cached --quiet || git commit -m "logs: 3일 경과 로그 정리 [skip ci]"
-          git push https://x-access-token:${{ secrets.GH_TOKEN }}@github.com/${{ github.repository }}.git HEAD:main
+          git push origin HEAD:main
