@@ -83,8 +83,9 @@ def main():
             # 주문 방식 결정:
             #   order_dvsn="limit"  → 항상 지정가 (UI에서 사용자 명시)
             #   order_dvsn="market" → 시장가, 단 NXT 시간대는 자동으로 지정가 전환
-            order_dvsn = job.get("order_dvsn", "market")
-            use_limit  = (order_dvsn == "limit") or nxt_mode
+            order_dvsn  = job.get("order_dvsn", "market")
+            use_limit   = (order_dvsn == "limit") or nxt_mode
+            limit_price = int(job.get("limit_price", 0)) or cur_price  # 미입력 시 현재가
 
             # ── phase: waiting_buy (최초 매수 대기) ──────────────
             if phase == "waiting_buy":
@@ -104,14 +105,15 @@ def main():
                     # 지정가: UI 명시 or NXT 시간대 자동 전환
                     if use_limit:
                         reason = "사용자 지정가" if order_dvsn == "limit" else "NXT"
-                        result = kis_api.place_order(ticker, "BUY", qty, price=cur_price, order_type="limit")
-                        order_label = f"지정가({cur_price:,}원) [{reason}]"
+                        result = kis_api.place_order(ticker, "BUY", qty, price=limit_price, order_type="limit")
+                        order_label = f"지정가({limit_price:,}원) [{reason}]"
                     else:
                         result = kis_api.place_order(ticker, "BUY", qty, order_type="market")
                         order_label = "시장가"
-                    sell_price = calc_sell_price(cur_price, qty, take_pct)
+                    actual_price = limit_price if use_limit else cur_price
+                    sell_price = calc_sell_price(actual_price, qty, take_pct)
                     job["phase"]       = "holding"
-                    job["buy_price"]   = cur_price
+                    job["buy_price"]   = actual_price
                     job["sell_price"]  = sell_price
                     job["cycle_no"]    = 1
                     job["last_buy_at"] = now_kst()
@@ -119,7 +121,7 @@ def main():
                     job["status"]      = "active"
                     changed = True
                     logger.info("✅ [사이클1] 매수(%s): %s %d주 @ %d원  목표매도가=%d원",
-                                order_label, ticker, qty, cur_price, sell_price)
+                                order_label, ticker, qty, actual_price, sell_price)
 
             # ── phase: holding (매도 대기) ────────────────────────
             elif phase == "holding":
