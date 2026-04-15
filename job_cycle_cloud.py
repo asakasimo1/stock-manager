@@ -129,29 +129,46 @@ def main():
                             name, ticker, cycle_no, cur_price, sell_price,
                             "★ 매도" if should_sell else "대기")
                 if should_sell:
-                    # 지정가: UI 명시 or NXT 시간대 자동 전환
-                    if use_limit:
-                        reason = "사용자 지정가" if order_dvsn == "limit" else "NXT"
-                        result = kis_api.place_order(ticker, "SELL", qty, price=cur_price, order_type="limit")
-                        order_label = f"지정가({cur_price:,}원) [{reason}]"
-                    else:
-                        result = kis_api.place_order(ticker, "SELL", qty, order_type="market")
-                        order_label = "시장가"
-                    rebuy_price = math.floor(cur_price * (1 - rebuy_drop))
-                    job["phase"]        = "waiting_rebuy"
-                    job["last_sell"]    = cur_price
-                    job["rebuy_price"]  = rebuy_price
-                    job["last_sell_at"] = now_kst()
-                    job["order_no"]     = result.get("order_no", "")
-                    changed = True
-                    logger.info("✅ [사이클%d] 매도(%s): %s %d주 @ %d원  재매수 목표=%d원",
-                                cycle_no, order_label, ticker, qty, cur_price, rebuy_price)
+                    try:
+                        # 지정가: UI 명시 or NXT 시간대 자동 전환
+                        if use_limit:
+                            reason = "사용자 지정가" if order_dvsn == "limit" else "NXT"
+                            result = kis_api.place_order(ticker, "SELL", qty, price=cur_price, order_type="limit")
+                            order_label = f"지정가({cur_price:,}원) [{reason}]"
+                        else:
+                            result = kis_api.place_order(ticker, "SELL", qty, order_type="market")
+                            order_label = "시장가"
+                        rebuy_price = math.floor(cur_price * (1 - rebuy_drop))
+                        job["phase"]        = "waiting_rebuy"
+                        job["last_sell"]    = cur_price
+                        job["rebuy_price"]  = rebuy_price
+                        job["last_sell_at"] = now_kst()
+                        job["order_no"]     = result.get("order_no", "")
+                        changed = True
+                        logger.info("✅ [사이클%d] 매도(%s): %s %d주 @ %d원  재매수 목표=%d원",
+                                    cycle_no, order_label, ticker, qty, cur_price, rebuy_price)
 
-                    # 최대 사이클 체크
-                    if max_cycles > 0 and cycle_no >= max_cycles:
-                        job["phase"]  = "done"
-                        job["status"] = "done"
-                        logger.info("%s 최대 사이클(%d회) 완료", name, max_cycles)
+                        # 최대 사이클 체크
+                        if max_cycles > 0 and cycle_no >= max_cycles:
+                            job["phase"]  = "done"
+                            job["status"] = "done"
+                            logger.info("%s 최대 사이클(%d회) 완료", name, max_cycles)
+
+                    except Exception as sell_err:
+                        err_str = str(sell_err)
+                        if "주문 가능한 수량을 초과" in err_str or "초과" in err_str:
+                            # 이미 매도된 것으로 판단 → Gist 상태 강제 복구
+                            logger.warning("%s(%s) 매도 실패 (수량 초과) — 이미 매도된 것으로 간주, waiting_rebuy로 복구",
+                                           name, ticker)
+                            rebuy_price = math.floor(cur_price * (1 - rebuy_drop))
+                            job["phase"]        = "waiting_rebuy"
+                            job["last_sell"]    = cur_price
+                            job["rebuy_price"]  = rebuy_price
+                            job["last_sell_at"] = now_kst()
+                            job["order_no"]     = "recovered"
+                            changed = True
+                        else:
+                            logger.error("%s(%s) 매도 실패: %s", name, ticker, sell_err)
 
             # ── phase: waiting_rebuy (재매수 대기) ────────────────
             elif phase == "waiting_rebuy":
@@ -161,25 +178,28 @@ def main():
                             name, ticker, cycle_no, cur_price, rebuy_price,
                             "★ 재매수" if should_buy else "대기")
                 if should_buy:
-                    # 지정가: UI 명시 or NXT 시간대 자동 전환
-                    if use_limit:
-                        reason = "사용자 지정가" if order_dvsn == "limit" else "NXT"
-                        result = kis_api.place_order(ticker, "BUY", qty, price=cur_price, order_type="limit")
-                        order_label = f"지정가({cur_price:,}원) [{reason}]"
-                    else:
-                        result = kis_api.place_order(ticker, "BUY", qty, order_type="market")
-                        order_label = "시장가"
-                    new_cycle = cycle_no + 1
-                    sell_price = calc_sell_price(cur_price, qty, repeat_take)
-                    job["phase"]       = "holding"
-                    job["buy_price"]   = cur_price
-                    job["sell_price"]  = sell_price
-                    job["cycle_no"]    = new_cycle
-                    job["last_buy_at"] = now_kst()
-                    job["order_no"]    = result.get("order_no", "")
-                    changed = True
-                    logger.info("✅ [사이클%d] 재매수(%s): %s %d주 @ %d원  목표매도가=%d원",
-                                new_cycle, order_label, ticker, qty, cur_price, sell_price)
+                    try:
+                        # 지정가: UI 명시 or NXT 시간대 자동 전환
+                        if use_limit:
+                            reason = "사용자 지정가" if order_dvsn == "limit" else "NXT"
+                            result = kis_api.place_order(ticker, "BUY", qty, price=cur_price, order_type="limit")
+                            order_label = f"지정가({cur_price:,}원) [{reason}]"
+                        else:
+                            result = kis_api.place_order(ticker, "BUY", qty, order_type="market")
+                            order_label = "시장가"
+                        new_cycle = cycle_no + 1
+                        sell_price = calc_sell_price(cur_price, qty, repeat_take)
+                        job["phase"]       = "holding"
+                        job["buy_price"]   = cur_price
+                        job["sell_price"]  = sell_price
+                        job["cycle_no"]    = new_cycle
+                        job["last_buy_at"] = now_kst()
+                        job["order_no"]    = result.get("order_no", "")
+                        changed = True
+                        logger.info("✅ [사이클%d] 재매수(%s): %s %d주 @ %d원  목표매도가=%d원",
+                                    new_cycle, order_label, ticker, qty, cur_price, sell_price)
+                    except Exception as buy_err:
+                        logger.error("%s(%s) 재매수 실패: %s", name, ticker, buy_err)
 
         except Exception as e:
             logger.error("%s(%s) 처리 실패: %s", name, ticker, e)

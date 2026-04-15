@@ -1,5 +1,6 @@
 name: 자동매매 봇
-
+permissions:
+  contents: write  # 파일 읽기/쓰기 (push, commit 필요)
 on:
   schedule:
     # 모든 시간은 UTC 기준 (KST = UTC+9)
@@ -59,6 +60,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: true
       - uses: actions/setup-python@v5
         with: { python-version: '3.12' }
       - uses: actions/cache@v4
@@ -190,7 +194,7 @@ jobs:
           git add profit_buy_cloud.log profit_sell_cloud.log cycle_cloud.log
           git diff --cached --quiet || git commit -m "logs: profit/cycle 업데이트 $(date +'%Y-%m-%d %H:%M') KST [skip ci]"
           git push https://x-access-token:${{ secrets.GH_TOKEN }}@github.com/${{ github.repository }}.git HEAD:main
-
+    
   # ── 케이티알파(036030) 목표가 모니터링 (KRX 09:00~15:35 매 5분) ──
   monitor_036030:
     if: >
