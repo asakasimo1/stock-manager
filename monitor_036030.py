@@ -11,8 +11,16 @@ import os, time, logging
 from datetime import datetime, timezone, timedelta
 import kis_api
 
+LOG_FILE = "monitor_036030.log"
+_fmt = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
+
+# 로컬/GH Actions 모두 monitor_036030.log에 동일 포맷으로 기록
+_fh = logging.FileHandler(LOG_FILE, encoding="utf-8")
+_fh.setFormatter(_fmt)
+logger.addHandler(_fh)
 
 TICKER     = "036030"
 NAME       = "케이티알파"
