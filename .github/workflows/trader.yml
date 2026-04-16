@@ -32,6 +32,7 @@ on:
           - factor_rebalance
           - profit_sell
           - cycle
+          - balance
           - monitor_036030
           - cleanup_logs
 
@@ -254,6 +255,21 @@ jobs:
           git add cycle_cloud.log
           git diff --cached --quiet || git commit -m "logs: 사이클 즉시실행 $(date +'%Y-%m-%d %H:%M') KST [skip ci]"
           git push origin HEAD:main
+
+  # ── 잔고 즉시 조회 (workflow_dispatch 전용) ──────────────
+  balance:
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'balance'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ hashFiles('requirements.txt') }}
+      - run: pip install -r requirements.txt
+      - run: python job_balance.py
 
   # ── 08:00 KST 로그 정리 (3일 이상 경과 → 10줄 요약) ────
   cleanup_logs:
