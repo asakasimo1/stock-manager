@@ -33,10 +33,17 @@ create table if not exists trading_meta (
   updated_at timestamptz default now()
 );
 
--- Row Level Security 비활성화 (서버 전용 서비스키 사용)
-alter table positions    disable row level security;
-alter table watchlist    disable row level security;
-alter table trading_meta disable row level security;
+-- Row Level Security 활성화 + service_role 전용 정책
+alter table positions    enable row level security;
+alter table watchlist    enable row level security;
+alter table trading_meta enable row level security;
+
+create policy "service_role_all" on positions
+  for all to service_role using (true) with check (true);
+create policy "service_role_all" on watchlist
+  for all to service_role using (true) with check (true);
+create policy "service_role_all" on trading_meta
+  for all to service_role using (true) with check (true);
 
 
 -- =============================================
@@ -72,5 +79,10 @@ create table if not exists factor_watchlist (
   created_at     timestamptz default now()
 );
 
-alter table factor_positions  disable row level security;
-alter table factor_watchlist  disable row level security;
+alter table factor_positions  enable row level security;
+alter table factor_watchlist  enable row level security;
+
+create policy "service_role_all" on factor_positions
+  for all to service_role using (true) with check (true);
+create policy "service_role_all" on factor_watchlist
+  for all to service_role using (true) with check (true);
