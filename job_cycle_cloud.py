@@ -20,6 +20,7 @@ from datetime import datetime, timezone, timedelta
 
 import kis_api
 import gist_writer
+import job_balance
 
 KST = timezone(timedelta(hours=9))
 
@@ -209,6 +210,12 @@ def main():
     if changed:
         ok = gist_writer._write_gist({"profit_cycle_jobs.json": jobs})
         logger.info("Gist 업데이트 %s", "완료" if ok else "실패")
+        # 매수/매도 발생 시 잔고 즉시 갱신
+        try:
+            job_balance.main()
+            logger.info("잔고 Gist 갱신 완료")
+        except Exception as bal_err:
+            logger.warning("잔고 갱신 실패 (무시): %s", bal_err)
 
     logger.info("사이클 잡 체크 완료")
 
