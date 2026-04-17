@@ -75,10 +75,18 @@ def _api_post(url: str, **kwargs) -> requests.Response:
 # NXT (넥스트트레이드) 시간 감지
 # 프리마켓: 08:00~08:50 / 애프터마켓: 15:30~20:00 KST
 # ─────────────────────────────────────────
-def _is_nxt_time() -> bool:
+def _is_nxt_premarket() -> bool:
+    """NXT 프리마켓 (08:00~08:50 KST) — 전 종목 거래 가능"""
     t = datetime.now(_KST).time()
-    return (dt_time(8, 0) <= t < dt_time(8, 50) or   # 프리마켓 08:00~08:50
-            dt_time(15, 30) <= t < dt_time(20, 0))    # 애프터마켓 15:30~20:00
+    return dt_time(8, 0) <= t < dt_time(8, 50)
+
+def _is_nxt_aftermarket() -> bool:
+    """NXT 애프터마켓 (15:30~20:00 KST) — 종목별 거래 가능 여부 다름"""
+    t = datetime.now(_KST).time()
+    return dt_time(15, 30) <= t < dt_time(20, 0)
+
+def _is_nxt_time() -> bool:
+    return _is_nxt_premarket() or _is_nxt_aftermarket()
 
 def is_any_market_open() -> bool:
     """KRX 또는 NXT 거래 가능 시간 (08:00~20:00 KST 평일)"""
