@@ -147,11 +147,6 @@ def main():
 
                 # ── NXT waiting_buy: 목표 매수가(또는 현재가)로 즉시 지정가 제출 ──
                 if phase == "waiting_buy":
-                    # 애프터마켓은 종목별 거래 불가 가능 → 프리마켓(08:00~08:50)만 매수 시도
-                    if nxt_aftermarket:
-                        logger.info("%s(%s) [NXT 애프터마켓] 매수 미지원 종목 가능성 — KRX 정규장까지 대기",
-                                    name, ticker)
-                        continue
                     buy_price   = int(job.get("buy_price", 0))
                     order_price = buy_price if buy_price > 0 else cur_price
                     if qty <= 0 and job.get("amount", 0) > 0:
@@ -161,7 +156,7 @@ def main():
                             continue
                         job["qty"] = qty
                     sell_price = calc_sell_price(order_price, qty, take_pct)
-                    logger.info("%s(%s) [NXT 프리마켓 waiting_buy] 지정가 매수 제출 — %d원 × %d주 / 목표매도=%d원",
+                    logger.info("%s(%s) [NXT waiting_buy] 지정가 매수 제출 — %d원 × %d주 / 목표매도=%d원",
                                 name, ticker, order_price, qty, sell_price)
                     result = kis_api.place_order(ticker, "BUY", qty, price=order_price, order_type="limit")
                     job["phase"]       = "holding"

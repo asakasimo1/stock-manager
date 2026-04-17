@@ -42,6 +42,9 @@ BASE_URL = (
 
 TOKEN_FILE = Path(".token_cache.json")   # 토큰 로컬 캐시 (git 무시)
 
+import logging as _logging
+_logging.getLogger(__name__).info("KIS 모드: %s  BASE_URL: %s", "모의투자" if PAPER else "실계좌", BASE_URL)
+
 _KST = timezone(timedelta(hours=9))
 
 # ─────────────────────────────────────────
