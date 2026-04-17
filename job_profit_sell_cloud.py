@@ -104,6 +104,16 @@ def main():
     logger.info("활성 잡 %d개 처리", len(active))
     changed = False
 
+    # ── submitted 잡이 있으면 미체결 주문 목록 1회 조회 → 체결 자동 감지 ──
+    has_submitted = any(j.get("status") == "submitted" for j in active)
+    pending_order_nos: set = set()
+    if has_submitted:
+        try:
+            pending_order_nos = {o["order_no"] for o in kis_api.get_pending_orders()}
+            logger.info("미체결 주문 %d건 조회 완료", len(pending_order_nos))
+        except Exception as e:
+            logger.warning("미체결 주문 조회 실패 (체결 자동 감지 건너뜀): %s", e)
+
     # ── amount/pct 타입 잡만 현재가 병렬 조회 (price 타입은 주문만 냄) ──
     poll_tickers = list({
         j["ticker"] for j in active
@@ -158,10 +168,33 @@ def main():
                 )
                 continue   # 이번 사이클은 여기까지
 
-            # ── submitted 상태(지정가): 체결 여부 별도 폴링 없이 MTS 확인 유도 ──
+            # ── submitted 상태(지정가): 미체결 목록 확인 → 없으면 체결 완료 처리 ──
             if target_type == "price" and job.get("status") == "submitted":
-                logger.info("%s(%s) 지정가 주문 제출 완료 (주문번호: %s) — MTS 체결 대기 중",
-                            name, ticker, job.get("order_no", ""))
+                order_no  = job.get("order_no", "")
+                force_done = job.get("force_done", False)
+
+                # 미체결 목록에 없거나 force_done 플래그 → 체결 완료로 처리
+                order_filled = force_done or (
+                    bool(pending_order_nos or has_submitted)
+                    and order_no not in pending_order_nos
+                )
+
+                if order_filled:
+                    reason_label = "수동 완료 처리" if force_done else "미체결 목록 미존재 → 체결 확인"
+                    job["status"]      = "done"
+                    job["executed_at"] = datetime.now(KST).strftime("%Y-%m-%d %H:%M")
+                    job["force_done"]  = False
+                    changed = True
+                    logger.info("✅ %s(%s) 지정가 주문 체결 완료 처리 [%s]  주문번호: %s",
+                                name, ticker, reason_label, order_no)
+                    notify.send(
+                        f"✅ <b>지정가 매도 체결 확인</b>  {name} ({ticker})\n"
+                        f"  주문번호: {order_no}\n"
+                        f"  처리: {reason_label}"
+                    )
+                else:
+                    logger.info("%s(%s) 지정가 주문 대기 중 (주문번호: %s)",
+                                name, ticker, order_no)
                 continue
 
             # ── amount / pct 타입: 캐시된 현재가 사용 ───────────────────────────
