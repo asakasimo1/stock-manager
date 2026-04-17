@@ -107,9 +107,11 @@ def main():
     # ── submitted 잡이 있으면 미체결 주문 목록 1회 조회 → 체결 자동 감지 ──
     has_submitted = any(j.get("status") == "submitted" for j in active)
     pending_order_nos: set = set()
+    pending_fetched = False          # 조회 성공 여부를 명시적으로 추적
     if has_submitted:
         try:
             pending_order_nos = {o["order_no"] for o in kis_api.get_pending_orders()}
+            pending_fetched = True
             logger.info("미체결 주문 %d건 조회 완료", len(pending_order_nos))
         except Exception as e:
             logger.warning("미체결 주문 조회 실패 (체결 자동 감지 건너뜀): %s", e)
@@ -174,9 +176,9 @@ def main():
                 force_done = job.get("force_done", False)
 
                 # 미체결 목록에 없거나 force_done 플래그 → 체결 완료로 처리
+                # pending_fetched=True 일 때만 자동 감지 (조회 실패 시 오판 방지)
                 order_filled = force_done or (
-                    bool(pending_order_nos or has_submitted)
-                    and order_no not in pending_order_nos
+                    pending_fetched and order_no not in pending_order_nos
                 )
 
                 if order_filled:
