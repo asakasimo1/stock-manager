@@ -30,7 +30,9 @@ AUTO_LOSS_PCT   = -4.0             # 자동 손절 기준 (%)
 def calc_target_price(buy_price: int, qty: int,
                       target_type: str, target_value: float) -> int:
     """목표 매도단가 계산 (수수료 포함)"""
-    if target_type == "amount":
+    if target_type == "price":
+        return int(target_value)          # 지정가: 입력값 그대로 사용
+    elif target_type == "amount":
         break_even = buy_price * (1 + BUY_FEE_RATE)
         needed_per_share = (break_even * qty + target_value) / qty
         return int(needed_per_share / (1 - SELL_FEE_RATE)) + 1
@@ -117,7 +119,9 @@ def main():
             info = kis_api.get_price(ticker)
             cur_price = int(info["stck_prpr"])
 
-            if target_type == "amount":
+            if target_type == "price":
+                label = f"현재가 {cur_price:,}원 / 지정가 {target_price:,}원"
+            elif target_type == "amount":
                 net_pnl = cur_price * qty * (1 - SELL_FEE_RATE) - buy_price * qty * (1 + BUY_FEE_RATE)
                 label = f"{net_pnl:+.0f}원 / 목표 {target_value:+.0f}원"
             else:
