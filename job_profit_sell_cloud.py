@@ -1,7 +1,9 @@
 """
 수익매도 클라우드 잡 — GitHub Actions에서 5분마다 실행
 1) Gist profit_sell_jobs.json 에서 활성 잡 읽기 → 목표 달성 시 즉시 매도
-2) 계좌 보유 종목 중 수익률 AUTO_SELL_PCT 이상이면 전량 즉시 매도 (자동 규칙)
+2) 계좌 보유 종목 자동매도 규칙 (매 5분 체크)
+   - 수익률 +20% 이상 → 전량 즉시 매도 (익절)
+   - 수익률 -4% 이하  → 전량 즉시 매도 (손절)
 """
 import logging
 from datetime import datetime, timezone, timedelta
@@ -21,7 +23,8 @@ _fh.setFormatter(_fmt)
 logger.addHandler(_fh)
 BUY_FEE_RATE  = 0.00015            # 매수 수수료 0.015%
 SELL_FEE_RATE = 0.00015 + 0.0018   # 매도 수수료 + 증권거래세 0.195%
-AUTO_SELL_PCT = 20.0               # 자동매도 수익률 기준 (%)
+AUTO_PROFIT_PCT = 20.0             # 자동 익절 기준 (%)
+AUTO_LOSS_PCT   = -4.0             # 자동 손절 기준 (%)
 
 
 def calc_target_price(buy_price: int, qty: int,
@@ -36,8 +39,11 @@ def calc_target_price(buy_price: int, qty: int,
         return int(target_sell / (1 - SELL_FEE_RATE)) + 1
 
 
-def auto_sell_high_profit():
-    """보유 종목 중 수익률 AUTO_SELL_PCT 이상이면 전량 즉시 매도"""
+def auto_sell_by_rule():
+    """보유 종목 자동매도 규칙 체크
+    - 수익률 >= +20% : 익절 매도
+    - 수익률 <= -4%  : 손절 매도
+    """
     try:
         bal = kis_api.get_balance()
     except Exception as e:
@@ -45,22 +51,26 @@ def auto_sell_high_profit():
         return
 
     for h in bal["holdings"]:
-        if h["pnl_pct"] < AUTO_SELL_PCT:
+        pnl_pct   = h["pnl_pct"]
+        is_profit = pnl_pct >= AUTO_PROFIT_PCT
+        is_loss   = pnl_pct <= AUTO_LOSS_PCT
+        if not is_profit and not is_loss:
             continue
-        ticker = h["ticker"]
-        name   = h["name"]
-        qty    = h["qty"]
-        pnl_pct = h["pnl_pct"]
+
+        ticker    = h["ticker"]
+        name      = h["name"]
+        qty       = h["qty"]
         cur_price = h["eval_price"]
-        logger.info("★ 자동매도 조건 달성 — %s(%s) 수익률 %.2f%% / 기준 %.0f%%",
-                    name, ticker, pnl_pct, AUTO_SELL_PCT)
+        reason    = f"익절 (+{AUTO_PROFIT_PCT:.0f}% 달성)" if is_profit else f"손절 ({AUTO_LOSS_PCT:.0f}% 도달)"
+        emoji     = "🚀" if is_profit else "🔴"
+
+        logger.info("★ 자동매도 [%s] — %s(%s) 수익률 %.2f%%", reason, name, ticker, pnl_pct)
         try:
             result = kis_api.place_order(ticker, "SELL", qty, order_type="market")
             pnl = (cur_price - h["avg_price"]) * qty
             notify.send(
-                f"🚀 <b>자동매도 (수익률 {pnl_pct:+.2f}%)</b>  {name} ({ticker})\n"
-                f"  {qty}주 @ {cur_price:,}원  손익: <b>{pnl:+,}원</b>\n"
-                f"  기준: +{AUTO_SELL_PCT:.0f}% 초과 자동매도\n"
+                f"{emoji} <b>자동매도 [{reason}]</b>  {name} ({ticker})\n"
+                f"  {qty}주 @ {cur_price:,}원  손익: <b>{pnl:+,}원 ({pnl_pct:+.2f}%)</b>\n"
                 f"  주문번호: {result.get('order_no', '')}"
             )
             logger.info("자동매도 완료 %s %d주 @ %d원  주문번호: %s",
@@ -78,8 +88,8 @@ def main():
     nxt_mode = kis_api._is_nxt_time()
     logger.info("수익매도 체크 시작 [%s]", "NXT 시간대" if nxt_mode else "KRX 정규")
 
-    # ── 자동매도 규칙: 수익률 AUTO_SELL_PCT 이상 즉시 매도 ──
-    auto_sell_high_profit()
+    # ── 자동매도 규칙: 익절 +20% / 손절 -4% ──
+    auto_sell_by_rule()
 
     jobs = gist_writer._read_gist_file("profit_sell_jobs.json") or []
     active = [j for j in jobs if j.get("status") == "active"]
