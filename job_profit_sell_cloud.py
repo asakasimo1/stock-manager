@@ -94,7 +94,7 @@ def main():
     auto_sell_by_rule()
 
     jobs = gist_writer._read_gist_file("profit_sell_jobs.json") or []
-    active = [j for j in jobs if j.get("status") == "active"]
+    active = [j for j in jobs if j.get("status") in ("active", "submitted")]
 
     if not active:
         logger.info("활성 잡 없음 — 종료")
@@ -104,24 +104,47 @@ def main():
     changed = False
 
     for job in jobs:
-        if job.get("status") != "active":
+        if job.get("status") not in ("active", "submitted"):
             continue
 
         ticker       = job["ticker"]
         name         = job.get("name", ticker)
-        buy_price    = int(job["buy_price"])
+        buy_price    = int(job.get("buy_price", 0))
         qty          = int(job["qty"])
-        target_type  = job["target_type"]   # "amount" | "pct"
+        target_type  = job["target_type"]   # "amount" | "pct" | "price"
         target_value = float(job["target_value"])
         target_price = calc_target_price(buy_price, qty, target_type, target_value)
 
         try:
+            # ── 지정가 타입: 등록 즉시 지정가 주문 → 거래소가 보관 (MTS에 노출) ──
+            if target_type == "price" and job.get("status") == "active":
+                logger.info("%s(%s) 지정가 매도 주문 — %d원 × %d주",
+                            name, ticker, target_price, qty)
+                result = kis_api.place_order(ticker, "SELL", qty,
+                                             price=target_price, order_type="limit")
+                job["status"]       = "submitted"          # 거래소에 주문 제출됨
+                job["order_no"]     = result.get("order_no", "")
+                job["submitted_at"] = datetime.now(KST).strftime("%Y-%m-%d %H:%M")
+                changed = True
+                logger.info("지정가 매도 주문 완료  주문번호: %s", job["order_no"])
+                notify.send(
+                    f"📋 <b>지정가 매도 주문 접수</b>  {name} ({ticker})\n"
+                    f"  {qty}주 × {target_price:,}원 (지정가)\n"
+                    f"  주문번호: {job['order_no']} — MTS에서 확인 가능"
+                )
+                continue   # 이번 사이클은 여기까지
+
+            # ── submitted 상태(지정가): 체결 여부 별도 폴링 없이 MTS 확인 유도 ──
+            if target_type == "price" and job.get("status") == "submitted":
+                logger.info("%s(%s) 지정가 주문 제출 완료 (주문번호: %s) — MTS 체결 대기 중",
+                            name, ticker, job.get("order_no", ""))
+                continue
+
+            # ── amount / pct 타입: 현재가 폴링 후 시장가 매도 ──────────────────
             info = kis_api.get_price(ticker)
             cur_price = int(info["stck_prpr"])
 
-            if target_type == "price":
-                label = f"현재가 {cur_price:,}원 / 지정가 {target_price:,}원"
-            elif target_type == "amount":
+            if target_type == "amount":
                 net_pnl = cur_price * qty * (1 - SELL_FEE_RATE) - buy_price * qty * (1 + BUY_FEE_RATE)
                 label = f"{net_pnl:+.0f}원 / 목표 {target_value:+.0f}원"
             else:
