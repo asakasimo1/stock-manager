@@ -28,6 +28,7 @@ from datetime import datetime, timezone, timedelta
 import kis_api
 import gist_writer
 import job_balance
+import notify
 
 KST = timezone(timedelta(hours=9))
 
@@ -355,7 +356,20 @@ def main():
                             logger.error("%s(%s) 재매수 실패: %s", name, ticker, buy_err)
 
         except Exception as e:
-            logger.error("%s(%s) 처리 실패: %s", name, ticker, e)
+            err_str = str(e)
+            # NXT 애프터마켓 시간 오류 — 종목이 해당 세션에서 거래 불가일 가능성
+            if nxt_aftermarket and ("장운영시간" in err_str or "정규시장" in err_str):
+                msg = (
+                    f"⚠️ <b>{name}({ticker})</b> NXT 애프터마켓 주문 실패\n"
+                    f"이 종목은 NXT 애프터마켓(15:40~20:00) 거래 불가 종목으로 추정됩니다.\n"
+                    f"확인 방법: nextrade.co.kr → 거래현황 → 매매체결대상종목\n"
+                    f"KRX 정규장(09:00~15:30)까지 대기합니다.\n"
+                    f"오류: {err_str}"
+                )
+                logger.warning(msg)
+                notify.send(msg)
+            else:
+                logger.error("%s(%s) 처리 실패: %s", name, ticker, e)
 
     if changed:
         ok = gist_writer._write_gist({"profit_cycle_jobs.json": jobs})
