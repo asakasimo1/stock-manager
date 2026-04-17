@@ -84,9 +84,9 @@ def _is_nxt_premarket() -> bool:
     return dt_time(8, 0) <= t < dt_time(8, 50)
 
 def _is_nxt_aftermarket() -> bool:
-    """NXT 애프터마켓 (15:40~20:00 KST) — 종목별 거래 가능 여부 다름"""
+    """NXT 애프터마켓 (15:30~20:00 KST) — 종목별 거래 가능 여부 다름"""
     t = datetime.now(_KST).time()
-    return dt_time(15, 40) <= t < dt_time(20, 0)
+    return dt_time(15, 30) <= t < dt_time(20, 0)
 
 def _is_nxt_time() -> bool:
     return _is_nxt_premarket() or _is_nxt_aftermarket()
