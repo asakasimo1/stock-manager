@@ -7,6 +7,7 @@ Gist profit_buy_jobs.json 에서 활성 잡 읽기 → 조건 달성 시 즉시 
   limit  : 현재가 <= target_price 일 때 매수
 """
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone, timedelta
 
 import kis_api
@@ -51,6 +52,26 @@ def main():
     logger.info("활성 잡 %d개 처리", len(active))
     changed = False
 
+    # ── 활성 잡 현재가 일괄 병렬 조회 ──────────────────────────────
+    active_tickers = list({j["ticker"] for j in active})
+
+    def _fetch_price(ticker: str):
+        try:
+            return ticker, kis_api.get_price(ticker)
+        except Exception as e:
+            logger.error("현재가 조회 실패 %s: %s", ticker, e)
+            return ticker, None
+
+    price_cache: dict = {}
+    with ThreadPoolExecutor(max_workers=min(len(active_tickers), 5)) as ex:
+        futures = {ex.submit(_fetch_price, t): t for t in active_tickers}
+        for fut in as_completed(futures):
+            ticker_key, result = fut.result()
+            if result is not None:
+                price_cache[ticker_key] = result
+
+    logger.info("현재가 병렬 조회 완료 (%d/%d)", len(price_cache), len(active_tickers))
+
     for job in jobs:
         if job.get("status") != "active":
             continue
@@ -63,7 +84,10 @@ def main():
         amount         = int(job.get("amount", 0))           # 금액 기준일 때
 
         try:
-            info = kis_api.get_price(ticker)
+            info = price_cache.get(ticker)
+            if info is None:
+                logger.warning("%s 현재가 캐시 없음 — 건너뜀", ticker)
+                continue
             cur_price = int(info["stck_prpr"])
 
             # 매수 수량 결정

@@ -86,3 +86,16 @@ create policy "service_role_all" on factor_positions
   for all to service_role using (true) with check (true);
 create policy "service_role_all" on factor_watchlist
   for all to service_role using (true) with check (true);
+
+
+-- =============================================
+-- 인덱스 (쿼리 성능 최적화)
+-- =============================================
+
+-- watchlist: signal_date 필터 인덱스 (날짜별 누적 데이터 증가 대응)
+create index if not exists idx_watchlist_signal_date
+  on watchlist(signal_date);
+
+-- factor_watchlist: rebalance_date 필터 인덱스
+create index if not exists idx_factor_watchlist_rebalance_date
+  on factor_watchlist(rebalance_date);

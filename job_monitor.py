@@ -3,7 +3,7 @@ Job 3 — 09:00~15:59 매 10분 모니터링
 보유 포지션의 손절/익절 조건 확인 후 매도
 """
 
-import os, time, logging
+import os, logging
 from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 from strategy import load_strategy
@@ -22,7 +22,8 @@ MAX_DAILY_LOSS = _PRESET["max_daily_loss"]
 
 
 def main():
-    bot_active = state_db.get_meta("bot_active", True)
+    meta = state_db.get_meta_multi(["bot_active", "daily_pnl"], {"bot_active": True, "daily_pnl": 0})
+    bot_active = meta["bot_active"]
     if not bot_active:
         return
 
@@ -30,27 +31,29 @@ def main():
     if not positions:
         return
 
-    daily_pnl = state_db.get_meta("daily_pnl", 0) or 0
+    daily_pnl = meta["daily_pnl"] or 0
     if daily_pnl <= -MAX_DAILY_LOSS:
         logger.warning("당일 손실 한도 초과 — 봇 중단")
         state_db.set_meta("bot_active", False)
         notify.send(f"⛔ 당일 손실 한도 초과 ({daily_pnl:+,}원) — 봇 중단")
         return
 
+    # ── get_balance() 1번으로 현재가 + 잔고 동시 획득 ───────────────
+    # 기존: N × get_price() 병렬 호출
+    # 개선: get_balance() 1번 → eval_price 사용 → update_account_balance()도 재활용
+    bal = kis_api.get_balance()
+    price_map = {h["ticker"]: h["eval_price"] for h in bal["holdings"]}
+
     to_sell = []
     for ticker, pos in positions.items():
-        try:
-            price_info = kis_api.get_price(ticker)
-            cur_price  = int(price_info["stck_prpr"])
-            time.sleep(0.3)
-
-            if cur_price <= pos["sl"]:
-                to_sell.append((ticker, pos, "손절", cur_price))
-            elif cur_price >= pos["tp"]:
-                to_sell.append((ticker, pos, "익절", cur_price))
-
-        except Exception as e:
-            logger.error("%s 모니터링 실패: %s", ticker, e)
+        cur_price = price_map.get(ticker)
+        if cur_price is None:
+            logger.warning("%s 잔고에서 현재가 미확인 — 건너뜀", ticker)
+            continue
+        if cur_price <= pos["sl"]:
+            to_sell.append((ticker, pos, "손절", cur_price))
+        elif cur_price >= pos["tp"]:
+            to_sell.append((ticker, pos, "익절", cur_price))
 
     for ticker, pos, reason, cur_price in to_sell:
         try:
@@ -76,23 +79,35 @@ def main():
                 f"  주문번호: {result['order_no']}"
             )
             logger.info("매도 완료  %s  %d주  손익: %+d원  [%s]", ticker, pos["qty"], pnl, reason)
-            time.sleep(0.3)
 
         except Exception as e:
             logger.error("%s 매도 실패: %s", ticker, e)
             notify.send(f"❌ 매도 실패: {ticker} — {e}")
 
+    # 거래 내역 일괄 저장 (매도 N건 → Gist 1회)
+    gist_writer.flush_trades()
 
-def update_account_balance():
-    """잔고를 Gist에 저장 (stock_analyzer 자동매매 탭 실시간 반영)"""
+    # bal 재활용 — 두 번째 get_balance() 불필요
+    update_account_balance(bal, daily_pnl, meta)
+
+
+def update_account_balance(bal: dict = None, daily_pnl: int = None, meta: dict = None):
+    """잔고를 Gist에 저장 (stock_analyzer 자동매매 탭 실시간 반영)
+    bal, daily_pnl, meta를 전달하면 추가 API 호출 없이 재활용합니다.
+    """
     try:
-        bal     = kis_api.get_balance()
+        if bal is None:
+            bal = kis_api.get_balance()
+        if meta is None:
+            meta = state_db.get_meta_multi(["daily_pnl", "initial_cash"], {"daily_pnl": 0})
+        if daily_pnl is None:
+            daily_pnl = meta["daily_pnl"] or 0
+
         KST     = timezone(timedelta(hours=9))
         now_kst = datetime.now(KST).strftime("%Y-%m-%d %H:%M")
-        daily_pnl = state_db.get_meta("daily_pnl", 0) or 0
-        total     = bal["total_eval"]
-        initial   = state_db.get_meta("initial_cash") or total
-        day_ret   = (total - initial) / initial * 100 if initial else 0
+        total   = bal["total_eval"]
+        initial = meta.get("initial_cash") or total
+        day_ret = (total - initial) / initial * 100 if initial else 0
 
         account_data = {
             "updated_at": now_kst,

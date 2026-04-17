@@ -26,12 +26,16 @@ MAX_DAILY_LOSS   = _PRESET["max_daily_loss"]
 def main():
     logger.info("=== 매수 실행 시작 (09:05) | 전략: %s ===", STRATEGY_NAME.upper())
 
-    bot_active = state_db.get_meta("bot_active", True)
+    meta = state_db.get_meta_multi(
+        ["bot_active", "daily_pnl", "initial_cash"],
+        {"bot_active": True, "daily_pnl": 0},
+    )
+    bot_active = meta["bot_active"]
     if not bot_active:
         logger.warning("봇 비활성 상태 — 매수 건너뜀")
         return
 
-    daily_pnl = state_db.get_meta("daily_pnl", 0) or 0
+    daily_pnl = meta["daily_pnl"] or 0
     if daily_pnl <= -MAX_DAILY_LOSS:
         logger.warning("당일 손실 한도 초과 (%d원) — 매수 중단", daily_pnl)
         state_db.set_meta("bot_active", False)
@@ -46,7 +50,7 @@ def main():
         return
 
     # 초기 자산 기록
-    if not state_db.get_meta("initial_cash"):
+    if not meta.get("initial_cash"):
         bal = kis_api.get_balance()
         state_db.set_meta("initial_cash", bal["total_eval"])
         for h in bal["holdings"]:
@@ -121,6 +125,9 @@ def main():
         except Exception as e:
             logger.error("%s 매수 실패: %s", ticker, e)
             notify.send(f"❌ 매수 실패: {ticker} — {e}")
+
+    # 거래 내역 일괄 저장
+    gist_writer.flush_trades()
 
 
 if __name__ == "__main__":

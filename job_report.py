@@ -24,8 +24,9 @@ def main():
     try:
         bal          = kis_api.get_balance()
         total        = bal["total_eval"]
-        daily_pnl    = state_db.get_meta("daily_pnl", 0) or 0
-        initial_cash = state_db.get_meta("initial_cash") or total
+        meta         = state_db.get_meta_multi(["daily_pnl", "initial_cash"], {"daily_pnl": 0})
+        daily_pnl    = meta["daily_pnl"] or 0
+        initial_cash = meta.get("initial_cash") or total
         day_ret      = (total - initial_cash) / initial_cash * 100 if initial_cash else 0
 
         logger.info("당일 실현 손익 : %+d원", daily_pnl)
@@ -76,9 +77,7 @@ def main():
         notify.send(f"❌ 리포트 오류: {e}")
 
     # 다음날 준비
-    state_db.set_meta("daily_pnl", 0)
-    state_db.set_meta("initial_cash", None)
-    state_db.set_meta("bot_active", True)
+    state_db.set_meta_multi({"daily_pnl": 0, "initial_cash": None, "bot_active": True})
     logger.info("다음날 준비 완료")
 
 

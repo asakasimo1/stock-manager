@@ -6,6 +6,7 @@
    - 수익률 -4% 이하  → 전량 즉시 매도 (손절)
 """
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone, timedelta
 
 import kis_api
@@ -103,6 +104,29 @@ def main():
     logger.info("활성 잡 %d개 처리", len(active))
     changed = False
 
+    # ── amount/pct 타입 잡만 현재가 병렬 조회 (price 타입은 주문만 냄) ──
+    poll_tickers = list({
+        j["ticker"] for j in active
+        if j.get("target_type") != "price" or j.get("status") == "active"
+    })
+
+    def _fetch_price(ticker: str):
+        try:
+            return ticker, kis_api.get_price(ticker)
+        except Exception as e:
+            logger.error("현재가 조회 실패 %s: %s", ticker, e)
+            return ticker, None
+
+    price_cache: dict = {}
+    if poll_tickers:
+        with ThreadPoolExecutor(max_workers=min(len(poll_tickers), 5)) as ex:
+            futures = {ex.submit(_fetch_price, t): t for t in poll_tickers}
+            for fut in as_completed(futures):
+                ticker_key, result = fut.result()
+                if result is not None:
+                    price_cache[ticker_key] = result
+        logger.info("현재가 병렬 조회 완료 (%d/%d)", len(price_cache), len(poll_tickers))
+
     for job in jobs:
         if job.get("status") not in ("active", "submitted"):
             continue
@@ -140,8 +164,11 @@ def main():
                             name, ticker, job.get("order_no", ""))
                 continue
 
-            # ── amount / pct 타입: 현재가 폴링 후 시장가 매도 ──────────────────
-            info = kis_api.get_price(ticker)
+            # ── amount / pct 타입: 캐시된 현재가 사용 ───────────────────────────
+            info = price_cache.get(ticker)
+            if info is None:
+                logger.warning("%s 현재가 캐시 없음 — 건너뜀", ticker)
+                continue
             cur_price = int(info["stck_prpr"])
 
             if target_type == "amount":

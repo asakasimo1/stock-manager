@@ -19,6 +19,8 @@ from datetime import datetime, timedelta, timezone, time as dt_time
 from pathlib import Path
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -41,6 +43,33 @@ BASE_URL = (
 TOKEN_FILE = Path(".token_cache.json")   # 토큰 로컬 캐시 (git 무시)
 
 _KST = timezone(timedelta(hours=9))
+
+# ─────────────────────────────────────────
+# 공유 HTTP 세션 (TLS/TCP 연결 재활용)
+# ─────────────────────────────────────────
+_session = requests.Session()
+_retry = Retry(total=3, backoff_factor=0.3,
+               status_forcelist=(500, 502, 503, 504))
+_session.mount("https://", HTTPAdapter(max_retries=_retry, pool_connections=4, pool_maxsize=10))
+
+# ─────────────────────────────────────────
+# API 응답 시간 측정 래퍼
+# ─────────────────────────────────────────
+def _api_get(url: str, **kwargs) -> requests.Response:
+    t0 = time.monotonic()
+    resp = _session.get(url, **kwargs)
+    ms = (time.monotonic() - t0) * 1000
+    label = url.replace(BASE_URL, "").split("?")[0]
+    logger.info("⏱  GET  %-52s %5.0fms  HTTP%s", label, ms, resp.status_code)
+    return resp
+
+def _api_post(url: str, **kwargs) -> requests.Response:
+    t0 = time.monotonic()
+    resp = _session.post(url, **kwargs)
+    ms = (time.monotonic() - t0) * 1000
+    label = url.replace(BASE_URL, "").split("?")[0]
+    logger.info("⏱  POST %-52s %5.0fms  HTTP%s", label, ms, resp.status_code)
+    return resp
 
 # ─────────────────────────────────────────
 # NXT (넥스트트레이드) 시간 감지
@@ -95,7 +124,7 @@ def get_token(force_refresh: bool = False) -> str:
             pass
 
     # 새로 발급
-    resp = requests.post(
+    resp = _api_post(
         f"{BASE_URL}/oauth2/tokenP",
         json={
             "grant_type": "client_credentials",
@@ -162,7 +191,7 @@ def get_price(ticker: str) -> dict:
     # NXT 시간대: NXT 가격 우선 조회
     if not PAPER and _is_nxt_time():
         try:
-            resp = requests.get(
+            resp = _api_get(
                 f"{BASE_URL}/uapi/domestic-stock/v1/quotations/inquire-price",
                 headers=_headers(tr_id),
                 params={"fid_cond_mrkt_div_code": "NX", "fid_input_iscd": ticker},
@@ -178,7 +207,7 @@ def get_price(ticker: str) -> dict:
             logger.debug("NXT 시세 조회 실패(%s) — KRX 폴백: %s", ticker, e)
 
     # KRX 시세 (기본)
-    resp = requests.get(
+    resp = _api_get(
         f"{BASE_URL}/uapi/domestic-stock/v1/quotations/inquire-price",
         headers=_headers(tr_id),
         params={"fid_cond_mrkt_div_code": "J", "fid_input_iscd": ticker},
@@ -204,7 +233,7 @@ def get_balance() -> dict:
     cano, acnt = _account_parts()
     tr_id = "VTTC8434R" if PAPER else "TTTC8434R"
 
-    resp = requests.get(
+    resp = _api_get(
         f"{BASE_URL}/uapi/domestic-stock/v1/trading/inquire-balance",
         headers=_headers(tr_id, {"tr_cont": ""}),
         params={
@@ -305,7 +334,7 @@ def place_order(ticker: str, side: str, qty: int,
         "ORD_SVR_DVSN_CD":  "N" if nxt else "0",  # N=NXT, 0=KRX
     }
 
-    resp = requests.post(
+    resp = _api_post(
         f"{BASE_URL}/uapi/domestic-stock/v1/trading/order-cash",
         headers=_headers(tr_id),
         json=body,
@@ -330,7 +359,7 @@ def place_order(ticker: str, side: str, qty: int,
 def get_pending_orders() -> list[dict]:
     """당일 미체결 주문 목록 반환"""
     cano, acnt = _account_parts()
-    resp = requests.get(
+    resp = _api_get(
         f"{BASE_URL}/uapi/domestic-stock/v1/trading/inquire-psbl-rvsecncl",
         headers=_headers("VTTC8036R" if PAPER else "TTTC8036R"),
         params={

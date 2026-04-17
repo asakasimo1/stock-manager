@@ -70,6 +70,7 @@ jobs:
         with:
           path: ~/.cache/pip
           key: pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: pip-
       - run: pip install -r requirements.txt
       - name: 신호 생성 (job_signals.py)
         run: python job_signals.py
@@ -88,6 +89,7 @@ jobs:
         with:
           path: ~/.cache/pip
           key: pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: pip-
       - run: pip install -r requirements.txt
       - run: python job_signals.py
 
@@ -103,6 +105,7 @@ jobs:
         with:
           path: ~/.cache/pip
           key: pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: pip-
       - run: pip install -r requirements.txt
       - run: python job_buy.py
 
@@ -118,6 +121,7 @@ jobs:
         with:
           path: ~/.cache/pip
           key: pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: pip-
       - run: pip install -r requirements.txt
       - run: python job_monitor.py
 
@@ -133,6 +137,7 @@ jobs:
         with:
           path: ~/.cache/pip
           key: pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: pip-
       - run: pip install -r requirements.txt
       - run: python job_close.py
 
@@ -148,6 +153,7 @@ jobs:
         with:
           path: ~/.cache/pip
           key: pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: pip-
       - run: pip install -r requirements.txt
       - run: python job_report.py
 
@@ -163,6 +169,7 @@ jobs:
         with:
           path: ~/.cache/pip
           key: pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: pip-
       - run: pip install -r requirements.txt
       - run: python job_factor_rebalance.py
 
@@ -185,6 +192,7 @@ jobs:
         with:
           path: ~/.cache/pip
           key: pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: pip-
       - run: pip install -r requirements.txt
       - run: python job_profit_buy_cloud.py
       - run: python job_profit_sell_cloud.py
@@ -218,6 +226,7 @@ jobs:
         with:
           path: ~/.cache/pip
           key: pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: pip-
       - run: pip install -r requirements.txt
       - name: 모니터링 실행
         run: python monitor_036030.py
@@ -246,6 +255,7 @@ jobs:
         with:
           path: ~/.cache/pip
           key: pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: pip-
       - run: pip install -r requirements.txt
       - run: python job_cycle_cloud.py
       - name: 로그 파일 커밋
@@ -270,6 +280,7 @@ jobs:
         with:
           path: ~/.cache/pip
           key: pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: pip-
       - run: pip install -r requirements.txt
       - run: python job_balance.py
 

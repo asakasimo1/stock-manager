@@ -19,8 +19,9 @@ def main():
     logger.info("잔고 조회 시작")
     try:
         bal          = kis_api.get_balance()
-        daily_pnl    = state_db.get_meta("daily_pnl", 0) or 0
-        initial_cash = state_db.get_meta("initial_cash") or bal["total_eval"]
+        meta         = state_db.get_meta_multi(["daily_pnl", "initial_cash"], {"daily_pnl": 0})
+        daily_pnl    = meta["daily_pnl"] or 0
+        initial_cash = meta.get("initial_cash") or bal["total_eval"]
         day_ret      = round((bal["total_eval"] - initial_cash) / initial_cash * 100, 2) if initial_cash else 0
 
         now_kst = datetime.now(KST).strftime("%Y-%m-%d %H:%M")

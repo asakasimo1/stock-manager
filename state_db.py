@@ -39,7 +39,7 @@ def get_client() -> Client:
 # ─────────────────────────────────────────
 def get_positions() -> dict:
     """현재 보유 포지션 반환 {ticker: {name, buy_price, qty, tp, sl, buy_date}}"""
-    rows = get_client().table("positions").select("*").execute().data
+    rows = get_client().table("positions").select("ticker,name,buy_price,qty,tp,sl,buy_date").execute().data
     result = {}
     for r in rows:
         result[r["ticker"]] = {
@@ -76,7 +76,7 @@ def get_watchlist() -> list:
     """오늘 날짜 매수 후보 반환"""
     today = _today_kst()
     rows = (get_client().table("watchlist")
-            .select("*").eq("signal_date", today).execute().data)
+            .select("ticker,name,vol_ratio,day_return").eq("signal_date", today).execute().data)
     return [{"ticker":     r["ticker"],
              "name":       r["name"],
              "vol_ratio":  r.get("vol_ratio", 0),
@@ -84,9 +84,12 @@ def get_watchlist() -> list:
 
 
 def set_watchlist(candidates: list):
-    """오늘 watchlist 교체"""
+    """오늘 watchlist 교체 + 7일 이전 오래된 데이터 정리"""
     today = _today_kst()
-    get_client().table("watchlist").delete().eq("signal_date", today).execute()
+    cutoff = (datetime.now(KST) - timedelta(days=7)).strftime("%Y-%m-%d")
+    client = get_client()
+    client.table("watchlist").delete().lt("signal_date", cutoff).execute()  # 오래된 행 정리
+    client.table("watchlist").delete().eq("signal_date", today).execute()   # 오늘 데이터 교체
     if candidates:
         rows = [{"ticker":     c["ticker"],
                  "name":       c.get("name", ""),
@@ -104,17 +107,36 @@ def get_meta(key: str, default=None):
     return rows[0]["value"] if rows else default
 
 
+def get_meta_multi(keys: list, defaults: dict = None) -> dict:
+    """여러 키를 한 번의 쿼리로 조회 — get_meta() 다중 호출 대체"""
+    rows = (get_client().table("trading_meta")
+            .select("key,value").in_("key", keys).execute().data)
+    result = {r["key"]: r["value"] for r in rows}
+    if defaults:
+        for k, v in defaults.items():
+            result.setdefault(k, v)
+    return result
+
+
 def set_meta(key: str, value):
     get_client().table("trading_meta").upsert(
         {"key": key, "value": value}
     ).execute()
 
 
+def set_meta_multi(data: dict):
+    """여러 키를 한 번의 upsert로 저장 — set_meta() 다중 호출 대체"""
+    rows = [{"key": k, "value": v} for k, v in data.items()]
+    get_client().table("trading_meta").upsert(rows).execute()
+
+
 # ─────────────────────────────────────────
 # 팩터 포지션 (월간 리밸런싱 장기 보유)
 # ─────────────────────────────────────────
 def get_factor_positions() -> dict:
-    rows = get_client().table("factor_positions").select("*").execute().data
+    rows = get_client().table("factor_positions").select(
+        "ticker,name,buy_price,qty,buy_date,score,pbr,per,roe,momentum_12m"
+    ).execute().data
     result = {}
     for r in rows:
         result[r["ticker"]] = {
@@ -148,6 +170,20 @@ def upsert_factor_position(ticker: str, pos: dict):
 
 def delete_factor_position(ticker: str):
     get_client().table("factor_positions").delete().eq("ticker", ticker).execute()
+
+
+def delete_factor_positions(tickers: list):
+    """여러 팩터 포지션을 한 번의 DELETE로 제거"""
+    if not tickers:
+        return
+    get_client().table("factor_positions").delete().in_("ticker", list(tickers)).execute()
+
+
+def upsert_factor_positions(positions_data: list):
+    """여러 팩터 포지션을 한 번의 upsert로 저장"""
+    if not positions_data:
+        return
+    get_client().table("factor_positions").upsert(positions_data).execute()
 
 
 # ─────────────────────────────────────────

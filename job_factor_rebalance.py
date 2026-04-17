@@ -62,18 +62,26 @@ def main():
                 len(to_hold), len(to_sell), len(to_buy))
 
     # ── 3. 탈락 종목 매도 ─────────────────────
-    pnl_total = 0
+    # 매도 전 잔고에서 현재가 일괄 획득
+    try:
+        bal_pre   = kis_api.get_balance()
+        price_map = {h["ticker"]: h["eval_price"] for h in bal_pre["holdings"]}
+    except Exception as e:
+        logger.warning("잔고 조회 실패, get_price() 폴백: %s", e)
+        price_map = {}
+
+    pnl_total  = 0
+    sold_tickers = []
     for ticker in to_sell:
         pos = cur_positions[ticker]
         try:
-            price_info = kis_api.get_price(ticker)
-            cur_price  = int(price_info["stck_prpr"])
+            cur_price = price_map.get(ticker) or int(kis_api.get_price(ticker)["stck_prpr"])
             result     = kis_api.place_order(ticker, "SELL", pos["qty"])
             pnl        = (cur_price - pos["buy_price"]) * pos["qty"]
             pnl_pct    = (cur_price - pos["buy_price"]) / pos["buy_price"] * 100
             pnl_total += pnl
+            sold_tickers.append(ticker)
 
-            state_db.delete_factor_position(ticker)
             notify.send(
                 f"📤 <b>[팩터] 리밸런싱 매도</b>  {pos.get('name','')} ({ticker})\n"
                 f"  보유기간: {(date.today() - pos['buy_date']).days}일\n"
@@ -85,12 +93,16 @@ def main():
             logger.error("%s 팩터 매도 실패: %s", ticker, e)
             notify.send(f"❌ [팩터] 매도 실패: {ticker} — {e}")
 
+    # 매도된 포지션 일괄 삭제 (N번 DELETE → 1번)
+    if sold_tickers:
+        state_db.delete_factor_positions(sold_tickers)
+
     # ── 4. 신규 종목 매수 ─────────────────────
     if to_buy:
+        # 매도 후 갱신된 잔고 재조회 (bal_pre는 매도 전 스냅샷)
         try:
             bal  = kis_api.get_balance()
             cash = bal["cash"]
-            time.sleep(0.3)
         except Exception as e:
             logger.error("잔고 조회 실패: %s", e)
             notify.send(f"❌ [팩터] 잔고 조회 실패 — {e}")
@@ -105,6 +117,8 @@ def main():
         alloc_per = cash // len(buy_list) if buy_list else 0
         if FACTOR_ORDER_AMOUNT > 0:
             alloc_per = min(alloc_per, FACTOR_ORDER_AMOUNT)
+
+        new_positions_rows = []   # 배치 upsert용 누적
 
         for ticker in buy_list:
             sig = new_picks[ticker]
@@ -122,11 +136,12 @@ def main():
                 result = kis_api.place_order(ticker, "BUY", qty)
                 amount = qty * cur_price
 
-                state_db.upsert_factor_position(ticker, {
+                new_positions_rows.append({
+                    "ticker":       ticker,
                     "name":         sig.get("name", ""),
                     "buy_price":    cur_price,
                     "qty":          qty,
-                    "buy_date":     date.today(),
+                    "buy_date":     str(date.today()),
                     "score":        float(sig.get("score", 0)),
                     "pbr":          float(sig.get("pbr", 0)),
                     "per":          float(sig.get("per", 0)),
@@ -148,6 +163,11 @@ def main():
             except Exception as e:
                 logger.error("%s 팩터 매수 실패: %s", ticker, e)
                 notify.send(f"❌ [팩터] 매수 실패: {ticker} — {e}")
+
+        # 신규 포지션 일괄 upsert (N번 → 1번)
+        if new_positions_rows:
+            state_db.upsert_factor_positions(new_positions_rows)
+            logger.info("팩터 포지션 배치 저장 완료 (%d건)", len(new_positions_rows))
 
     # ── 5. 리밸런싱 요약 알림 ─────────────────
     factor_positions = state_db.get_factor_positions()
