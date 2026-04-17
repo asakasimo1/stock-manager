@@ -128,3 +128,11 @@
 2026-04-17 15:38:46,561 KST INFO   · 빅텍(065450) status=cancelled phase=-
 2026-04-17 15:38:46,561 KST INFO   · 빅텍(065450) status=cancelled phase=-
 2026-04-17 15:38:46,561 KST INFO 활성 매수 잡 없음 — 종료
+2026-04-17 17:47:18,307 KST INFO 매수 잡 체크 시작 [NXT 시간대]
+2026-04-17 17:47:18,580 KST INFO Gist에서 총 5개 잡 로드
+2026-04-17 17:47:18,580 KST INFO   · 빅텍(078600) status=cancelled phase=-
+2026-04-17 17:47:18,580 KST INFO   · 빅텍(065450) status=done phase=-
+2026-04-17 17:47:18,580 KST INFO   · 빅텍(065450) status=cancelled phase=-
+2026-04-17 17:47:18,580 KST INFO   · 빅텍(065450) status=cancelled phase=-
+2026-04-17 17:47:18,580 KST INFO   · 빅텍(065450) status=cancelled phase=-
+2026-04-17 17:47:18,580 KST INFO 활성 매수 잡 없음 — 종료
