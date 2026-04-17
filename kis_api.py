@@ -146,7 +146,39 @@ def get_token(force_refresh: bool = False) -> str:
     _save_token_cache(_token_cache)
 
     logger.info("토큰 발급 완료  만료: %s", expires_at)
+    _notify_token_issued(expires_at)
     return _token_cache["access_token"]
+
+
+def _notify_token_issued(expires_at: str):
+    """토큰 신규 발급 시 텔레그램으로 GitHub Actions 컨텍스트 알림"""
+    try:
+        import notify as _notify
+
+        # GitHub Actions 환경변수 (로컬 실행 시 기본값)
+        workflow = os.getenv("GITHUB_WORKFLOW", "로컬 실행")
+        job      = os.getenv("GITHUB_JOB",      "")
+        trigger  = os.getenv("GITHUB_EVENT_NAME", "manual")
+        run_id   = os.getenv("GITHUB_RUN_ID",   "")
+
+        now_kst    = datetime.now(_KST).strftime("%Y-%m-%d %H:%M")
+        expire_kst = (datetime.fromisoformat(expires_at) + timedelta(hours=9)).strftime("%m/%d %H:%M")
+
+        job_line     = f"  잡: <b>{job}</b>\n" if job else ""
+        run_line     = f"  Run ID: {run_id}\n" if run_id else ""
+        trigger_icon = "⏰" if trigger == "schedule" else "🖱"
+
+        _notify.send(
+            f"🔑 <b>KIS API 토큰 발급</b>\n"
+            f"  시각: {now_kst} KST\n"
+            f"  워크플로우: {workflow}\n"
+            f"{job_line}"
+            f"  트리거: {trigger_icon} {trigger}\n"
+            f"{run_line}"
+            f"  토큰 만료: {expire_kst} KST"
+        )
+    except Exception as e:
+        logger.debug("토큰 발급 알림 전송 실패 (무시): %s", e)
 
 
 # ─────────────────────────────────────────
