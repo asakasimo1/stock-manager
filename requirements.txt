@@ -8,3 +8,4 @@ supabase>=2.0.0
 requests>=2.31.0
 finance-datareader>=0.9.50
 apscheduler>=3.10.0
+PyJWT>=2.8.0
