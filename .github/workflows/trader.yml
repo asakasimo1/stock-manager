@@ -15,6 +15,8 @@ on:
     - cron: '*/5 23 * * 0-4'   # 08:00~08:59 KST 매 5분 — NXT 장전 (일~목 UTC)
     - cron: '*/5 7-10 * * 1-5' # 16:00~19:59 KST 매 5분 — NXT 장후
     - cron: '0 23 * * 0-4'     # 08:00 KST 매일 — 로그 정리
+    # ── 코인 자동매매 (24/7, 매 5분) ─────────────────────────────
+    - cron: '*/5 * * * *'      # 매 5분 — 코인 매수/매도/사이클 체크
   workflow_dispatch:           # 수동 실행 (테스트용)
     inputs:
       job:
@@ -36,6 +38,8 @@ on:
           - monitor_036030
           - cleanup_logs
           - force_done_submitted
+          - coin_buy
+          - coin_sell
       force_done_ticker:
         description: 'force_done_submitted 전용: 완료 처리할 종목명 또는 코드 (비우면 전체 submitted 완료)'
         required: false
@@ -58,6 +62,8 @@ env:
   FACTOR_ORDER_AMOUNT:   ${{ secrets.FACTOR_ORDER_AMOUNT }}
   GIST_ID:               ${{ secrets.GIST_ID }}
   GH_TOKEN:              ${{ secrets.GH_TOKEN }}
+  UPBIT_ACCESS_KEY:      ${{ secrets.UPBIT_ACCESS_KEY }}
+  UPBIT_SECRET_KEY:      ${{ secrets.UPBIT_SECRET_KEY }}
 
 jobs:
   # ── 오늘 테스트: 신호 생성 → 즉시 매수 연속 실행 ──
@@ -363,3 +369,25 @@ jobs:
           PYEOF
         env:
           FORCE_DONE_TICKER: ${{ github.event.inputs.force_done_ticker }}
+
+  # ── 코인 자동매매 (24/7, 매 5분) — Vercel coin-runner 호출 ──
+  # Upbit API는 Vercel 고정 IP에서 직접 호출되므로 GitHub Actions에서는 curl만 실행
+  coin_buy:
+    if: github.event.schedule == '*/5 * * * *' || (github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'coin_buy')
+    runs-on: ubuntu-latest
+    steps:
+      - name: 코인 매수 잡 실행 (Vercel 경유)
+        run: |
+          SECRET="${{ secrets.COIN_RUNNER_SECRET }}"
+          QS="mode=buy${SECRET:+&secret=$SECRET}"
+          curl -sf "${{ secrets.VERCEL_URL }}/api/coin-runner?$QS" || true
+
+  coin_sell:
+    if: github.event.schedule == '*/5 * * * *' || (github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'coin_sell')
+    runs-on: ubuntu-latest
+    steps:
+      - name: 코인 매도·사이클 잡 실행 (Vercel 경유)
+        run: |
+          SECRET="${{ secrets.COIN_RUNNER_SECRET }}"
+          QS="mode=sell${SECRET:+&secret=$SECRET}"
+          curl -sf "${{ secrets.VERCEL_URL }}/api/coin-runner?$QS" || true
