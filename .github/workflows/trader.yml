@@ -40,6 +40,7 @@ on:
           - force_done_submitted
           - coin_buy
           - coin_sell
+          - coin_balance
       force_done_ticker:
         description: 'force_done_submitted 전용: 완료 처리할 종목명 또는 코드 (비우면 전체 submitted 완료)'
         required: false
@@ -390,4 +391,14 @@ jobs:
         run: |
           SECRET="${{ secrets.COIN_RUNNER_SECRET }}"
           QS="mode=sell${SECRET:+&secret=$SECRET}"
+          curl -sf "${{ secrets.VERCEL_URL }}/api/coin-runner?$QS" || true
+
+  coin_balance:
+    if: github.event.schedule == '*/5 * * * *' || (github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'coin_balance')
+    runs-on: ubuntu-latest
+    steps:
+      - name: 코인 잔고 현행화 (Vercel 경유)
+        run: |
+          SECRET="${{ secrets.COIN_RUNNER_SECRET }}"
+          QS="mode=balance${SECRET:+&secret=$SECRET}"
           curl -sf "${{ secrets.VERCEL_URL }}/api/coin-runner?$QS" || true
