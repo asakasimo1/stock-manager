@@ -73,6 +73,9 @@ def main():
         # ── 시장가 즉시 매수 ──────────────────────────────────────
         if cond == "market_krw":
             krw_amount = float(job.get("krw_amount", 0))
+            coin_qty   = float(job.get("coin_qty", 0))
+            if krw_amount <= 0 and coin_qty > 0:
+                krw_amount = round(coin_qty * cur_price)
             if krw_amount <= 0:
                 logger.warning("%s(%s) KRW 금액 미설정 — 건너뜀", name, ticker)
                 continue
