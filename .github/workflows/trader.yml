@@ -222,11 +222,9 @@ jobs:
             sleep 5
           done
 
-  # ── 케이티알파(036030) 목표가 모니터링 (KRX 09:00~15:35 매 5분) ──
+  # ── 케이티알파(036030) 목표가 모니터링 (수동 실행 전용) ──
   monitor_036030:
-    if: >
-      github.event.schedule == '*/5 0-6 * * 1-5' ||
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'monitor_036030')
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'monitor_036030'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
