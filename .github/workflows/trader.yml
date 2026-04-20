@@ -214,12 +214,13 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          for i in 1 2 3; do
-            git pull --rebase origin main && break || sleep 3
-          done
           git add profit_buy_cloud.log profit_sell_cloud.log
-          git diff --cached --quiet || git commit -m "logs: profit/sell 업데이트 $(date +'%Y-%m-%d %H:%M') KST [skip ci]"
-          git push origin HEAD:main || (git pull --rebase origin main && git push origin HEAD:main)
+          git diff --cached --quiet && exit 0
+          git commit -m "logs: profit/sell 업데이트 $(date +'%Y-%m-%d %H:%M') KST [skip ci]"
+          for i in 1 2 3; do
+            git pull --rebase origin main && git push origin HEAD:main && break
+            sleep 5
+          done
 
   # ── 케이티알파(036030) 목표가 모니터링 (KRX 09:00~15:35 매 5분) ──
   monitor_036030:
