@@ -215,16 +215,16 @@ def process_cycle_jobs():
                 coin_qty   = float(job.get("coin_qty", 0))
 
                 if krw_amount > 0 and coin_qty <= 0:
-                    # 시장가 매수
                     result = upbit_api.place_order(
                         market=ticker, side="bid", ord_type="price", price=krw_amount
                     )
-                    coin_qty = round(krw_amount / cur_price, 8)
+                    coin_qty = math.floor(krw_amount / cur_price * (1 - BUY_FEE) * 1e8) / 1e8
                 elif coin_qty > 0:
                     result = upbit_api.place_order(
                         market=ticker, side="bid", ord_type="price",
                         price=cur_price * coin_qty
                     )
+                    coin_qty = math.floor(coin_qty * (1 - BUY_FEE) * 1e8) / 1e8
                 else:
                     logger.warning("%s(%s) 수량/금액 미설정 — 건너뜀", name, ticker)
                     continue
@@ -296,12 +296,13 @@ def process_cycle_jobs():
                     result = upbit_api.place_order(
                         market=ticker, side="bid", ord_type="price", price=krw_amount
                     )
-                    coin_qty = round(krw_amount / cur_price, 8)
+                    coin_qty = math.floor(krw_amount / cur_price * (1 - BUY_FEE) * 1e8) / 1e8
                 elif coin_qty > 0:
                     result = upbit_api.place_order(
                         market=ticker, side="bid", ord_type="price",
                         price=cur_price * coin_qty
                     )
+                    coin_qty = math.floor(coin_qty * (1 - BUY_FEE) * 1e8) / 1e8
                 else:
                     continue
 
