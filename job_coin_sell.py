@@ -181,6 +181,14 @@ def process_cycle_jobs():
         logger.error("현재가 조회 실패: %s", e)
         return
 
+    # 실제 보유 잔고 조회 (매도 수량 보정용)
+    actual_qty: dict = {}
+    try:
+        bal = upbit_api.get_balance()
+        actual_qty = {h["ticker"]: h["qty"] for h in bal.get("holdings", [])}
+    except Exception as e:
+        logger.warning("잔고 조회 실패 (수량 보정 불가): %s", e)
+
     changed = False
     for job in jobs:
         if job.get("status") in ("done", "cancelled", "stopped"):
@@ -255,8 +263,15 @@ def process_cycle_jobs():
 
             logger.info("★ [holding] 매도 실행: %s(%s) @ %s원", name, ticker, f"{cur_price:,.0f}")
             try:
+                real_qty = actual_qty.get(ticker, hold_qty)
+                sell_qty = min(hold_qty, real_qty)
+                if sell_qty <= 0:
+                    logger.error("%s 매도 가능 수량 없음 (실제잔고: %s)", ticker, real_qty)
+                    continue
+                if real_qty < hold_qty:
+                    logger.info("  수량 보정: Gist %.8f → 실제잔고 %.8f", hold_qty, real_qty)
                 result = upbit_api.place_order(
-                    market=ticker, side="ask", ord_type="market", volume=hold_qty
+                    market=ticker, side="ask", ord_type="market", volume=sell_qty
                 )
                 rebuy_price = cur_price * (1 - rebuy_drop / 100)
                 job["phase"]        = "waiting_rebuy"
