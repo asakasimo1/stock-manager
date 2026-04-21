@@ -147,7 +147,8 @@ def main():
     active = [j for j in jobs if j.get("status") == "active"]
 
     if not active:
-        logger.info("활성 매수 잡 없음 — 종료")
+        logger.info("활성 매수 잡 없음")
+        process_cycle_buy()
         return
 
     logger.info("활성 잡 %d개 처리", len(active))
