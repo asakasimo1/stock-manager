@@ -402,8 +402,10 @@ jobs:
 
   # ── 코인 잔고 현행화 (5분마다 + 수동) ────────
   coin_balance:
+    needs: [coin_buy, coin_sell]
     if: >
-      (github.event_name == 'schedule') ||
+      always() &&
+      (needs.coin_buy.result == 'success' || needs.coin_sell.result == 'success') ||
       (github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'coin_balance')
     runs-on: ubuntu-latest
     steps:
