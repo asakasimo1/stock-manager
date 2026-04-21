@@ -41,6 +41,7 @@ COIN_NAMES = {
     "KRW-ETH":  "이더리움",
     "KRW-XRP":  "리플",
     "KRW-SOL":  "솔라나",
+    "KRW-USDT": "테더",
     "KRW-DOGE": "도지코인",
     "KRW-ADA":  "에이다",
     "KRW-AVAX": "아발란체",
@@ -57,6 +58,19 @@ COIN_NAMES = {
     "KRW-AAVE": "에이브",
     "KRW-UNI":  "유니스왑",
     "KRW-SAND": "샌드박스",
+    "KRW-SUI":  "수이",
+    "KRW-HBAR": "헤데라",
+    "KRW-ARB":  "아비트럼",
+    "KRW-OP":   "옵티미즘",
+    "KRW-XLM":  "스텔라루멘",
+    "KRW-ALGO": "알고랜드",
+    "KRW-FLOW": "플로우",
+    "KRW-MANA": "디센트럴랜드",
+    "KRW-CHZ":  "칠리즈",
+    "KRW-KLAY": "클레이튼",
+    "KRW-FIL":  "파일코인",
+    "KRW-ICP":  "인터넷컴퓨터",
+    "KRW-SEI":  "세이",
 }
 
 BUY_FEE  = 0.0005   # 0.05% (업비트 기본 수수료)
