@@ -418,4 +418,4 @@ jobs:
           key: pip-${{ hashFiles('requirements.txt') }}
           restore-keys: pip-
       - run: pip install -r requirements.txt
-      - run: python job_balance.py
+      - run: python job_coin_balance.py
