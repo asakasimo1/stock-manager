@@ -132,7 +132,7 @@ def get_price(market: str) -> dict:
     }
 
 
-def get_prices(markets: list[str]) -> dict:
+def get_prices(markets: list) -> dict:
     """복수 코인 현재가 일괄 조회
     Returns: {'KRW-BTC': {'price': ..., 'chg_pct': ...}, ...}
     """
