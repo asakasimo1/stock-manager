@@ -49,10 +49,10 @@ def calc_net_pnl_pct(buy_price: float, cur_price: float) -> float:
 
 
 def calc_sell_price(buy_price: float, take_pct: float) -> float:
-    """take_pct 순이익률 달성을 위한 최소 매도 단가"""
+    """take_pct 순이익률 달성을 위한 최소 매도 단가 (원 단위 올림)"""
     cost_per = buy_price * (1 + BUY_FEE)
     target_net_per = cost_per * (1 + take_pct / 100)
-    return target_net_per / (1 - SELL_FEE)
+    return math.ceil(target_net_per / (1 - SELL_FEE))
 
 
 # ─────────────────────────────────────────
@@ -273,7 +273,7 @@ def process_cycle_jobs():
                 result = upbit_api.place_order(
                     market=ticker, side="ask", ord_type="market", volume=sell_qty
                 )
-                rebuy_price = cur_price * (1 - rebuy_drop / 100)
+                rebuy_price = math.floor(cur_price * (1 - rebuy_drop / 100))
                 job["phase"]        = "waiting_rebuy"
                 job["sell_price_exec"] = cur_price
                 job["rebuy_price"]  = rebuy_price
