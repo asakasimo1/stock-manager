@@ -74,15 +74,64 @@ def process_cycle_buy():
         if not cur_price:
             continue
 
-        if cond_type == "limit" and buy_target > 0 and cur_price > buy_target:
-            logger.info("  %s(%s) 매수 대기 현재가 %s / 목표 %s",
-                        name, ticker, f"{cur_price:,.0f}", f"{buy_target:,.0f}")
+        # ── 지정가 즉시 등록 / 체결 확인 ──────────────────────────────
+        if cond_type == "limit":
+            buy_order_uuid = job.get("buy_order_uuid", "")
+            if buy_order_uuid:
+                try:
+                    order = upbit_api.get_order(buy_order_uuid)
+                    state = order["state"]
+                    if state == "done":
+                        ev = order["executed_volume"]
+                        ap = order["avg_price"] or buy_target
+                        job["phase"]      = "holding"
+                        job["buy_price"]  = ap
+                        job["hold_qty"]   = ev
+                        job["sell_price"] = _calc_sell_price(ap, take_pct)
+                        job["bought_at"]  = now_kst()
+                        changed = True
+                        logger.info("지정가 매수 체결 %s %.8f개 @ %s원 → 목표: %s원",
+                                    ticker, ev, f"{ap:,.0f}", f"{job['sell_price']:,.0f}")
+                    elif state == "cancel":
+                        job["buy_order_uuid"] = ""
+                        changed = True
+                        logger.info("%s 지정가 매수 취소 — 재등록 예정", ticker)
+                    else:
+                        logger.info("  %s(%s) 지정가 매수 대기 @ %s원",
+                                    name, ticker, f"{buy_target:,.0f}")
+                except Exception as e:
+                    logger.error("%s 주문 조회 실패: %s", ticker, e)
+            else:
+                if buy_target <= 0:
+                    logger.warning("%s(%s) 지정가 미설정 — 건너뜀", name, ticker)
+                    continue
+                krw_amount = float(job.get("krw_amount", 0))
+                coin_qty   = float(job.get("coin_qty", 0))
+                if krw_amount > 0 and coin_qty <= 0:
+                    coin_qty = math.floor(krw_amount / buy_target * 1e8) / 1e8
+                if coin_qty <= 0:
+                    logger.warning("%s(%s) 수량/금액 미설정 — 건너뜀", name, ticker)
+                    continue
+                logger.info("★ [cycle waiting_buy] 지정가 주문 등록: %s(%s) %.8f개 @ %s원",
+                            name, ticker, coin_qty, f"{buy_target:,.0f}")
+                try:
+                    result = upbit_api.place_order(
+                        market=ticker, side="bid", ord_type="limit",
+                        volume=coin_qty, price=buy_target
+                    )
+                    job["buy_order_uuid"] = result.get("uuid", "")
+                    changed = True
+                    logger.info("지정가 주문 등록 %s %.8f개 @ %s원  UUID: %s",
+                                ticker, coin_qty, f"{buy_target:,.0f}", result.get("uuid", ""))
+                except Exception as e:
+                    logger.error("%s 지정가 매수 주문 실패: %s", ticker, e)
             continue
 
+        # ── 시장가 즉시 매수 ────────────────────────────────────────
         krw_amount = float(job.get("krw_amount", 0))
         coin_qty   = float(job.get("coin_qty", 0))
 
-        logger.info("★ [cycle waiting_buy] 매수 실행: %s(%s) @ %s원", name, ticker, f"{cur_price:,.0f}")
+        logger.info("★ [cycle waiting_buy] 시장가 매수 실행: %s(%s) @ %s원", name, ticker, f"{cur_price:,.0f}")
         try:
             if krw_amount > 0 and coin_qty <= 0:
                 result = upbit_api.place_order(
@@ -125,7 +174,7 @@ def main():
     jobs = raw if isinstance(raw, list) else []
     logger.info("Gist에서 총 %d개 잡 로드", len(jobs))
 
-    active = [j for j in jobs if j.get("status") == "active"]
+    active = [j for j in jobs if j.get("status") in ("active", "submitted")]
     if not active:
         logger.info("활성 매수 잡 없음")
         process_cycle_buy()
@@ -143,7 +192,7 @@ def main():
         logger.error("현재가 일괄 조회 실패: %s", e)
 
     for job in jobs:
-        if job.get("status") != "active":
+        if job.get("status") not in ("active", "submitted"):
             continue
 
         ticker = job["ticker"]
@@ -189,32 +238,56 @@ def main():
             except Exception as e:
                 logger.error("%s 시장가 매수 실패: %s", ticker, e)
 
-        # ── 지정가 조건부 매수 ────────────────────────────────────
+        # ── 지정가 즉시 주문 등록 / 체결 확인 ──────────────────────────────
         elif cond == "limit":
             target_price = float(job.get("target_price", 0))
             if target_price <= 0:
                 logger.warning("%s(%s) 목표가 미설정 — 건너뜀", name, ticker)
                 continue
 
-            logger.info("  %s(%s) 현재가 %s / 목표가 %s",
-                        name, ticker, f"{cur_price:,.0f}", f"{target_price:,.0f}")
+            status = job.get("status")
 
-            if cur_price > target_price:
-                logger.info("  → 조건 미달 (현재가 > 목표가)")
+            # submitted → 체결 확인
+            if status == "submitted":
+                order_uuid = job.get("order_uuid", "")
+                if not order_uuid:
+                    job["status"] = "active"
+                    changed = True
+                    continue
+                try:
+                    order = upbit_api.get_order(order_uuid)
+                    state = order["state"]
+                    if state == "done":
+                        job["status"]      = "done"
+                        job["executed_at"] = now_kst()
+                        job["exec_price"]  = order["avg_price"] or target_price
+                        job["exec_qty"]    = order["executed_volume"]
+                        changed = True
+                        logger.info("지정가 매수 체결 완료 %s @ %s원  UUID: %s",
+                                    ticker, f"{target_price:,.0f}", order_uuid)
+                    elif state == "cancel":
+                        job["status"] = "cancelled"
+                        changed = True
+                        logger.info("%s 지정가 주문 취소됨", ticker)
+                    else:
+                        logger.info("  %s(%s) 지정가 주문 대기 중 (state=%s)",
+                                    name, ticker, state)
+                except Exception as e:
+                    logger.error("%s 주문 조회 실패: %s", ticker, e)
                 continue
 
-            # 목표가 이하 달성 → 지정가로 매수
+            # active → 즉시 지정가 주문 등록
             krw_amount = float(job.get("krw_amount", 0))
             coin_qty   = float(job.get("coin_qty", 0))
 
             if krw_amount > 0 and coin_qty <= 0:
-                coin_qty = round(krw_amount / target_price, 8)
+                coin_qty = math.floor(krw_amount / target_price * 1e8) / 1e8
 
             if coin_qty <= 0:
                 logger.warning("%s(%s) 수량 계산 불가 — 건너뜀", name, ticker)
                 continue
 
-            logger.info("★ 지정가 매수 실행: %s(%s) %.8f개 @ %s원",
+            logger.info("★ 지정가 매수 주문 등록: %s(%s) %.8f개 @ %s원",
                         name, ticker, coin_qty, f"{target_price:,.0f}")
             try:
                 result = upbit_api.place_order(
@@ -224,13 +297,12 @@ def main():
                     volume=coin_qty,
                     price=target_price,
                 )
-                job["status"]      = "done"
-                job["executed_at"] = now_kst()
-                job["order_uuid"]  = result.get("uuid", "")
-                job["exec_price"]  = target_price
-                job["exec_qty"]    = coin_qty
+                job["status"]     = "submitted"
+                job["order_uuid"] = result.get("uuid", "")
+                job["exec_price"] = target_price
+                job["exec_qty"]   = coin_qty
                 changed = True
-                logger.info("지정가 매수 완료 %s %.8f개 @ %s원  UUID: %s",
+                logger.info("지정가 주문 등록 완료 %s %.8f개 @ %s원  UUID: %s",
                             ticker, coin_qty, f"{target_price:,.0f}", result.get("uuid", ""))
             except Exception as e:
                 logger.error("%s 지정가 매수 실패: %s", ticker, e)

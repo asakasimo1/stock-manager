@@ -212,12 +212,60 @@ def process_cycle_jobs():
 
         # ── [waiting_buy] 단계 ──────────────────────────────────
         if phase == "waiting_buy":
-            if cond_type == "limit" and buy_target > 0 and cur_price > buy_target:
-                logger.info("  %s(%s) 매수 대기 현재가 %s / 목표 %s",
-                            name, ticker, f"{cur_price:,.0f}", f"{buy_target:,.0f}")
+            if cond_type == "limit":
+                buy_order_uuid = job.get("buy_order_uuid", "")
+                if buy_order_uuid:
+                    try:
+                        order = upbit_api.get_order(buy_order_uuid)
+                        state = order["state"]
+                        if state == "done":
+                            ev = order["executed_volume"]
+                            ap = order["avg_price"] or buy_target
+                            job["phase"]      = "holding"
+                            job["buy_price"]  = ap
+                            job["hold_qty"]   = ev
+                            job["sell_price"] = calc_sell_price(ap, take_pct)
+                            job["bought_at"]  = now_kst()
+                            changed = True
+                            logger.info("지정가 매수 체결 %s %.8f개 @ %s원 → 목표: %s원",
+                                        ticker, ev, f"{ap:,.0f}", f"{job['sell_price']:,.0f}")
+                        elif state == "cancel":
+                            job["buy_order_uuid"] = ""
+                            changed = True
+                            logger.info("%s 지정가 매수 취소 — 재등록 예정", ticker)
+                        else:
+                            logger.info("  %s(%s) 지정가 매수 대기 @ %s원",
+                                        name, ticker, f"{buy_target:,.0f}")
+                    except Exception as e:
+                        logger.error("%s 주문 조회 실패: %s", ticker, e)
+                else:
+                    if buy_target <= 0:
+                        logger.warning("%s(%s) 지정가 미설정 — 건너뜀", name, ticker)
+                        continue
+                    krw_amount = float(job.get("krw_amount", 0))
+                    coin_qty   = float(job.get("coin_qty", 0))
+                    if krw_amount > 0 and coin_qty <= 0:
+                        coin_qty = math.floor(krw_amount / buy_target * 1e8) / 1e8
+                    if coin_qty <= 0:
+                        logger.warning("%s(%s) 수량/금액 미설정 — 건너뜀", name, ticker)
+                        continue
+                    logger.info("★ [waiting_buy] 지정가 주문 등록: %s(%s) %.8f개 @ %s원",
+                                name, ticker, coin_qty, f"{buy_target:,.0f}")
+                    try:
+                        result = upbit_api.place_order(
+                            market=ticker, side="bid", ord_type="limit",
+                            volume=coin_qty, price=buy_target
+                        )
+                        job["buy_order_uuid"] = result.get("uuid", "")
+                        changed = True
+                        logger.info("지정가 주문 등록 %s %.8f개 @ %s원  UUID: %s",
+                                    ticker, coin_qty, f"{buy_target:,.0f}", result.get("uuid", ""))
+                    except Exception as e:
+                        logger.error("%s 지정가 매수 주문 실패: %s", ticker, e)
                 continue
 
-            logger.info("★ [waiting_buy] 매수 실행: %s(%s) @ %s원", name, ticker, f"{cur_price:,.0f}")
+            # 시장가 즉시 매수
+            logger.info("★ [waiting_buy] 시장가 매수 실행: %s(%s) @ %s원", name, ticker, f"{cur_price:,.0f}")
             try:
                 krw_amount = float(job.get("krw_amount", 0))
                 coin_qty   = float(job.get("coin_qty", 0))
@@ -252,8 +300,22 @@ def process_cycle_jobs():
         # ── [holding] 단계 ───────────────────────────────────────
         elif phase == "holding":
             sell_price = float(job.get("sell_price", 0))
+            buy_price_val = float(job.get("buy_price", 0))
             hold_qty   = float(job.get("hold_qty", 0))
-            net_pct    = calc_net_pnl_pct(job.get("buy_price", cur_price), cur_price)
+            net_pct    = calc_net_pnl_pct(buy_price_val or cur_price, cur_price)
+
+            # 손익분기점 계산: 매수금액+수수료 < 매도금액 보장
+            breakeven = buy_price_val * (1 + BUY_FEE) / (1 - SELL_FEE) if buy_price_val > 0 else 0
+            if sell_price <= breakeven:
+                # sell_price가 0이거나 손익분기점 이하이면 재계산
+                if buy_price_val > 0:
+                    sell_price = calc_sell_price(buy_price_val, take_pct)
+                    job["sell_price"] = sell_price
+                    changed = True
+                    logger.info("  %s(%s) sell_price 복구: %.0f원 (매수가 %.0f 기준)", name, ticker, sell_price, buy_price_val)
+                else:
+                    logger.warning("  %s(%s) sell_price 미설정·매수가 없음 — 매도 건너뜀", name, ticker)
+                    continue
 
             logger.info("  %s(%s) 보유 중 현재가 %s / 매도 목표 %s / 수익 %.2f%%",
                         name, ticker, f"{cur_price:,.0f}", f"{sell_price:,.0f}", net_pct)
@@ -287,6 +349,7 @@ def process_cycle_jobs():
                     job["status"] = "done"
                     logger.info("최대 사이클 %d회 완료 → 종료", max_cycles)
                 else:
+                    job["rebuy_order_uuid"] = ""
                     logger.info("매도 완료 %s @ %s원 → 재매수 목표: %s원",
                                 ticker, f"{cur_price:,.0f}", f"{rebuy_price:,.0f}")
                 changed = True
@@ -295,43 +358,62 @@ def process_cycle_jobs():
 
         # ── [waiting_rebuy] 단계 ────────────────────────────────
         elif phase == "waiting_rebuy":
-            rebuy_price = float(job.get("rebuy_price", 0))
-            logger.info("  %s(%s) 재매수 대기 현재가 %s / 재매수 목표 %s",
-                        name, ticker, f"{cur_price:,.0f}", f"{rebuy_price:,.0f}")
+            rebuy_price      = float(job.get("rebuy_price", 0))
+            rebuy_order_uuid = job.get("rebuy_order_uuid", "")
 
-            if cur_price > rebuy_price:
+            if rebuy_price <= 0:
+                logger.warning("  %s(%s) rebuy_price 미설정 — 재매수 건너뜀", name, ticker)
                 continue
 
-            logger.info("★ [waiting_rebuy] 재매수 실행: %s(%s) @ %s원", name, ticker, f"{cur_price:,.0f}")
-            try:
+            if rebuy_order_uuid:
+                try:
+                    order = upbit_api.get_order(rebuy_order_uuid)
+                    state = order["state"]
+                    if state == "done":
+                        ev = order["executed_volume"]
+                        ap = order["avg_price"] or rebuy_price
+                        job["phase"]            = "holding"
+                        job["buy_price"]        = ap
+                        job["hold_qty"]         = ev
+                        job["sell_price"]       = calc_sell_price(ap, repeat_take)
+                        job["bought_at"]        = now_kst()
+                        job["rebuy_order_uuid"] = ""
+                        changed = True
+                        logger.info("재매수 체결 %s %.8f개 @ %s원 → 목표: %s원",
+                                    ticker, ev, f"{ap:,.0f}", f"{job['sell_price']:,.0f}")
+                    elif state == "cancel":
+                        job["rebuy_order_uuid"] = ""
+                        changed = True
+                        logger.info("%s 재매수 주문 취소 — 재등록 예정", ticker)
+                    else:
+                        logger.info("  %s(%s) 재매수 주문 대기 @ %s원",
+                                    name, ticker, f"{rebuy_price:,.0f}")
+                except Exception as e:
+                    logger.error("%s 재매수 주문 조회 실패: %s", ticker, e)
+            else:
+                if rebuy_price <= 0:
+                    logger.warning("%s(%s) 재매수가 미설정 — 건너뜀", name, ticker)
+                    continue
                 krw_amount = float(job.get("krw_amount", 0))
                 coin_qty   = float(job.get("coin_qty", 0))
-
                 if krw_amount > 0 and coin_qty <= 0:
-                    result = upbit_api.place_order(
-                        market=ticker, side="bid", ord_type="price", price=krw_amount
-                    )
-                    coin_qty = math.floor(krw_amount / cur_price * (1 - BUY_FEE) * 1e8) / 1e8
-                elif coin_qty > 0:
-                    result = upbit_api.place_order(
-                        market=ticker, side="bid", ord_type="price",
-                        price=cur_price * coin_qty
-                    )
-                    coin_qty = math.floor(coin_qty * (1 - BUY_FEE) * 1e8) / 1e8
-                else:
+                    coin_qty = math.floor(krw_amount / rebuy_price * 1e8) / 1e8
+                elif coin_qty <= 0:
+                    logger.warning("%s(%s) 수량/금액 미설정 — 건너뜀", name, ticker)
                     continue
-
-                job["phase"]      = "holding"
-                job["buy_price"]  = cur_price
-                job["hold_qty"]   = coin_qty
-                job["sell_price"] = calc_sell_price(cur_price, repeat_take)
-                job["bought_at"]  = now_kst()
-                job["buy_uuid"]   = result.get("uuid", "")
-                changed = True
-                logger.info("재매수 완료 %s %.8f개 @ %s원 → 매도 목표: %s원",
-                            ticker, coin_qty, f"{cur_price:,.0f}", f"{job['sell_price']:,.0f}")
-            except Exception as e:
-                logger.error("%s 사이클 재매수 실패: %s", ticker, e)
+                logger.info("★ [waiting_rebuy] 지정가 주문 등록: %s(%s) %.8f개 @ %s원",
+                            name, ticker, coin_qty, f"{rebuy_price:,.0f}")
+                try:
+                    result = upbit_api.place_order(
+                        market=ticker, side="bid", ord_type="limit",
+                        volume=coin_qty, price=rebuy_price
+                    )
+                    job["rebuy_order_uuid"] = result.get("uuid", "")
+                    changed = True
+                    logger.info("재매수 주문 등록 %s %.8f개 @ %s원  UUID: %s",
+                                ticker, coin_qty, f"{rebuy_price:,.0f}", result.get("uuid", ""))
+                except Exception as e:
+                    logger.error("%s 재매수 주문 실패: %s", ticker, e)
 
     if changed:
         gist_writer._write_gist({"coin_cycle_jobs.json": jobs})
