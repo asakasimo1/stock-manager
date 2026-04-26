@@ -108,7 +108,8 @@ def process_grid(job: dict) -> bool:
     krw_per_grid = float(job["krw_per_grid"])
     grids        = job.get("grids", [])
 
-    changed = False
+    changed  = False
+    cur_price = None  # idle 격자 처리 시 1회만 조회
 
     for i, grid in enumerate(grids):
         state = grid.get("state", "idle")
@@ -211,10 +212,11 @@ def process_grid(job: dict) -> bool:
 
         # ── idle → 매수 재등록 시도 ─────────────────────────────
         elif state == "idle":
-            try:
-                cur_price = upbit_api.get_price(ticker)["price"]
-            except Exception:
-                continue
+            if cur_price is None:
+                try:
+                    cur_price = upbit_api.get_price(ticker)["price"]
+                except Exception:
+                    break  # 현재가 조회 실패 시 이후 idle 처리 중단
             if level < cur_price:
                 try:
                     order_price = upbit_api.round_bid_price(level)
@@ -229,6 +231,9 @@ def process_grid(job: dict) -> bool:
                     logger.info("  idle 격자 %s원 재등록 UUID:%s",
                                 f"{order_price:,.0f}", r["uuid"][:8])
                 except Exception as e:
+                    if "insufficient_funds" in str(e):
+                        logger.warning("  잔액 부족 — idle 격자 재등록 중단 (이후 격자 생략)")
+                        break  # 잔액 부족이면 이후 격자도 실패하므로 중단
                     logger.error("  idle 격자 %s원 재등록 실패: %s", f"{level:,.0f}", e)
 
     return changed
