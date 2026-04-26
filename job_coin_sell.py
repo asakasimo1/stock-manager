@@ -380,14 +380,17 @@ def process_cycle_jobs():
                 if real_qty < hold_qty:
                     logger.info("  수량 보정: Gist %.8f → 실제잔고 %.8f", hold_qty, real_qty)
                 try:
+                    order_price = upbit_api.round_ask_price(sell_price)
+                    if order_price != sell_price:
+                        logger.info("  호가단위 조정: %.4f → %.4f", sell_price, order_price)
                     result = upbit_api.place_order(
                         market=ticker, side="ask", ord_type="limit",
-                        price=sell_price, volume=sell_qty
+                        price=order_price, volume=sell_qty
                     )
                     job["sell_order_uuid"] = result.get("uuid", "")
                     changed = True
                     logger.info("★ [holding] 지정가 매도 등록: %s %.8f개 @ %s원  UUID: %s",
-                                ticker, sell_qty, f"{sell_price:,.0f}", result.get("uuid", ""))
+                                ticker, sell_qty, f"{order_price:,.0f}", result.get("uuid", ""))
                 except Exception as e:
                     logger.error("%s 지정가 매도 주문 실패: %s", ticker, e)
 
@@ -440,14 +443,17 @@ def process_cycle_jobs():
                 logger.info("★ [waiting_rebuy] 지정가 주문 등록: %s(%s) %.8f개 @ %s원",
                             name, ticker, coin_qty, f"{rebuy_price:,.0f}")
                 try:
+                    order_rebuy = upbit_api.round_bid_price(rebuy_price)
+                    if order_rebuy != rebuy_price:
+                        logger.info("  재매수 호가단위 조정: %.4f → %.4f", rebuy_price, order_rebuy)
                     result = upbit_api.place_order(
                         market=ticker, side="bid", ord_type="limit",
-                        volume=coin_qty, price=rebuy_price
+                        volume=coin_qty, price=order_rebuy
                     )
                     job["rebuy_order_uuid"] = result.get("uuid", "")
                     changed = True
                     logger.info("재매수 주문 등록 %s %.8f개 @ %s원  UUID: %s",
-                                ticker, coin_qty, f"{rebuy_price:,.0f}", result.get("uuid", ""))
+                                ticker, coin_qty, f"{order_rebuy:,.0f}", result.get("uuid", ""))
                 except Exception as e:
                     logger.error("%s 재매수 주문 실패: %s", ticker, e)
 

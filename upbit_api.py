@@ -76,6 +76,39 @@ COIN_NAMES = {
 BUY_FEE  = 0.0005   # 0.05% (업비트 기본 수수료)
 SELL_FEE = 0.0005   # 0.05%
 
+# 업비트 KRW 마켓 호가단위 (가격 범위 → 단위)
+_PRICE_UNITS = [
+    (2_000_000, 1000),
+    (1_000_000,  500),
+    (  500_000,  100),
+    (  100_000,   50),
+    (   10_000,   10),
+    (    1_000,    1),
+    (      100,    1),
+    (       10,  0.1),
+    (        1, 0.01),
+    (        0, 0.001),
+]
+
+def price_unit(price: float) -> float:
+    """업비트 호가단위 반환"""
+    for threshold, unit in _PRICE_UNITS:
+        if price >= threshold:
+            return unit
+    return 0.001
+
+def round_ask_price(price: float) -> float:
+    """매도 지정가: 호가단위로 올림 (최소 수익 보장)"""
+    import math
+    unit = price_unit(price)
+    return math.ceil(price / unit) * unit
+
+def round_bid_price(price: float) -> float:
+    """매수 지정가: 호가단위로 내림"""
+    import math
+    unit = price_unit(price)
+    return math.floor(price / unit) * unit
+
 _KST = timezone(timedelta(hours=9))
 
 # ─────────────────────────────────────────
