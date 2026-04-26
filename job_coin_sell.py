@@ -221,11 +221,12 @@ def process_cycle_jobs():
                         if state == "done":
                             ev = order["executed_volume"]
                             ap = order["avg_price"] or buy_target
-                            job["phase"]      = "holding"
-                            job["buy_price"]  = ap
-                            job["hold_qty"]   = ev
-                            job["sell_price"] = calc_sell_price(ap, take_pct)
-                            job["bought_at"]  = now_kst()
+                            job["phase"]           = "holding"
+                            job["buy_price"]       = ap
+                            job["hold_qty"]        = ev
+                            job["sell_price"]      = calc_sell_price(ap, take_pct)
+                            job["bought_at"]       = now_kst()
+                            job["sell_order_uuid"] = ""  # holding 진입 시 초기화
                             changed = True
                             logger.info("지정가 매수 체결 %s %.8f개 @ %s원 → 목표: %s원",
                                         ticker, ev, f"{ap:,.0f}", f"{job['sell_price']:,.0f}")
@@ -285,46 +286,92 @@ def process_cycle_jobs():
                     logger.warning("%s(%s) 수량/금액 미설정 — 건너뜀", name, ticker)
                     continue
 
-                job["phase"]        = "holding"
-                job["buy_price"]    = cur_price
-                job["hold_qty"]     = coin_qty
-                job["sell_price"]   = calc_sell_price(cur_price, take_pct)
-                job["bought_at"]    = now_kst()
-                job["buy_uuid"]     = result.get("uuid", "")
+                job["phase"]           = "holding"
+                job["buy_price"]       = cur_price
+                job["hold_qty"]        = coin_qty
+                job["sell_price"]      = calc_sell_price(cur_price, take_pct)
+                job["bought_at"]       = now_kst()
+                job["buy_uuid"]        = result.get("uuid", "")
+                job["sell_order_uuid"] = ""  # holding 진입 시 초기화
                 changed = True
                 logger.info("매수 완료 %s %.8f개 @ %s원 → 매도 목표: %s원",
                             ticker, coin_qty, f"{cur_price:,.0f}", f"{job['sell_price']:,.0f}")
             except Exception as e:
                 logger.error("%s 사이클 매수 실패: %s", ticker, e)
 
-        # ── [holding] 단계 ───────────────────────────────────────
+        # ── [holding] 단계 — 지정가 매도 주문 선등록 후 체결 대기 ──
         elif phase == "holding":
-            sell_price = float(job.get("sell_price", 0))
+            sell_price    = float(job.get("sell_price", 0))
             buy_price_val = float(job.get("buy_price", 0))
-            hold_qty   = float(job.get("hold_qty", 0))
-            net_pct    = calc_net_pnl_pct(buy_price_val or cur_price, cur_price)
+            hold_qty      = float(job.get("hold_qty", 0))
+            sell_uuid     = job.get("sell_order_uuid", "")
+            net_pct       = calc_net_pnl_pct(buy_price_val or cur_price, cur_price)
 
-            # 손익분기점 계산: 매수금액+수수료 < 매도금액 보장
+            # 손익분기점 체크 — sell_price 복구 및 기존 주문 취소 후 재등록
             breakeven = buy_price_val * (1 + BUY_FEE) / (1 - SELL_FEE) if buy_price_val > 0 else 0
             if sell_price <= breakeven:
-                # sell_price가 0이거나 손익분기점 이하이면 재계산
                 if buy_price_val > 0:
-                    sell_price = calc_sell_price(buy_price_val, take_pct)
-                    job["sell_price"] = sell_price
+                    new_sell = calc_sell_price(buy_price_val, take_pct)
+                    job["sell_price"] = new_sell
                     changed = True
-                    logger.info("  %s(%s) sell_price 복구: %.0f원 (매수가 %.0f 기준)", name, ticker, sell_price, buy_price_val)
+                    logger.info("  %s(%s) sell_price 복구: %.0f원 (매수가 %.0f 기준)",
+                                name, ticker, new_sell, buy_price_val)
+                    if sell_uuid:
+                        try: upbit_api.cancel_order(sell_uuid)
+                        except Exception: pass
+                        job["sell_order_uuid"] = sell_uuid = ""
+                    sell_price = new_sell
                 else:
-                    logger.warning("  %s(%s) sell_price 미설정·매수가 없음 — 매도 건너뜀", name, ticker)
+                    logger.warning("  %s(%s) sell_price 미설정·매수가 없음 — 건너뜀", name, ticker)
                     continue
 
-            logger.info("  %s(%s) 보유 중 현재가 %s / 매도 목표 %s / 수익 %.2f%%",
+            logger.info("  %s(%s) 보유 현재가 %s / 매도목표 %s / 수익 %.2f%%",
                         name, ticker, f"{cur_price:,.0f}", f"{sell_price:,.0f}", net_pct)
 
-            if cur_price < sell_price:
-                continue
+            # 기존 지정가 매도 주문 체결 확인
+            need_order = False
+            if sell_uuid:
+                try:
+                    order = upbit_api.get_order(sell_uuid)
+                    state = order["state"]
+                except Exception as e:
+                    logger.error("%s 매도 주문 조회 실패: %s", ticker, e)
+                    continue
 
-            logger.info("★ [holding] 매도 실행: %s(%s) @ %s원", name, ticker, f"{cur_price:,.0f}")
-            try:
+                if state == "done":
+                    ap = order["avg_price"] or sell_price
+                    rebuy_price = math.floor(ap * (1 - rebuy_drop / 100))
+                    job["phase"]            = "waiting_rebuy"
+                    job["sell_price_exec"]  = ap
+                    job["rebuy_price"]      = rebuy_price
+                    job["sold_at"]          = now_kst()
+                    job["sell_order_uuid"]  = ""
+                    job["rebuy_order_uuid"] = ""
+                    cycle_count += 1
+                    job["cycle_count"] = cycle_count
+                    if max_cycles > 0 and cycle_count >= max_cycles:
+                        job["phase"]  = "done"
+                        job["status"] = "done"
+                        logger.info("최대 사이클 %d회 완료 → 종료", max_cycles)
+                    else:
+                        logger.info("매도 체결 %s @ %s원 → 재매수 목표: %s원",
+                                    ticker, f"{ap:,.0f}", f"{rebuy_price:,.0f}")
+                    changed = True
+                    continue
+                elif state == "cancel":
+                    logger.info("  %s 매도 주문 취소 감지 → 재등록", ticker)
+                    job["sell_order_uuid"] = sell_uuid = ""
+                    changed = True
+                    need_order = True
+                else:
+                    logger.info("  %s(%s) 지정가 매도 주문 대기 @ %s원",
+                                name, ticker, f"{sell_price:,.0f}")
+                    continue
+            else:
+                need_order = True
+
+            # 지정가 매도 주문 신규 등록
+            if need_order:
                 real_qty = actual_qty.get(ticker, hold_qty)
                 sell_qty = min(hold_qty, real_qty)
                 if sell_qty <= 0:
@@ -332,29 +379,17 @@ def process_cycle_jobs():
                     continue
                 if real_qty < hold_qty:
                     logger.info("  수량 보정: Gist %.8f → 실제잔고 %.8f", hold_qty, real_qty)
-                result = upbit_api.place_order(
-                    market=ticker, side="ask", ord_type="market", volume=sell_qty
-                )
-                rebuy_price = math.floor(cur_price * (1 - rebuy_drop / 100))
-                job["phase"]        = "waiting_rebuy"
-                job["sell_price_exec"] = cur_price
-                job["rebuy_price"]  = rebuy_price
-                job["sold_at"]      = now_kst()
-                job["sell_uuid"]    = result.get("uuid", "")
-                cycle_count        += 1
-                job["cycle_count"]  = cycle_count
-
-                if max_cycles > 0 and cycle_count >= max_cycles:
-                    job["phase"]  = "done"
-                    job["status"] = "done"
-                    logger.info("최대 사이클 %d회 완료 → 종료", max_cycles)
-                else:
-                    job["rebuy_order_uuid"] = ""
-                    logger.info("매도 완료 %s @ %s원 → 재매수 목표: %s원",
-                                ticker, f"{cur_price:,.0f}", f"{rebuy_price:,.0f}")
-                changed = True
-            except Exception as e:
-                logger.error("%s 사이클 매도 실패: %s", ticker, e)
+                try:
+                    result = upbit_api.place_order(
+                        market=ticker, side="ask", ord_type="limit",
+                        price=sell_price, volume=sell_qty
+                    )
+                    job["sell_order_uuid"] = result.get("uuid", "")
+                    changed = True
+                    logger.info("★ [holding] 지정가 매도 등록: %s %.8f개 @ %s원  UUID: %s",
+                                ticker, sell_qty, f"{sell_price:,.0f}", result.get("uuid", ""))
+                except Exception as e:
+                    logger.error("%s 지정가 매도 주문 실패: %s", ticker, e)
 
         # ── [waiting_rebuy] 단계 ────────────────────────────────
         elif phase == "waiting_rebuy":
@@ -378,6 +413,7 @@ def process_cycle_jobs():
                         job["sell_price"]       = calc_sell_price(ap, repeat_take)
                         job["bought_at"]        = now_kst()
                         job["rebuy_order_uuid"] = ""
+                        job["sell_order_uuid"]  = ""  # holding 진입 시 초기화
                         changed = True
                         logger.info("재매수 체결 %s %.8f개 @ %s원 → 목표: %s원",
                                     ticker, ev, f"{ap:,.0f}", f"{job['sell_price']:,.0f}")
