@@ -20,6 +20,7 @@ load_dotenv()
 import job_coin_buy
 import job_coin_sell
 import job_coin_signal
+import job_coin_grid
 
 KST = timezone(timedelta(hours=9))
 POLL_INTERVAL = 30  # 초
@@ -47,6 +48,7 @@ def main():
         try:
             logger.info("[%s] 잡 체크 시작", now_kst())
             job_coin_signal.main()
+            job_coin_grid.main()
             job_coin_buy.main()
             job_coin_sell.main()
             logger.info("[%s] 잡 체크 완료", now_kst())
