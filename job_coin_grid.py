@@ -15,6 +15,7 @@
 """
 import logging
 import math
+import time
 from datetime import datetime, timezone, timedelta
 
 import upbit_api
@@ -108,8 +109,10 @@ def process_grid(job: dict) -> bool:
     krw_per_grid = float(job["krw_per_grid"])
     grids        = job.get("grids", [])
 
-    changed  = False
-    cur_price = None  # idle 격자 처리 시 1회만 조회
+    changed          = False
+    cur_price        = None   # idle 격자 처리 시 1회만 조회
+    idle_registered  = 0
+    MAX_IDLE_PER_CYCLE = 3    # 사이클당 idle 재등록 최대 3건 (429 방지)
 
     for i, grid in enumerate(grids):
         state = grid.get("state", "idle")
@@ -212,6 +215,8 @@ def process_grid(job: dict) -> bool:
 
         # ── idle → 매수 재등록 시도 ─────────────────────────────
         elif state == "idle":
+            if idle_registered >= MAX_IDLE_PER_CYCLE:
+                continue  # 이번 사이클 한도 초과 → 다음 사이클에 처리
             if cur_price is None:
                 try:
                     cur_price = upbit_api.get_price(ticker)["price"]
@@ -221,6 +226,8 @@ def process_grid(job: dict) -> bool:
                 try:
                     order_price = upbit_api.round_bid_price(level)
                     coin_qty    = _buy_qty(krw_per_grid, order_price)
+                    if idle_registered > 0:
+                        time.sleep(0.15)  # 연속 주문 시 rate limit 회피
                     r = upbit_api.place_order(
                         market=ticker, side="bid", ord_type="limit",
                         price=order_price, volume=coin_qty
@@ -228,6 +235,7 @@ def process_grid(job: dict) -> bool:
                     grid.update(state="buy_waiting", buy_uuid=r["uuid"],
                                 coin_qty=coin_qty, last_buy_price=order_price)
                     changed = True
+                    idle_registered += 1
                     logger.info("  idle 격자 %s원 재등록 UUID:%s",
                                 f"{order_price:,.0f}", r["uuid"][:8])
                 except Exception as e:
