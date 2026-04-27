@@ -215,38 +215,60 @@ def get_balance() -> dict:
         raise RuntimeError(f"잔고 조회 실패: HTTP {r.status_code} {r.text[:200]}")
 
     accounts = r.json()
-    krw = 0.0
-    holdings = []
+    krw      = 0.0
+    coin_accs = []
 
     for acc in accounts:
         currency = acc["currency"]
         balance  = float(acc["balance"])
-        avg_buy  = float(acc["avg_buy_price"])
+        locked   = float(acc.get("locked", 0))
+        qty      = balance + locked  # 미체결 주문 잠금 수량 포함
 
         if currency == "KRW":
-            krw = balance
+            krw = balance + locked  # KRW도 locked 포함
             continue
 
-        if balance <= 0:
+        if qty <= 0:
             continue
 
-        ticker = f"KRW-{currency}"
+        coin_accs.append({
+            "currency": currency,
+            "qty":      qty,
+            "avg_buy":  float(acc["avg_buy_price"]),
+        })
+
+    # 현재가 일괄 조회 (개별 호출 → 429 방지)
+    tickers   = [f"KRW-{a['currency']}" for a in coin_accs]
+    prices    = {}
+    if tickers:
         try:
-            price_info = get_price(ticker)
-            cur_price = price_info["price"]
+            markets_str = ",".join(tickers)
+            t1 = time.monotonic()
+            rp = _session.get(f"{BASE_URL}/ticker", params={"markets": markets_str}, timeout=10)
+            ms2 = (time.monotonic() - t1) * 1000
+            logger.info("⏱  GET  tickers %s %5.0fms  HTTP%s", tickers, ms2, rp.status_code)
+            if rp.ok:
+                for item in rp.json():
+                    prices[item["market"]] = item["trade_price"]
         except Exception:
-            cur_price = avg_buy
+            pass
 
-        eval_amount = balance * cur_price
-        cost        = balance * avg_buy * (1 + BUY_FEE)
+    holdings = []
+    for a in coin_accs:
+        ticker  = f"KRW-{a['currency']}"
+        qty     = a["qty"]
+        avg_buy = a["avg_buy"]
+        cur_price   = prices.get(ticker, avg_buy)
+        eval_amount = qty * cur_price
+        cost        = qty * avg_buy * (1 + BUY_FEE)
         pnl         = eval_amount - cost
         pnl_pct     = (pnl / cost * 100) if cost > 0 else 0.0
 
         holdings.append({
             "ticker":      ticker,
-            "symbol":      currency,
-            "name":        COIN_NAMES.get(ticker, currency),
-            "qty":         balance,
+            "symbol":      a["currency"],
+            "name":        COIN_NAMES.get(ticker, a["currency"]),
+            "qty":         qty,
             "avg_price":   avg_buy,
             "cur_price":   cur_price,
             "eval_amount": eval_amount,
@@ -254,7 +276,9 @@ def get_balance() -> dict:
             "pnl_pct":     round(pnl_pct, 2),
         })
 
-    return {"krw": krw, "holdings": holdings}
+    from datetime import datetime, timezone, timedelta
+    updated_at = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d %H:%M:%S")
+    return {"krw": krw, "holdings": holdings, "updated_at": updated_at}
 
 
 # ─────────────────────────────────────────
