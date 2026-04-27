@@ -21,9 +21,11 @@ import job_coin_buy
 import job_coin_sell
 import job_coin_signal
 import job_coin_grid
+import job_coin_balance
 
 KST = timezone(timedelta(hours=9))
-POLL_INTERVAL = 30  # 초
+POLL_INTERVAL    = 30   # 초
+BALANCE_INTERVAL = 300  # 잔고 Gist 갱신 주기 (5분)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -44,6 +46,8 @@ def main():
     logger.info("  종료: Ctrl+C")
     logger.info("=" * 50)
 
+    last_balance_at = 0  # 마지막 잔고 갱신 epoch
+
     while True:
         try:
             logger.info("[%s] 잡 체크 시작", now_kst())
@@ -51,6 +55,16 @@ def main():
             job_coin_grid.main()
             job_coin_buy.main()
             job_coin_sell.main()
+
+            # 5분마다 업비트 잔고 → Gist 갱신
+            now_epoch = time.time()
+            if now_epoch - last_balance_at >= BALANCE_INTERVAL:
+                try:
+                    job_coin_balance.run()
+                    last_balance_at = now_epoch
+                except Exception as be:
+                    logger.error("잔고 갱신 실패: %s", be)
+
             logger.info("[%s] 잡 체크 완료", now_kst())
         except Exception as e:
             logger.error("오류 발생: %s", e)
