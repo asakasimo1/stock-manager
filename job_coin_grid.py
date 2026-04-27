@@ -218,6 +218,7 @@ def process_grid(job: dict) -> bool:
             if idle_registered >= MAX_IDLE_PER_CYCLE:
                 continue  # 이번 사이클 한도 초과 → 다음 사이클에 처리
             if cur_price is None:
+                time.sleep(0.5)  # buy/sell_waiting 호출 후 rate limit 회복 대기
                 try:
                     cur_price = upbit_api.get_price(ticker)["price"]
                 except Exception:
@@ -239,9 +240,13 @@ def process_grid(job: dict) -> bool:
                     logger.info("  idle 격자 %s원 재등록 UUID:%s",
                                 f"{order_price:,.0f}", r["uuid"][:8])
                 except Exception as e:
-                    if "insufficient_funds" in str(e):
-                        logger.warning("  잔액 부족 — idle 격자 재등록 중단 (이후 격자 생략)")
-                        break  # 잔액 부족이면 이후 격자도 실패하므로 중단
+                    err = str(e)
+                    if "insufficient_funds" in err:
+                        logger.warning("  잔액 부족 — idle 격자 재등록 중단 (이후 생략)")
+                        break
+                    if "too_many_requests" in err or "429" in err:
+                        logger.warning("  Rate limit(429) — idle 격자 재등록 중단 (다음 사이클에 재시도)")
+                        break
                     logger.error("  idle 격자 %s원 재등록 실패: %s", f"{level:,.0f}", e)
 
     return changed
