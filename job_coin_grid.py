@@ -41,8 +41,14 @@ def build_levels(lower: float, upper: float, grid_pct: float) -> list:
     return sorted(set(levels))
 
 
+UPBIT_MIN_ORDER = 5000  # 업비트 최소 주문금액(원)
+
 def _buy_qty(krw: float, price: float) -> float:
-    return math.floor(krw / price * (1 - BUY_FEE) * 1e8) / 1e8
+    # ceil 사용: 수수료 차감 없이 올림 → 주문금액이 krw 이상 보장
+    qty = math.ceil(krw / price * 1e8) / 1e8
+    # 최소주문금액(5,000원)도 반드시 충족
+    min_qty = math.ceil(UPBIT_MIN_ORDER / price * 1e8) / 1e8
+    return max(qty, min_qty)
 
 
 # ─────────────────────────────────────────
@@ -224,10 +230,11 @@ def process_grid(job: dict) -> bool:
                 except Exception:
                     break  # 현재가 조회 실패 시 이후 idle 처리 중단
             if level < cur_price:
+                idle_registered += 1  # 성공/실패 무관하게 시도 횟수 카운트
                 try:
                     order_price = upbit_api.round_bid_price(level)
                     coin_qty    = _buy_qty(krw_per_grid, order_price)
-                    if idle_registered > 0:
+                    if idle_registered > 1:
                         time.sleep(0.15)  # 연속 주문 시 rate limit 회피
                     r = upbit_api.place_order(
                         market=ticker, side="bid", ord_type="limit",
@@ -236,7 +243,6 @@ def process_grid(job: dict) -> bool:
                     grid.update(state="buy_waiting", buy_uuid=r["uuid"],
                                 coin_qty=coin_qty, last_buy_price=order_price)
                     changed = True
-                    idle_registered += 1
                     logger.info("  idle 격자 %s원 재등록 UUID:%s",
                                 f"{order_price:,.0f}", r["uuid"][:8])
                 except Exception as e:
