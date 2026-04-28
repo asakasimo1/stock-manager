@@ -14,7 +14,7 @@ KIS API 모듈 — 한국투자증권 Open API 연동
 참고: https://apiportal.koreainvestment.com/
 """
 
-import os, json, time, logging
+import os, json, time, logging, threading
 from datetime import datetime, timedelta, timezone, time as dt_time
 from pathlib import Path
 
@@ -40,7 +40,8 @@ BASE_URL = (
     "https://openapi.koreainvestment.com:9443"        # 실계좌
 )
 
-TOKEN_FILE = Path(".token_cache.json")   # 토큰 로컬 캐시 (git 무시)
+TOKEN_FILE  = Path(".token_cache.json")   # 토큰 로컬 캐시 (git 무시)
+_token_lock = threading.Lock()            # 병렬 토큰 갱신 방지 (ThreadPoolExecutor 대응)
 
 import logging as _logging
 _logging.getLogger(__name__).info("KIS 모드: %s  BASE_URL: %s", "모의투자" if PAPER else "실계좌", BASE_URL)
@@ -116,49 +117,61 @@ def _load_token_cache() -> dict:
 def _save_token_cache(data: dict):
     TOKEN_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2))
 
+def _token_valid() -> bool:
+    """현재 캐시 토큰이 유효(만료 30분 이상 남음)한지 확인"""
+    expire_str = _token_cache.get("expires_at", "")
+    if not expire_str:
+        return False
+    try:
+        return datetime.now() < datetime.fromisoformat(expire_str) - timedelta(minutes=30)
+    except Exception:
+        return False
+
+
 def get_token(force_refresh: bool = False) -> str:
     """
     Access Token 반환 (캐시 우선, 만료 30분 전 자동 갱신)
+    ThreadPoolExecutor 병렬 호출 시 단 1회만 갱신 (이중 검사 잠금)
     """
     global _token_cache
     if not _token_cache:
         _token_cache = _load_token_cache()
 
-    now = datetime.now()
-    expire_str = _token_cache.get("expires_at", "")
-    if not force_refresh and expire_str:
-        try:
-            expire_dt = datetime.fromisoformat(expire_str)
-            if now < expire_dt - timedelta(minutes=30):
-                return _token_cache["access_token"]
-        except Exception:
-            pass
+    # 빠른 경로: 잠금 없이 유효성 확인
+    if not force_refresh and _token_valid():
+        return _token_cache["access_token"]
 
-    # 새로 발급
-    resp = _api_post(
-        f"{BASE_URL}/oauth2/tokenP",
-        json={
-            "grant_type": "client_credentials",
-            "appkey":     APP_KEY,
-            "appsecret":  APP_SECRET,
-        },
-        timeout=10,
-    )
-    if not resp.ok:
-        print(f"  토큰 에러 {resp.status_code}: {resp.text[:300]}")
-        resp.raise_for_status()
-    data = resp.json()
+    # 잠금 획득 후 재확인 — 다른 스레드가 이미 갱신했을 수 있음
+    with _token_lock:
+        if not force_refresh and _token_valid():
+            return _token_cache["access_token"]
 
-    if "access_token" not in data:
-        raise RuntimeError(f"토큰 발급 실패: {data}")
+        # 실제 토큰 갱신
+        now  = datetime.now()
+        resp = _api_post(
+            f"{BASE_URL}/oauth2/tokenP",
+            json={
+                "grant_type": "client_credentials",
+                "appkey":     APP_KEY,
+                "appsecret":  APP_SECRET,
+            },
+            timeout=10,
+        )
+        if not resp.ok:
+            print(f"  토큰 에러 {resp.status_code}: {resp.text[:300]}")
+            resp.raise_for_status()
+        data = resp.json()
 
-    expires_at = (now + timedelta(seconds=int(data.get("expires_in", 86400)))).isoformat()
-    _token_cache = {"access_token": data["access_token"], "expires_at": expires_at}
-    _save_token_cache(_token_cache)
+        if "access_token" not in data:
+            raise RuntimeError(f"토큰 발급 실패: {data}")
 
-    logger.info("토큰 발급 완료  만료: %s", expires_at)
-    _notify_token_issued(expires_at)
-    return _token_cache["access_token"]
+        expires_at = (now + timedelta(seconds=int(data.get("expires_in", 86400)))).isoformat()
+        _token_cache = {"access_token": data["access_token"], "expires_at": expires_at}
+        _save_token_cache(_token_cache)
+
+        logger.info("토큰 발급 완료  만료: %s", expires_at)
+        _notify_token_issued(expires_at)
+        return _token_cache["access_token"]
 
 
 def _notify_token_issued(expires_at: str):
