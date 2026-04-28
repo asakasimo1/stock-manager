@@ -65,7 +65,18 @@ def auto_sell_by_rule():
         logger.error("잔고 조회 실패: %s", e)
         return
 
+    # 사이클 잡 holding 코인 — 이미 지정가 매도 주문 등록됨 → 자동손절 건너뜀
+    cycle_holding: set = set()
+    try:
+        for j in gist_writer._read_gist_file("coin_cycle_jobs.json") or []:
+            if j.get("phase") == "holding" and j.get("status") not in ("done", "cancelled", "stopped"):
+                cycle_holding.add(j["ticker"])
+    except Exception:
+        pass
+
     for h in bal["holdings"]:
+        if h["ticker"] in cycle_holding:
+            continue  # 사이클 잡 관리 중 — 지정가 주문이 처리
         pnl_pct = h["pnl_pct"]
         if pnl_pct >= AUTO_PROFIT_PCT:
             reason = f"익절 (+{AUTO_PROFIT_PCT:.0f}% 달성)"
@@ -181,10 +192,12 @@ def process_cycle_jobs():
         logger.error("현재가 조회 실패: %s", e)
         return
 
-    # 실제 보유 잔고 조회 (매도 수량 보정용)
-    actual_qty: dict = {}
+    # 실제 보유 잔고 + 주문 가능 KRW 조회
+    actual_qty: dict  = {}
+    avail_krw:  float = 0.0
     try:
-        bal = upbit_api.get_balance()
+        bal        = upbit_api.get_balance()
+        avail_krw  = bal.get("krw_avail", bal.get("krw", 0))
         actual_qty = {h["ticker"]: h["qty"] for h in bal.get("holdings", [])}
     except Exception as e:
         logger.warning("잔고 조회 실패 (수량 보정 불가): %s", e)
@@ -435,6 +448,11 @@ def process_cycle_jobs():
                     continue
                 krw_amount = float(job.get("krw_amount", 0))
                 coin_qty   = float(job.get("coin_qty", 0))
+                # KRW 잔액 사전 체크 — 부족하면 주문 시도 자체를 건너뜀 (API 오류 방지)
+                if krw_amount > 0 and avail_krw < krw_amount:
+                    logger.info("  %s(%s) 재매수 잔액 부족 (가용 %.0f원 / 필요 %.0f원) — 다음 사이클 재시도",
+                                name, ticker, avail_krw, krw_amount)
+                    continue
                 if krw_amount > 0 and coin_qty <= 0:
                     coin_qty = math.floor(krw_amount / rebuy_price * 1e8) / 1e8
                 elif coin_qty <= 0:

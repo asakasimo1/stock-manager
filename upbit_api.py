@@ -215,7 +215,8 @@ def get_balance() -> dict:
         raise RuntimeError(f"잔고 조회 실패: HTTP {r.status_code} {r.text[:200]}")
 
     accounts = r.json()
-    krw      = 0.0
+    krw       = 0.0
+    krw_avail = 0.0   # 주문 가능 KRW (locked 제외)
     coin_accs = []
 
     for acc in accounts:
@@ -225,7 +226,8 @@ def get_balance() -> dict:
         qty      = balance + locked  # 미체결 주문 잠금 수량 포함
 
         if currency == "KRW":
-            krw = balance + locked  # KRW도 locked 포함
+            krw       = balance + locked  # KRW 총액 (표시용)
+            krw_avail = balance           # 실제 주문 가능 금액
             continue
 
         if qty <= 0:
@@ -278,7 +280,7 @@ def get_balance() -> dict:
 
     from datetime import datetime, timezone, timedelta
     updated_at = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d %H:%M:%S")
-    return {"krw": krw, "holdings": holdings, "updated_at": updated_at}
+    return {"krw": krw, "krw_avail": krw_avail, "holdings": holdings, "updated_at": updated_at}
 
 
 # ─────────────────────────────────────────
