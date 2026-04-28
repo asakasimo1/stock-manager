@@ -5,6 +5,10 @@ on:
   schedule:
     # ── 코인 (Upbit — 미국 IP 무관, 24/7) ──
     - cron: '*/5 * * * *'    # 5분마다 — 코인 매수/매도/사이클
+    # ── 주식 매매 (KRW 마켓, 평일 장중) ──
+    - cron: '5 0 * * 1-5'    # 09:05 KST — 주식 매수
+    - cron: '*/30 0-6 * * 1-5' # 09:00~15:30 KST 30분마다 — 주식 모니터링
+    - cron: '20 6 * * 1-5'   # 15:20 KST — 마감 청산
     # ── 주식 신호·리포트 (GitHub Actions 유지) ──
     - cron: '50 23 * * 0-4'  # 08:50 KST — 신호 생성
     - cron: '35 6 * * 1-5'   # 15:35 KST — 일간 리포트
@@ -175,9 +179,9 @@ jobs:
       - run: python job_signals.py
       - run: python job_buy.py
 
-  # ── 매수 (수동) ──────────────────────────────
+  # ── 매수 (09:05 KST + 수동) ─────────────────
   buy:
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'buy'
+    if: github.event.schedule == '5 0 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'buy')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -191,9 +195,9 @@ jobs:
       - run: pip install -r requirements.txt
       - run: python job_buy.py
 
-  # ── 모니터링 (수동) ──────────────────────────
+  # ── 모니터링 (장중 30분마다 + 수동) ──────────
   monitor:
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'monitor'
+    if: github.event.schedule == '*/30 0-6 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'monitor')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -207,9 +211,9 @@ jobs:
       - run: pip install -r requirements.txt
       - run: python job_monitor.py
 
-  # ── 마감 청산 (수동) ─────────────────────────
+  # ── 마감 청산 (15:20 KST + 수동) ─────────────
   close:
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'close'
+    if: github.event.schedule == '20 6 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'close')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -367,7 +371,7 @@ jobs:
   # ── 코인 매수 (5분마다 + 수동) ──────────────
   coin_buy:
     if: >
-      (github.event_name == 'schedule') ||
+      github.event.schedule == '*/5 * * * *' ||
       (github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'coin_buy')
     runs-on: self-hosted
     steps:
@@ -385,7 +389,7 @@ jobs:
   # ── 코인 매도·사이클 (5분마다 + 수동) ────────
   coin_sell:
     if: >
-      (github.event_name == 'schedule') ||
+      github.event.schedule == '*/5 * * * *' ||
       (github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'coin_sell')
     runs-on: self-hosted
     steps:
