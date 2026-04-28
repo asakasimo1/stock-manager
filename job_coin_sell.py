@@ -449,9 +449,10 @@ def process_cycle_jobs():
                 krw_amount = float(job.get("krw_amount", 0))
                 coin_qty   = float(job.get("coin_qty", 0))
                 # KRW 잔액 사전 체크 — 부족하면 주문 시도 자체를 건너뜀 (API 오류 방지)
-                if krw_amount > 0 and avail_krw < krw_amount:
+                needed_krw = krw_amount if krw_amount > 0 else (coin_qty * rebuy_price if coin_qty > 0 else 0)
+                if needed_krw > 0 and avail_krw < needed_krw:
                     logger.info("  %s(%s) 재매수 잔액 부족 (가용 %.0f원 / 필요 %.0f원) — 다음 사이클 재시도",
-                                name, ticker, avail_krw, krw_amount)
+                                name, ticker, avail_krw, needed_krw)
                     continue
                 if krw_amount > 0 and coin_qty <= 0:
                     coin_qty = math.floor(krw_amount / rebuy_price * 1e8) / 1e8
