@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 KIS API 모듈 — 한국투자증권 Open API 연동
 
