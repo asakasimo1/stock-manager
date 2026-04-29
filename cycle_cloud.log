@@ -119,3 +119,4 @@
 2026-04-29 18:37:15,607 KST INFO 케이뱅크(279570) [NXT holding] 목표매도가 6316원 지정가 제출
 2026-04-29 18:37:15,804 KST ERROR 케이뱅크(279570) 처리 실패: 500 Server Error: Internal Server Error for url: https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/trading/order-cash
 2026-04-29 18:37:15,805 KST INFO 사이클 잡 체크 완료
+2026-04-29 20:17:37,726 KST INFO 거래 시간 외 (KRX/NXT 모두 닫힘) — 종료
