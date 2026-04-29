@@ -221,7 +221,7 @@ def _headers(tr_id: str, extra: dict = None) -> dict:
         h.update(extra)
     return h
 
-def _account_parts() -> tuple[str, str]:
+def _account_parts():
     """'12345678-01' → ('12345678', '01')"""
     parts = ACCOUNT_NO.replace("-", "")
     return parts[:8], parts[8:] or "01"
