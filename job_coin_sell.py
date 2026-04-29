@@ -169,7 +169,14 @@ def process_sell_jobs():
             job["pnl_pct"]     = round(pnl_pct, 2)
             changed = True
         except Exception as e:
-            logger.error("%s 매도 실패: %s", ticker, e)
+            err = str(e)
+            if "insufficient_funds" in err or "volume" in err.lower():
+                job["status"]       = "cancelled"
+                job["cancelled_at"] = now_kst()
+                changed = True
+                logger.warning("%s 잔고 부족 → 자동 취소 (이미 다른 잡에서 매도됨)", ticker)
+            else:
+                logger.error("%s 매도 실패: %s", ticker, e)
 
     if changed:
         gist_writer._write_gist({"coin_sell_jobs.json": jobs})
