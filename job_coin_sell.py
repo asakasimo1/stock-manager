@@ -66,10 +66,12 @@ def auto_sell_by_rule():
         return
 
     # 사이클 잡 holding 코인 — 이미 지정가 매도 주문 등록됨 → 자동손절 건너뜀
+    # 취소된 사이클 잡이라도 sell_order_uuid 가 남아있으면 잠금 중일 수 있으므로 포함
     cycle_holding: set = set()
     try:
         for j in gist_writer._read_gist_file("coin_cycle_jobs.json") or []:
-            if j.get("phase") == "holding" and j.get("status") not in ("done", "cancelled", "stopped"):
+            active = j.get("status") not in ("done", "stopped")
+            if j.get("phase") == "holding" and active and j.get("sell_order_uuid"):
                 cycle_holding.add(j["ticker"])
     except Exception:
         pass
@@ -103,7 +105,12 @@ def auto_sell_by_rule():
                 f"{pnl:+,.0f}", result.get("uuid", "")
             )
         except Exception as e:
-            logger.error("%s 자동매도 실패: %s", ticker, e)
+            err = str(e)
+            if "insufficient_funds_ask" in err:
+                # 코인이 미체결 지정가 주문에 잠겨있는 경우 — 매도 주문 취소 후 재시도 필요
+                logger.warning("%s 자동매도 건너뜀 — 코인이 미체결 주문에 잠겨있음 (Upbit 미체결 주문 확인 필요)", ticker)
+            else:
+                logger.error("%s 자동매도 실패: %s", ticker, e)
 
 
 # ─────────────────────────────────────────
