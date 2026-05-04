@@ -88,6 +88,7 @@ def initialize_grid(job: dict) -> bool:
             try:
                 order_price = upbit_api.round_bid_price(level)
                 coin_qty    = _buy_qty(krw_per_grid, order_price)
+                time.sleep(0.12)  # 429 방지: 초당 ~8건 이하 유지
                 r = upbit_api.place_order(
                     market=ticker, side="bid", ord_type="limit",
                     price=order_price, volume=coin_qty
@@ -97,6 +98,13 @@ def initialize_grid(job: dict) -> bool:
                 logger.info("  매수 등록 %s원 %.8f개 UUID:%s",
                             f"{order_price:,.0f}", coin_qty, r["uuid"][:8])
             except Exception as e:
+                err = str(e)
+                if "insufficient_funds" in err:
+                    logger.warning("  잔액 부족 — 초기화 중단 (이후 격자는 idle)")
+                    break
+                if "too_many_requests" in err or "429" in err:
+                    logger.warning("  Rate limit(429) — 초기화 중단 (나머지 idle → 다음 사이클에 복구)")
+                    break
                 logger.error("  격자 %s원 매수 주문 실패: %s", f"{level:,.0f}", e)
         grids.append(grid)
 
