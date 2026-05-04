@@ -42,6 +42,7 @@ def build_levels(lower: float, upper: float, grid_pct: float) -> list:
 
 
 UPBIT_MIN_ORDER = 5000  # 업비트 최소 주문금액(원)
+MAX_ACTIVE_BUYS = 10   # 동시 매수 대기 주문 최대 개수
 
 def _buy_qty(krw: float, price: float) -> float:
     # ceil 사용: 수수료 차감 없이 올림 → 주문금액이 krw 이상 보장
@@ -51,12 +52,40 @@ def _buy_qty(krw: float, price: float) -> float:
     return max(qty, min_qty)
 
 
+def _fill_one_idle(grids: list, ticker: str, cur_price: float, krw_per_grid: float) -> bool:
+    """현재가 이하 idle 격자 중 가장 가까운 1개에 매수 주문 등록.
+    성공 True / 잔액·rate-limit 등으로 불가 False 반환."""
+    candidates = sorted(
+        [g for g in grids if g.get("state") == "idle" and float(g["level"]) < cur_price],
+        key=lambda g: -float(g["level"])  # 현재가에 가장 가까운 순
+    )
+    for grid in candidates:
+        level = float(grid["level"])
+        try:
+            order_price = upbit_api.round_bid_price(level)
+            coin_qty    = _buy_qty(krw_per_grid, order_price)
+            r = upbit_api.place_order(
+                market=ticker, side="bid", ord_type="limit",
+                price=order_price, volume=coin_qty
+            )
+            grid.update(state="buy_waiting", buy_uuid=r["uuid"],
+                        coin_qty=coin_qty, last_buy_price=order_price)
+            logger.info("  매수 보충 %s원 UUID:%s", f"{order_price:,.0f}", r["uuid"][:8])
+            return True
+        except Exception as e:
+            err = str(e)
+            if "insufficient_funds" in err or "too_many_requests" in err or "429" in err:
+                return False
+            logger.error("  idle 보충 실패 %s원: %s", f"{level:,.0f}", e)
+    return False
+
+
 # ─────────────────────────────────────────
 # 초기화
 # ─────────────────────────────────────────
 
 def initialize_grid(job: dict) -> bool:
-    """그리드 초기화: 현재가 이하 격자 전부 매수 주문 등록"""
+    """그리드 초기화: 현재가 이하 격자 중 가장 가까운 MAX_ACTIVE_BUYS 개만 매수 등록"""
     ticker       = job["ticker"]
     grid_pct     = float(job["grid_pct"])
     lower        = float(job["lower_price"])
@@ -70,8 +99,12 @@ def initialize_grid(job: dict) -> bool:
         return False
 
     levels = build_levels(lower, upper, grid_pct)
-    logger.info("그리드 초기화 %s: 격자 %d개, 현재가 %s원",
-                ticker, len(levels), f"{cur_price:,.0f}")
+
+    # 현재가 이하 레벨 중 가장 가까운 MAX_ACTIVE_BUYS 개만 활성화 (나머지는 idle)
+    buy_candidates = [l for l in levels if l < cur_price]
+    active_buy_set = set(buy_candidates[-MAX_ACTIVE_BUYS:])
+    logger.info("그리드 초기화 %s: 격자 %d개, 현재가 %s원, 매수등록 최대 %d개",
+                ticker, len(levels), f"{cur_price:,.0f}", min(len(buy_candidates), MAX_ACTIVE_BUYS))
 
     grids = []
     for level in levels:
@@ -84,11 +117,11 @@ def initialize_grid(job: dict) -> bool:
             "last_buy_price":  0,
             "last_sell_price": 0,
         }
-        if level < cur_price:
+        if level in active_buy_set:
             try:
                 order_price = upbit_api.round_bid_price(level)
                 coin_qty    = _buy_qty(krw_per_grid, order_price)
-                time.sleep(0.12)  # 429 방지: 초당 ~8건 이하 유지
+                time.sleep(0.12)  # 429 방지
                 r = upbit_api.place_order(
                     market=ticker, side="bid", ord_type="limit",
                     price=order_price, volume=coin_qty
@@ -128,6 +161,9 @@ def process_grid(job: dict) -> bool:
     idle_registered  = 0
     MAX_IDLE_PER_CYCLE = 3    # 사이클당 idle 재등록 최대 3건 (429 방지)
 
+    def buy_waiting_count():
+        return sum(1 for g in grids if g.get("state") == "buy_waiting")
+
     for i, grid in enumerate(grids):
         state = grid.get("state", "idle")
         level = float(grid["level"])
@@ -164,6 +200,10 @@ def process_grid(job: dict) -> bool:
                     logger.info("★ 매수체결 @ %s원 → 매도등록 @ %s원 (%.8f개) UUID:%s",
                                 f"{avg_price:,.0f}", f"{sell_price:,.0f}",
                                 coin_qty, r["uuid"][:8])
+                    # 매수 슬롯 1개 비었으므로 idle에서 즉시 보충
+                    if buy_waiting_count() < MAX_ACTIVE_BUYS:
+                        if _fill_one_idle(grids, ticker, avg_price, krw_per_grid):
+                            changed = True
                 except Exception as e:
                     logger.error("  격자 %s원 매도 등록 실패: %s", f"{level:,.0f}", e)
 
@@ -208,6 +248,10 @@ def process_grid(job: dict) -> bool:
                     grid.update(state="buy_waiting", buy_uuid=r["uuid"],
                                 coin_qty=coin_qty2, last_buy_price=order_price)
                     logger.info("  재매수 등록 %s원 UUID:%s", f"{order_price:,.0f}", r["uuid"][:8])
+                    # 재매수 후에도 슬롯 여유가 있으면 idle 보충
+                    if buy_waiting_count() < MAX_ACTIVE_BUYS:
+                        if _fill_one_idle(grids, ticker, sell_exec, krw_per_grid):
+                            changed = True
                 except Exception as e:
                     grid.update(state="idle")
                     logger.error("  격자 %s원 재매수 실패: %s", f"{level:,.0f}", e)
@@ -231,6 +275,8 @@ def process_grid(job: dict) -> bool:
         elif state == "idle":
             if idle_registered >= MAX_IDLE_PER_CYCLE:
                 continue  # 이번 사이클 한도 초과 → 다음 사이클에 처리
+            if buy_waiting_count() >= MAX_ACTIVE_BUYS:
+                continue  # 이미 최대 매수 주문 수 도달
             if cur_price is None:
                 time.sleep(0.5)  # buy/sell_waiting 호출 후 rate limit 회복 대기
                 try:
