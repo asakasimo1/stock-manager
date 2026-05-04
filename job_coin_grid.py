@@ -309,6 +309,15 @@ def main():
             stop_grid(job)
             changed = True
 
+        elif status == "reinit":
+            logger.info("그리드 재초기화: %s", name)
+            stop_grid(job)          # 기존 주문 전부 취소
+            job["status"] = "init"  # stop_grid 가 stopped 로 바꾼 것을 init 으로 재설정
+            if initialize_grid(job):
+                changed = True
+            else:
+                changed = True      # stop 만 됐어도 저장 필요
+
         elif status in ("init",) or (status == "active" and not job.get("grids")):
             logger.info("그리드 초기화: %s", name)
             if initialize_grid(job):
