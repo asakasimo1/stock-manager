@@ -6,8 +6,9 @@
    - 수익률 -4% 이하  → 전량 즉시 매도 (손절)
 """
 import logging
+import time as _time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, time as dt_time
 
 import kis_api
 import gist_writer
@@ -24,8 +25,10 @@ _fh.setFormatter(_fmt)
 logger.addHandler(_fh)
 BUY_FEE_RATE  = 0.00015            # 매수 수수료 0.015%
 SELL_FEE_RATE = 0.00015 + 0.0018   # 매도 수수료 + 증권거래세 0.195%
-AUTO_PROFIT_PCT = 20.0             # 자동 익절 기준 (%)
-AUTO_LOSS_PCT   = -4.0             # 자동 손절 기준 (%)
+AUTO_PROFIT_PCT    = 20.0  # 자동 익절 기준 (%)
+AUTO_LOSS_PCT      = -4.0  # 자동 손절 기준 (%)
+_AUTO_SELL_INTERVAL = 300  # auto_sell_by_rule 최소 실행 간격(초) — 5분 1회로 제한
+_last_auto_sell     = 0.0  # 마지막 실행 시각 (epoch)
 
 
 def calc_target_price(buy_price: int, qty: int,
@@ -43,10 +46,19 @@ def calc_target_price(buy_price: int, qty: int,
 
 
 def auto_sell_by_rule():
-    """보유 종목 자동매도 규칙 체크
+    """보유 종목 자동매도 규칙 체크 (KRX 정규 09:00~15:30, 5분 1회 제한)
     - 수익률 >= +20% : 익절 매도
     - 수익률 <= -4%  : 손절 매도
     """
+    global _last_auto_sell
+    t = datetime.now(KST).time()
+    # KRX 정규시간 외(NXT 프리/애프터마켓 포함)에는 실행하지 않음
+    if not (dt_time(9, 0) <= t < dt_time(15, 30)):
+        return
+    # 5분 이내 이미 실행됐으면 스킵 — 30초 폴링으로 인한 과다 호출 방지
+    if _time.time() - _last_auto_sell < _AUTO_SELL_INTERVAL:
+        return
+    _last_auto_sell = _time.time()
     try:
         bal = kis_api.get_balance()
     except Exception as e:
