@@ -442,3 +442,11 @@
 2026-05-08 15:23:35,846 KST INFO 민테크(452200) [rebuy #8] 현재가=3450 재매수가=2974 → 대기
 2026-05-08 15:23:35,846 KST INFO 케이뱅크(279570) [holding #4] 현재가=5960 목표매도가=6356 → 대기
 2026-05-08 15:23:35,846 KST INFO 사이클 잡 체크 완료
+2026-05-08 16:20:52,852 KST INFO 사이클 잡 체크 시작 [NXT 애프터마켓]
+2026-05-08 16:20:53,191 KST INFO 활성 잡 2개 처리
+2026-05-08 16:20:54,242 KST ERROR 현재가 조회 실패 093370: 403 Client Error: Forbidden for url: https://openapi.koreainvestment.com:9443/oauth2/tokenP
+2026-05-08 16:20:54,427 KST ERROR 현재가 조회 실패 452200: 403 Client Error: Forbidden for url: https://openapi.koreainvestment.com:9443/oauth2/tokenP
+2026-05-08 16:20:54,428 KST INFO 현재가 병렬 조회 완료 (0/2)
+2026-05-08 16:20:54,428 KST WARNING 093370 현재가 캐시 없음 — 건너뜀
+2026-05-08 16:20:54,428 KST WARNING 452200 현재가 캐시 없음 — 건너뜀
+2026-05-08 16:20:54,428 KST INFO 사이클 잡 체크 완료
