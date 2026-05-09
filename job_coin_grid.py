@@ -20,6 +20,7 @@ from datetime import datetime, timezone, timedelta
 
 import upbit_api
 import gist_writer
+import notify
 
 KST      = timezone(timedelta(hours=9))
 BUY_FEE  = upbit_api.BUY_FEE
@@ -78,6 +79,84 @@ def _fill_one_idle(grids: list, ticker: str, cur_price: float, krw_per_grid: flo
                 return False
             logger.error("  idle 보충 실패 %s원: %s", f"{level:,.0f}", e)
     return False
+
+
+# ─────────────────────────────────────────
+# 범위 이탈 감지 / 자동 재초기화
+# ─────────────────────────────────────────
+
+def _check_out_of_range(job: dict, cur_price: float) -> bool:
+    """가격이 그리드 범위 벗어난 경우 알림 + 자동 재초기화(auto_reinit_minutes 설정 시).
+    job 수정 시 True 반환. reinit 필요 시 job['status']='reinit' 설정."""
+    lower  = float(job.get("lower_price", 0))
+    upper  = float(job.get("upper_price", float("inf")))
+    name   = job.get("name", job.get("ticker", "?"))
+    ticker = job["ticker"]
+
+    in_range = lower <= cur_price <= upper
+
+    if in_range:
+        if job.get("out_of_range_since"):
+            job["out_of_range_since"]     = None
+            job["out_of_range_notified"]  = False
+            logger.info("그리드 범위 복귀: %s (%s원)", name, f"{cur_price:,.0f}")
+            return True
+        return False
+
+    # ── 범위 이탈 ──────────────────────────────────────────────────
+    direction = "하단 이탈 🔻" if cur_price < lower else "상단 돌파 🔺"
+    modified  = False
+
+    if not job.get("out_of_range_since"):
+        job["out_of_range_since"]    = now_kst()
+        job["out_of_range_notified"] = False
+        modified = True
+
+    # 1회 알림
+    if not job.get("out_of_range_notified"):
+        job["out_of_range_notified"] = True
+        modified = True
+        auto_min = job.get("auto_reinit_minutes")
+        hint = f"자동 재초기화 예정 ({auto_min}분 후)" if auto_min else "수동 reinit 필요 (Gist에서 status→reinit)"
+        notify.send(
+            f"⚠️ <b>그리드 범위 이탈 [{direction}]</b>  {name} ({ticker})\n"
+            f"  현재가 {cur_price:,.0f}원  |  설정 범위 {lower:,.0f}~{upper:,.0f}원\n"
+            f"  {hint}"
+        )
+        logger.info("그리드 범위 이탈 알림: %s %s 현재가 %s원", name, direction, f"{cur_price:,.0f}")
+
+    # 자동 재초기화
+    auto_min = job.get("auto_reinit_minutes")
+    if auto_min:
+        since_str = job.get("out_of_range_since", "")
+        try:
+            since   = datetime.strptime(since_str, "%Y-%m-%d %H:%M").replace(tzinfo=KST)
+            elapsed = (datetime.now(KST) - since).total_seconds() / 60
+        except (ValueError, TypeError):
+            elapsed = 0
+
+        if elapsed < auto_min:
+            logger.info("범위 이탈 %d분 경과 / 자동 재초기화 기준 %d분", int(elapsed), auto_min)
+        else:
+            # 현재가 기준으로 동일 비율 범위 이동 (기하평균 보존)
+            ratio     = math.sqrt(upper / lower) if lower > 0 else 1.0
+            new_lower = round(cur_price / ratio)
+            new_upper = round(cur_price * ratio)
+            job["lower_price"]          = new_lower
+            job["upper_price"]          = new_upper
+            job["status"]               = "reinit"
+            job["out_of_range_since"]   = None
+            job["out_of_range_notified"] = False
+            modified = True
+            notify.send(
+                f"🔄 <b>그리드 자동 재초기화</b>  {name} ({ticker})\n"
+                f"  {elapsed:.0f}분 범위 이탈 → 현재가 기준 재설정\n"
+                f"  이전 {lower:,.0f}~{upper:,.0f}원  →  새 범위 {new_lower:,.0f}~{new_upper:,.0f}원"
+            )
+            logger.info("그리드 자동 재초기화 트리거: %s 새 범위 %s~%s원",
+                        name, f"{new_lower:,.0f}", f"{new_upper:,.0f}")
+
+    return modified
 
 
 # ─────────────────────────────────────────
@@ -157,12 +236,24 @@ def process_grid(job: dict) -> bool:
     grids        = job.get("grids", [])
 
     changed          = False
-    cur_price        = None   # idle 격자 처리 시 1회만 조회
     idle_registered  = 0
     MAX_IDLE_PER_CYCLE = 3    # 사이클당 idle 재등록 최대 3건 (429 방지)
 
     def buy_waiting_count():
         return sum(1 for g in grids if g.get("state") == "buy_waiting")
+
+    # ── 현재가 선행 조회 (범위 이탈 체크 + idle 격자 공용) ──────────
+    try:
+        cur_price = upbit_api.get_price(ticker)["price"]
+    except Exception as e:
+        logger.warning("현재가 선행 조회 실패 — 범위 체크 건너뜀: %s", e)
+        cur_price = None
+
+    if cur_price is not None:
+        if _check_out_of_range(job, cur_price):
+            changed = True
+        if job.get("status") == "reinit":
+            return changed  # 재초기화 예약됨 — 이번 사이클 격자 처리 중단
 
     for i, grid in enumerate(grids):
         state = grid.get("state", "idle")
@@ -278,11 +369,7 @@ def process_grid(job: dict) -> bool:
             if buy_waiting_count() >= MAX_ACTIVE_BUYS:
                 continue  # 이미 최대 매수 주문 수 도달
             if cur_price is None:
-                time.sleep(0.5)  # buy/sell_waiting 호출 후 rate limit 회복 대기
-                try:
-                    cur_price = upbit_api.get_price(ticker)["price"]
-                except Exception:
-                    break  # 현재가 조회 실패 시 이후 idle 처리 중단
+                continue  # 선행 조회 실패 시 idle 처리 건너뜀
             if level < cur_price:
                 idle_registered += 1  # 성공/실패 무관하게 시도 횟수 카운트
                 try:
