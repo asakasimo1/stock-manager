@@ -139,9 +139,11 @@ def _check_out_of_range(job: dict, cur_price: float) -> bool:
             logger.info("범위 이탈 %d분 경과 / 자동 재초기화 기준 %d분", int(elapsed), auto_min)
         else:
             # 현재가 기준으로 동일 비율 범위 이동 (기하평균 보존)
-            ratio     = math.sqrt(upper / lower) if lower > 0 else 1.0
-            new_lower = round(cur_price / ratio)
-            new_upper = round(cur_price * ratio)
+            # 현재가 기준 아래 5개(매수) / 위 5개(매도 대기) 고정 범위
+            n_each    = 5
+            step      = 1 + float(job.get("grid_pct", 1.5)) / 100
+            new_lower = round(cur_price / step ** n_each)
+            new_upper = round(cur_price * step ** n_each)
             job["lower_price"]          = new_lower
             job["upper_price"]          = new_upper
             job["status"]               = "reinit"
