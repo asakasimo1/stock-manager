@@ -3,8 +3,9 @@ permissions:
   contents: write
 on:
   schedule:
-    # ── 코인 (Upbit — 미국 IP 무관, 24/7) ──
-    - cron: '*/5 * * * *'    # 5분마다 — 코인 매수/매도/사이클
+    # ── 코인 (Upbit) ──
+    # coin-daemon.service(systemd)가 30초 폴링으로 24/7 처리 → 크론 비활성화
+    # - cron: '*/5 * * * *'  # 코인 매수/매도/사이클 (coin-daemon 대체)
     # ── 주식 매매 (KRW 마켓, 평일 장중) ──
     # cycle/monitor는 Oracle VM stock-daemon이 30초 폴링으로 대체 → 크론 비활성화
     - cron: '5 0 * * 1-5'      # 09:05 KST — 주식 매수
@@ -198,9 +199,9 @@ jobs:
       - run: pip install -r requirements.txt
       - run: python job_buy.py
 
-  # ── 모니터링 (장중 30분마다 + 수동) ──────────
+  # ── 모니터링 (수동 전용 — 스케줄 크론은 stock-daemon 대체) ──────────
   monitor:
-    if: github.event.schedule == '*/30 0-6 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'monitor')
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'monitor'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -263,12 +264,9 @@ jobs:
             sleep 5
           done
 
-  # ── 사이클 (장중 10분마다 + 수동) ──────────────
+  # ── 사이클 (수동 전용 — 스케줄 크론은 stock-daemon 대체) ──────────────
   cycle:
-    if: >
-      github.event.schedule == '*/10 23 * * 0-4' ||
-      github.event.schedule == '*/10 0-10 * * 1-5' ||
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'cycle')
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'cycle'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
