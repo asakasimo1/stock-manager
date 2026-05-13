@@ -3,14 +3,16 @@ permissions:
   contents: write
 on:
   schedule:
-    # ── 코인 (Upbit — 미국 IP 무관, 24/7) ──
-    - cron: '*/5 * * * *'    # 5분마다 — 코인 매수/매도/사이클
+    # ── 코인 (Upbit) ──
+    # coin-daemon.service(systemd)가 30초 폴링으로 24/7 처리 → 크론 비활성화
+    # - cron: '*/5 * * * *'  # 코인 매수/매도/사이클 (coin-daemon 대체)
     # ── 주식 매매 (KRW 마켓, 평일 장중) ──
+    # cycle/monitor는 Oracle VM stock-daemon이 30초 폴링으로 대체 → 크론 비활성화
     - cron: '5 0 * * 1-5'      # 09:05 KST — 주식 매수
-    - cron: '*/30 0-6 * * 1-5' # 09:00~15:30 KST 30분마다 — 주식 모니터링
+    # - cron: '*/30 0-6 * * 1-5' # 09:00~15:30 KST 30분마다 — 주식 모니터링 (daemon 대체)
     - cron: '20 6 * * 1-5'     # 15:20 KST — 마감 청산
-    - cron: '*/10 23 * * 0-4'  # 08:00~08:50 KST — NXT 프리마켓 사이클
-    - cron: '*/10 0-10 * * 1-5' # 09:00~19:50 KST — KRX+NXT 사이클 트레이딩
+    # - cron: '*/10 23 * * 0-4'  # 08:00~08:50 KST — NXT 프리마켓 사이클 (daemon 대체)
+    # - cron: '*/10 0-10 * * 1-5' # 09:00~19:50 KST — KRX+NXT 사이클 트레이딩 (daemon 대체)
     # ── 주식 신호·리포트 (GitHub Actions 유지) ──
     - cron: '50 23 * * 0-4'  # 08:50 KST — 신호 생성
     - cron: '35 6 * * 1-5'   # 15:35 KST — 일간 리포트
@@ -40,6 +42,7 @@ on:
           - coin_buy
           - coin_sell
           - coin_balance
+          - sync_positions
       force_done_ticker:
         description: 'force_done_submitted 전용: 완료 처리할 종목명 또는 코드'
         required: false
@@ -197,9 +200,9 @@ jobs:
       - run: pip install -r requirements.txt
       - run: python job_buy.py
 
-  # ── 모니터링 (장중 30분마다 + 수동) ──────────
+  # ── 모니터링 (수동 전용 — 스케줄 크론은 stock-daemon 대체) ──────────
   monitor:
-    if: github.event.schedule == '*/30 0-6 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'monitor')
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'monitor'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -262,12 +265,9 @@ jobs:
             sleep 5
           done
 
-  # ── 사이클 (장중 10분마다 + 수동) ──────────────
+  # ── 사이클 (수동 전용 — 스케줄 크론은 stock-daemon 대체) ──────────────
   cycle:
-    if: >
-      github.event.schedule == '*/10 23 * * 0-4' ||
-      github.event.schedule == '*/10 0-10 * * 1-5' ||
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'cycle')
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'cycle'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -408,6 +408,22 @@ jobs:
           restore-keys: pip-
       - run: pip install -r requirements.txt
       - run: python job_coin_sell.py
+
+  # ── Supabase 포지션 동기화 (수동) ──────────
+  sync_positions:
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'sync_positions'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: pip-
+      - run: pip install -r requirements.txt
+      - run: python job_balance.py
 
   # ── 코인 잔고 현행화 (5분마다 + 수동) ────────
   coin_balance:
