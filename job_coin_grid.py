@@ -341,8 +341,54 @@ def stop_grid(job: dict) -> int:
 # 이탈 자동 재설정
 # ─────────────────────────────────────────
 
+def _stop_loss_top_grid(job: dict) -> bool:
+    """하단 이탈 시 sell_waiting 격자 중 level이 가장 높은 것 1개를 시장가 손절.
+    Gist 저장이 필요한 변경 발생 시 True 반환."""
+    grids = job.get("grids", [])
+    candidates = sorted(
+        [g for g in grids if g.get("state") == "sell_waiting"],
+        key=lambda g: -float(g["level"])
+    )
+    if not candidates:
+        return False
+
+    grid     = candidates[0]
+    level    = float(grid["level"])
+    sell_uuid = grid.get("sell_uuid", "")
+    coin_qty  = float(grid.get("coin_qty", 0))
+
+    # 기존 매도 지정가 주문 취소
+    if sell_uuid:
+        try:
+            upbit_api.cancel_order(sell_uuid)
+            grid["sell_uuid"] = ""
+        except Exception as e:
+            logger.warning("손절: 기존 매도 취소 실패 %s원: %s", f"{level:,.0f}", e)
+
+    if coin_qty <= 0:
+        grid.update(state="idle", sell_uuid="", coin_qty=0)
+        return True
+
+    # 시장가 손절 매도
+    try:
+        upbit_api.place_order(
+            market=job["ticker"], side="ask", ord_type="market", volume=coin_qty
+        )
+        buy_price = grid.get("last_buy_price", 0)
+        job["trade_count"] = job.get("trade_count", 0) + 1
+        grid.update(state="idle", sell_uuid="", coin_qty=0)
+        logger.info("▼ 손절 매도: %s %.8f개 (매수가 %s원 / 격자 %s원)",
+                    job["ticker"], coin_qty, f"{buy_price:,.0f}", f"{level:,.0f}")
+        return True
+    except Exception as e:
+        logger.error("손절 매도 실패 %s원: %s", f"{level:,.0f}", e)
+        grid.update(state="idle", sell_uuid="")
+        return False
+
+
 def _check_auto_reinit(job: dict, cur_price: float) -> bool:
     """현재가가 그리드 범위를 이탈했을 때 auto_reinit_minutes 경과 후 reinit 트리거.
+    하단 이탈 시에는 매 사이클마다 sell_waiting 격자를 위에서부터 1개씩 손절.
     Gist 저장이 필요한 변경이 발생하면 True 반환."""
     reinit_min = job.get("auto_reinit_minutes")
     if not reinit_min or reinit_min < 10:
@@ -359,13 +405,22 @@ def _check_auto_reinit(job: dict, cur_price: float) -> bool:
         return False
 
     # 이탈 상태
+    is_below = cur_price < lower
     now = datetime.now(KST)
     escaped_at_str = job.get("escaped_at")
 
+    # 하단 이탈: 매 사이클마다 sell_waiting 최상단 격자 1개 손절
+    changed = False
+    if is_below:
+        if _stop_loss_top_grid(job):
+            changed = True
+
     if not escaped_at_str:
         job["escaped_at"] = now_kst()
-        logger.info("그리드 이탈 감지: %s 현재가 %s원 (범위 %s~%s원, %d분 후 재설정)",
-                    job.get("name"), f"{cur_price:,.0f}", f"{lower:,.0f}", f"{upper:,.0f}", reinit_min)
+        direction = "하단" if is_below else "상단"
+        logger.info("그리드 %s 이탈 감지: %s 현재가 %s원 (범위 %s~%s원, %d분 후 재설정)",
+                    direction, job.get("name"), f"{cur_price:,.0f}",
+                    f"{lower:,.0f}", f"{upper:,.0f}", reinit_min)
         return True
 
     try:
@@ -386,7 +441,7 @@ def _check_auto_reinit(job: dict, cur_price: float) -> bool:
     except Exception as e:
         logger.error("이탈 시간 파싱 실패: %s", e)
 
-    return False
+    return changed
 
 
 # ─────────────────────────────────────────
