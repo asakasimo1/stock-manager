@@ -338,6 +338,58 @@ def stop_grid(job: dict) -> int:
 
 
 # ─────────────────────────────────────────
+# 이탈 자동 재설정
+# ─────────────────────────────────────────
+
+def _check_auto_reinit(job: dict, cur_price: float) -> bool:
+    """현재가가 그리드 범위를 이탈했을 때 auto_reinit_minutes 경과 후 reinit 트리거.
+    Gist 저장이 필요한 변경이 발생하면 True 반환."""
+    reinit_min = job.get("auto_reinit_minutes")
+    if not reinit_min or reinit_min < 10:
+        return False
+
+    lower = float(job["lower_price"])
+    upper = float(job["upper_price"])
+
+    if lower <= cur_price <= upper:
+        if job.get("escaped_at"):
+            del job["escaped_at"]
+            logger.info("그리드 범위 복귀: %s (현재가 %s원)", job.get("name"), f"{cur_price:,.0f}")
+            return True
+        return False
+
+    # 이탈 상태
+    now = datetime.now(KST)
+    escaped_at_str = job.get("escaped_at")
+
+    if not escaped_at_str:
+        job["escaped_at"] = now_kst()
+        logger.info("그리드 이탈 감지: %s 현재가 %s원 (범위 %s~%s원, %d분 후 재설정)",
+                    job.get("name"), f"{cur_price:,.0f}", f"{lower:,.0f}", f"{upper:,.0f}", reinit_min)
+        return True
+
+    try:
+        escaped_at = datetime.strptime(escaped_at_str, "%Y-%m-%d %H:%M").replace(tzinfo=KST)
+        elapsed_min = (now - escaped_at).total_seconds() / 60
+        logger.info("그리드 이탈 지속: %s %.0f분 경과 (재설정까지 %.0f분)",
+                    job.get("name"), elapsed_min, max(0.0, reinit_min - elapsed_min))
+        if elapsed_min >= reinit_min:
+            # 현재가 중심으로 기존 범위 너비를 유지해 범위 이동
+            half = (upper - lower) / 2
+            job["lower_price"] = round(cur_price - half, 2)
+            job["upper_price"] = round(cur_price + half, 2)
+            job.pop("escaped_at", None)
+            job["status"] = "reinit"
+            logger.info("그리드 자동 재설정 트리거: %s → 새 범위 %s~%s원",
+                        job.get("name"), f"{job['lower_price']:,.1f}", f"{job['upper_price']:,.1f}")
+            return True
+    except Exception as e:
+        logger.error("이탈 시간 파싱 실패: %s", e)
+
+    return False
+
+
+# ─────────────────────────────────────────
 # 메인
 # ─────────────────────────────────────────
 
@@ -379,8 +431,27 @@ def main():
 
         elif status == "active":
             logger.info("그리드 처리: %s", name)
-            if process_grid(job):
-                changed = True
+            # 이탈 자동 재설정 체크
+            if job.get("auto_reinit_minutes") and job.get("grids"):
+                try:
+                    cur_for_reinit = upbit_api.get_price(job["ticker"])["price"]
+                    if _check_auto_reinit(job, cur_for_reinit):
+                        changed = True
+                except Exception as e:
+                    logger.warning("이탈 체크 현재가 조회 실패 %s: %s", name, e)
+
+            # reinit 전환된 경우 즉시 처리
+            if job.get("status") == "reinit":
+                logger.info("그리드 재초기화 실행 (이탈 자동 재설정): %s", name)
+                stop_grid(job)
+                job["status"] = "init"
+                if initialize_grid(job):
+                    changed = True
+                else:
+                    changed = True
+            else:
+                if process_grid(job):
+                    changed = True
 
     if changed:
         gist_writer._write_gist({"coin_grid_jobs.json": jobs})
