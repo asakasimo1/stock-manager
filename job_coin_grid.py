@@ -404,7 +404,7 @@ def _stop_loss_top_grid(job: dict) -> bool:
 
 def _check_auto_reinit(job: dict, cur_price: float) -> bool:
     """현재가가 그리드 범위를 이탈했을 때 auto_reinit_minutes 경과 후 reinit 트리거.
-    하단 이탈 시에는 매 사이클마다 sell_waiting 격자를 위에서부터 1개씩 손절.
+    하단 이탈 + X분 경과 + 잔고 부족 시에만 sell_waiting 최상단 1개 손절.
     Gist 저장이 필요한 변경이 발생하면 True 반환."""
     reinit_min = job.get("auto_reinit_minutes")
     if not reinit_min or reinit_min < 10:
@@ -432,13 +432,8 @@ def _check_auto_reinit(job: dict, cur_price: float) -> bool:
     now = datetime.now(KST)
     escaped_at_str = job.get("escaped_at")
 
-    # 하단 이탈: 매 사이클마다 sell_waiting 최상단 격자 1개 손절
-    changed = False
-    if is_below:
-        if _stop_loss_top_grid(job):
-            changed = True
-
     if not escaped_at_str:
+        # 첫 이탈 감지: 기록만 하고 손절하지 않음 (X분 대기)
         job["escaped_at"] = now_kst()
         direction = "하단" if is_below else "상단"
         logger.info("그리드 %s 이탈 감지: %s 현재가 %s원 (범위 %s~%s원, %d분 후 재설정)",
@@ -451,8 +446,14 @@ def _check_auto_reinit(job: dict, cur_price: float) -> bool:
         elapsed_min = (now - escaped_at).total_seconds() / 60
         logger.info("그리드 이탈 지속: %s %.0f분 경과 (재설정까지 %.0f분)",
                     job.get("name"), elapsed_min, max(0.0, reinit_min - elapsed_min))
+
         if elapsed_min >= reinit_min:
-            # 현재가 중심으로 기존 범위 너비를 유지해 범위 이동
+            # X분 경과: 하단 이탈 시 잔고 부족하면 손절 1개 먼저
+            if is_below and _stop_loss_top_grid(job):
+                logger.info("그리드 손절 후 다음 사이클에 reinit 시도: %s", job.get("name"))
+                return True  # 이번 사이클은 손절만, 다음 사이클에 reinit
+
+            # 잔고 충분하거나 손절 대상 없음 → reinit 실행
             half = (upper - lower) / 2
             job["lower_price"] = round(cur_price - half, 2)
             job["upper_price"] = round(cur_price + half, 2)
@@ -464,7 +465,7 @@ def _check_auto_reinit(job: dict, cur_price: float) -> bool:
     except Exception as e:
         logger.error("이탈 시간 파싱 실패: %s", e)
 
-    return changed
+    return False
 
 
 # ─────────────────────────────────────────
