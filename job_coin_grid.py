@@ -373,13 +373,15 @@ def _stop_loss_top_grid(job: dict) -> bool:
     sell_uuid = grid.get("sell_uuid", "")
     coin_qty  = float(grid.get("coin_qty", 0))
 
-    # 기존 매도 지정가 주문 취소
+    # 기존 매도 지정가 주문 취소 — 실패 시 이중 매도 방지를 위해 손절 보류
     if sell_uuid:
         try:
             upbit_api.cancel_order(sell_uuid)
             grid["sell_uuid"] = ""
         except Exception as e:
-            logger.warning("손절: 기존 매도 취소 실패 %s원: %s", f"{level:,.0f}", e)
+            logger.warning("손절: 기존 매도 취소 실패 → 손절 보류 (이중 매도 방지): %s원: %s",
+                           f"{level:,.0f}", e)
+            return False
 
     if coin_qty <= 0:
         grid.update(state="idle", sell_uuid="", coin_qty=0)
@@ -510,12 +512,14 @@ def main():
 
         elif status == "active":
             logger.info("그리드 처리: %s", name)
+            is_escaped = False
             # 이탈 자동 재설정 체크
             if job.get("auto_reinit_minutes") and job.get("grids"):
                 try:
                     cur_for_reinit = upbit_api.get_price(job["ticker"])["price"]
                     if _check_auto_reinit(job, cur_for_reinit):
                         changed = True
+                    is_escaped = bool(job.get("escaped_at"))  # 이탈 중이면 True
                 except Exception as e:
                     logger.warning("이탈 체크 현재가 조회 실패 %s: %s", name, e)
 
@@ -528,6 +532,9 @@ def main():
                     changed = True
                 else:
                     changed = True
+            elif is_escaped:
+                # 이탈 중 — 새 매수 주문 등록 방지
+                logger.info("이탈 대기 중 — 그리드 처리 스킵: %s", name)
             else:
                 if process_grid(job):
                     changed = True
