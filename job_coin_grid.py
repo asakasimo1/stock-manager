@@ -342,7 +342,8 @@ def stop_grid(job: dict) -> int:
 # ─────────────────────────────────────────
 
 def _stop_loss_top_grid(job: dict) -> bool:
-    """하단 이탈 시 sell_waiting 격자 중 level이 가장 높은 것 1개를 시장가 손절.
+    """하단 이탈 시 KRW 잔고 < krw_per_grid 인 경우에만
+    sell_waiting 격자 중 level이 가장 높은 것 1개를 시장가 손절.
     Gist 저장이 필요한 변경 발생 시 True 반환."""
     grids = job.get("grids", [])
     candidates = sorted(
@@ -350,6 +351,21 @@ def _stop_loss_top_grid(job: dict) -> bool:
         key=lambda g: -float(g["level"])
     )
     if not candidates:
+        return False
+
+    # KRW 잔고 확인 — 1 grid 매수 가능 잔고가 있으면 손절 불필요
+    krw_per_grid = float(job.get("krw_per_grid", 0))
+    try:
+        bal = upbit_api.get_balance()
+        krw_avail = bal.get("krw", 0)
+        if krw_avail >= krw_per_grid:
+            logger.info("손절 스킵: KRW 잔고 %s원 ≥ 격자당 %s원 (매수 가능)",
+                        f"{krw_avail:,.0f}", f"{krw_per_grid:,.0f}")
+            return False
+        logger.info("손절 진행: KRW 잔고 %s원 < 격자당 %s원 (잔고 부족)",
+                    f"{krw_avail:,.0f}", f"{krw_per_grid:,.0f}")
+    except Exception as e:
+        logger.warning("손절 전 잔고 조회 실패 — 손절 보류: %s", e)
         return False
 
     grid     = candidates[0]
