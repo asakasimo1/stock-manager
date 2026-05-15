@@ -410,8 +410,15 @@ def _check_auto_reinit(job: dict, cur_price: float) -> bool:
     if not reinit_min or reinit_min < 10:
         return False
 
-    lower = float(job["lower_price"])
-    upper = float(job["upper_price"])
+    # 이탈 기준: 실제 그리드 격자 레벨 범위 (lower/upper_price 보다 넓을 수 있음)
+    grids = job.get("grids", [])
+    if grids:
+        levels = [float(g["level"]) for g in grids]
+        lower = min(min(levels), float(job["lower_price"]))
+        upper = max(max(levels), float(job["upper_price"]))
+    else:
+        lower = float(job["lower_price"])
+        upper = float(job["upper_price"])
 
     if lower <= cur_price <= upper:
         if job.get("escaped_at"):
