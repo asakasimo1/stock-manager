@@ -471,6 +471,94 @@ def _check_auto_reinit(job: dict, cur_price: float) -> bool:
 
 
 # ─────────────────────────────────────────
+# 고아 코인 동기화
+# ─────────────────────────────────────────
+
+def _sync_orphan_coins(job: dict) -> bool:
+    """reinit 후 Upbit 잔고에 있지만 그리드에 미추적된 코인(고아 코인)을
+    현재가 위 idle 격자에 지정가 매도로 등록. 변경 발생 시 True 반환."""
+    ticker       = job["ticker"]
+    grids        = job.get("grids", [])
+    krw_per_grid = float(job.get("krw_per_grid", 0))
+
+    tracked_qty = sum(
+        float(g.get("coin_qty", 0))
+        for g in grids if g.get("state") == "sell_waiting"
+    )
+
+    try:
+        bal = upbit_api.get_balance()
+    except Exception as e:
+        logger.warning("고아 코인 동기화 — 잔고 조회 실패: %s", e)
+        return False
+
+    try:
+        cur_price = upbit_api.get_price(ticker)["price"]
+    except Exception as e:
+        logger.warning("고아 코인 동기화 — 현재가 조회 실패 %s: %s", ticker, e)
+        return False
+
+    coin_key   = ticker.split("-")[-1].upper()
+    actual_qty = 0.0
+    for h in bal.get("holdings", []):
+        if h.get("ticker", "").upper() == coin_key:
+            actual_qty = float(h.get("qty", 0))
+            break
+
+    orphan_qty = actual_qty - tracked_qty
+    if orphan_qty < 1e-8:
+        logger.info("고아 코인 없음 %s: 실제 %.8f개 = 추적 %.8f개",
+                    ticker, actual_qty, tracked_qty)
+        return False
+
+    logger.warning("고아 코인 감지 %s: 실제 %.8f개 - 추적 %.8f개 = 고아 %.8f개 (≈ %s원)",
+                   ticker, actual_qty, tracked_qty, orphan_qty,
+                   f"{orphan_qty * cur_price:,.0f}")
+
+    # 현재가 위 idle 격자에 낮은 가격순(현재가에 가까운 순)으로 매도 등록
+    idle_above = sorted(
+        [g for g in grids if g.get("state") == "idle" and float(g["level"]) > cur_price],
+        key=lambda g: float(g["level"])
+    )
+
+    changed   = False
+    remaining = orphan_qty
+
+    for grid in idle_above:
+        if remaining < 1e-8:
+            break
+        level    = float(grid["level"])
+        grid_qty = _buy_qty(krw_per_grid, level)
+        sell_qty = min(remaining, grid_qty)
+
+        sell_price = upbit_api.round_ask_price(level)
+        try:
+            time.sleep(0.12)
+            r = upbit_api.place_order(
+                market=ticker, side="ask", ord_type="limit",
+                price=sell_price, volume=sell_qty
+            )
+            grid.update(
+                state="sell_waiting",
+                sell_uuid=r["uuid"],
+                coin_qty=sell_qty,
+                last_sell_price=sell_price,
+            )
+            remaining -= sell_qty
+            changed    = True
+            logger.info("  고아 코인 매도 등록 %s원 %.8f개 UUID:%s",
+                        f"{sell_price:,.0f}", sell_qty, r["uuid"][:8])
+        except Exception as e:
+            logger.error("  고아 코인 매도 등록 실패 %s원: %s", f"{level:,.0f}", e)
+
+    if remaining > 1e-8:
+        logger.warning("고아 코인 미등록 잔여: %s %.8f개 (≈ %s원) — idle 격자 여유 부족",
+                       ticker, remaining, f"{remaining * cur_price:,.0f}")
+
+    return changed
+
+
+# ─────────────────────────────────────────
 # 메인
 # ─────────────────────────────────────────
 
@@ -502,6 +590,8 @@ def main():
             job["status"] = "init"  # stop_grid 가 stopped 로 바꾼 것을 init 으로 재설정
             if initialize_grid(job):
                 changed = True
+                if _sync_orphan_coins(job):
+                    changed = True
             else:
                 changed = True      # stop 만 됐어도 저장 필요
 
@@ -509,6 +599,8 @@ def main():
             logger.info("그리드 초기화: %s", name)
             if initialize_grid(job):
                 changed = True
+                if _sync_orphan_coins(job):
+                    changed = True
 
         elif status == "active":
             logger.info("그리드 처리: %s", name)
@@ -530,6 +622,8 @@ def main():
                 job["status"] = "init"
                 if initialize_grid(job):
                     changed = True
+                    if _sync_orphan_coins(job):
+                        changed = True
                 else:
                     changed = True
             elif is_escaped:
