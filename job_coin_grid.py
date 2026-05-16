@@ -450,8 +450,8 @@ def _check_auto_reinit(job: dict, cur_price: float) -> bool:
                     job.get("name"), elapsed_min, max(0.0, reinit_min - elapsed_min))
 
         if elapsed_min >= reinit_min:
-            # X분 경과: 하단 이탈 시 잔고 부족하면 손절 1개 먼저
-            if is_below and _stop_loss_top_grid(job):
+            # X분 경과: 하단 이탈 + 손절 옵션 ON + 잔고 부족하면 손절 1개 먼저
+            if is_below and job.get("stop_loss_on_escape", True) and _stop_loss_top_grid(job):
                 logger.info("그리드 손절 후 다음 사이클에 reinit 시도: %s", job.get("name"))
                 return True  # 이번 사이클은 손절만, 다음 사이클에 reinit
 
