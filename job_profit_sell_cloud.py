@@ -2,12 +2,17 @@
 수익매도 클라우드 잡 — GitHub Actions에서 5분마다 실행
 1) Gist profit_sell_jobs.json 에서 활성 잡 읽기 → 목표 달성 시 즉시 매도
 2) 계좌 보유 종목 자동매도 규칙 (매 5분 체크)
-   - 수익률 +20% 이상 → 전량 즉시 매도 (익절)
-   - 수익률 -4% 이하  → 전량 즉시 매도 (손절)
+   - 수익률 +FORCE_TAKE_PROFIT% 이상 → 전량 즉시 매도 (익절, 기본 20%)
+   - 수익률 -FORCE_STOP_LOSS% 이하  → 전량 즉시 매도 (손절, 기본 4%)
+   - 환경변수 FORCE_TAKE_PROFIT / FORCE_STOP_LOSS 로 조정 (빈 값이면 해당 조건 비활성)
 """
 import logging
+import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone, timedelta
+
+from dotenv import load_dotenv
+load_dotenv()
 
 import kis_api
 import gist_writer
@@ -24,8 +29,12 @@ _fh.setFormatter(_fmt)
 logger.addHandler(_fh)
 BUY_FEE_RATE  = 0.00015            # 매수 수수료 0.015%
 SELL_FEE_RATE = 0.00015 + 0.0018   # 매도 수수료 + 증권거래세 0.195%
-AUTO_PROFIT_PCT = 20.0             # 자동 익절 기준 (%)
-AUTO_LOSS_PCT   = -4.0             # 자동 손절 기준 (%)
+
+# 강제 익절/손절 — 환경변수로 조정 가능, 빈 값이면 해당 조건 비활성화
+_env_tp = os.getenv("FORCE_TAKE_PROFIT", "20.0").strip()
+_env_sl = os.getenv("FORCE_STOP_LOSS",   "-4.0").strip()
+AUTO_PROFIT_PCT: float | None = float(_env_tp) if _env_tp else None
+AUTO_LOSS_PCT:   float | None = float(_env_sl) if _env_sl else None
 
 
 def calc_target_price(buy_price: int, qty: int,
@@ -44,9 +53,17 @@ def calc_target_price(buy_price: int, qty: int,
 
 def auto_sell_by_rule():
     """보유 종목 자동매도 규칙 체크
-    - 수익률 >= +20% : 익절 매도
-    - 수익률 <= -4%  : 손절 매도
+    - 수익률 >= FORCE_TAKE_PROFIT% : 익절 매도 (None이면 비활성)
+    - 수익률 <= FORCE_STOP_LOSS%   : 손절 매도 (None이면 비활성)
     """
+    if AUTO_PROFIT_PCT is None and AUTO_LOSS_PCT is None:
+        logger.info("강제 익절/손절 조건 비활성화 (FORCE_TAKE_PROFIT, FORCE_STOP_LOSS 미설정)")
+        return
+
+    tp_label = f"+{AUTO_PROFIT_PCT:.0f}%" if AUTO_PROFIT_PCT is not None else "비활성"
+    sl_label = f"{AUTO_LOSS_PCT:.0f}%"    if AUTO_LOSS_PCT   is not None else "비활성"
+    logger.info("강제 익절 %s / 강제 손절 %s", tp_label, sl_label)
+
     try:
         bal = kis_api.get_balance()
     except Exception as e:
@@ -55,8 +72,8 @@ def auto_sell_by_rule():
 
     for h in bal["holdings"]:
         pnl_pct   = h["pnl_pct"]
-        is_profit = pnl_pct >= AUTO_PROFIT_PCT
-        is_loss   = pnl_pct <= AUTO_LOSS_PCT
+        is_profit = AUTO_PROFIT_PCT is not None and pnl_pct >= AUTO_PROFIT_PCT
+        is_loss   = AUTO_LOSS_PCT   is not None and pnl_pct <= AUTO_LOSS_PCT
         if not is_profit and not is_loss:
             continue
 

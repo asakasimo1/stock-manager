@@ -19,6 +19,9 @@ STRATEGY_PRESETS = {
         "max_positions":    5,
         "max_order_amount": 2_000_000,
         "max_daily_loss":   300_000,
+        # 트레일링 스탑: +10% 달성 후 고점에서 -5% 하락 시 청산
+        "trail_trigger":    0.10,
+        "trail_pct":        0.05,
     },
     "war_risk": {
         "desc":             "전쟁/지정학 리스크 장기화 — 빠른 손절·단기 보유",
@@ -30,6 +33,9 @@ STRATEGY_PRESETS = {
         "max_positions":    3,
         "max_order_amount": 1_000_000,
         "max_daily_loss":   150_000,
+        # 단기 전략: 낮은 트리거, 타이트한 트레일링
+        "trail_trigger":    0.05,
+        "trail_pct":        0.03,
     },
     "hold": {
         "desc":             "버티기 — 전쟁 종전·반등 기대, 익절폭 크게·장기 보유",
@@ -41,6 +47,9 @@ STRATEGY_PRESETS = {
         "max_positions":    5,
         "max_order_amount": 2_000_000,
         "max_daily_loss":   400_000,
+        # 장기 전략: 높은 트리거, 여유 있는 트레일링
+        "trail_trigger":    0.12,
+        "trail_pct":        0.07,
     },
     "defensive": {
         "desc":             "방어형 — 강한 신호만 진입, 손실 최소화",
@@ -52,6 +61,9 @@ STRATEGY_PRESETS = {
         "max_positions":    2,
         "max_order_amount": 1_000_000,
         "max_daily_loss":   100_000,
+        # 방어형: 조기 트리거, 타이트한 트레일링
+        "trail_trigger":    0.05,
+        "trail_pct":        0.03,
     },
     "aggressive": {
         "desc":             "공격형 — 손절 여유, 장기 익절 추구",
@@ -63,6 +75,9 @@ STRATEGY_PRESETS = {
         "max_positions":    5,
         "max_order_amount": 2_000_000,
         "max_daily_loss":   500_000,
+        # 공격형: 수익 크게 키우고 여유 있게 트레일링
+        "trail_trigger":    0.10,
+        "trail_pct":        0.07,
     },
 }
 
@@ -73,15 +88,21 @@ def load_strategy(name: str) -> tuple[Cfg, dict]:
         preset = STRATEGY_PRESETS["optimized"]
         name   = "optimized"
 
-    # 환경변수로 주문 금액·손실 한도 오버라이드 가능
-    # GitHub Secrets에서 MAX_ORDER_AMOUNT=100000 처럼 설정
+    # 환경변수로 오버라이드 가능 (GitHub Secrets 또는 .env)
+    # 예: MAX_ORDER_AMOUNT=100000 / TAKE_PROFIT=0.15 / TRAIL_TRIGGER=0.08
     preset = dict(preset)  # 원본 보호
-    env_order = os.getenv("MAX_ORDER_AMOUNT")
-    env_loss  = os.getenv("MAX_DAILY_LOSS")
-    if env_order:
-        preset["max_order_amount"] = int(env_order)
-    if env_loss:
-        preset["max_daily_loss"] = int(env_loss)
+    env_order         = os.getenv("MAX_ORDER_AMOUNT")
+    env_loss          = os.getenv("MAX_DAILY_LOSS")
+    env_tp            = os.getenv("TAKE_PROFIT")
+    env_sl            = os.getenv("STOP_LOSS")
+    env_trail_trigger = os.getenv("TRAIL_TRIGGER")
+    env_trail_pct     = os.getenv("TRAIL_PCT")
+    if env_order:         preset["max_order_amount"] = int(env_order)
+    if env_loss:          preset["max_daily_loss"]   = int(env_loss)
+    if env_tp:            preset["take_profit"]       = float(env_tp)
+    if env_sl:            preset["stop_loss"]         = float(env_sl)
+    if env_trail_trigger: preset["trail_trigger"]     = float(env_trail_trigger)
+    if env_trail_pct:     preset["trail_pct"]         = float(env_trail_pct)
 
     cfg = Cfg()
     cfg.volume_mult    = preset["volume_mult"]
@@ -90,4 +111,6 @@ def load_strategy(name: str) -> tuple[Cfg, dict]:
     cfg.take_profit    = preset["take_profit"]
     cfg.hold_days      = preset["hold_days"]
     cfg.max_positions  = preset["max_positions"]
+    cfg.trail_trigger  = preset.get("trail_trigger", 0.10)
+    cfg.trail_pct      = preset.get("trail_pct",     0.05)
     return cfg, preset

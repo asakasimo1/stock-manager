@@ -60,6 +60,9 @@ class Cfg:
     hold_days:      int   = 10     # 최대 보유 일수
     max_positions:  int   = 5      # 동시 최대 보유 종목 수
     initial_cash:   float = 10_000_000   # 초기 자본
+    # 트레일링 스탑 파라미터
+    trail_trigger:  float = 0.10   # 이 수익률 달성 시 트레일링 스탑 활성화
+    trail_pct:      float = 0.05   # 활성화 이후 고점 대비 허용 낙폭 (이 비율만큼 빠지면 청산)
 
 
 # ─────────────────────────────────────────
@@ -130,13 +133,31 @@ def simulate_portfolio(signals: pd.DataFrame, ohlcv: pd.DataFrame,
                 continue
             bar = idx.loc[(ticker, date)]
 
+            # 고점(HWM) 갱신
+            pos["hwm"] = max(pos.get("hwm", pos["buy_price"]), bar["high"])
+
+            # 실효 손절가: 원래 sl / 수익보호(원금) / 트레일링 중 최고값
+            hwm_pnl  = (pos["hwm"] - pos["buy_price"]) / pos["buy_price"]
+            eff_sl   = pos["sl"]
+            safe_thr = cfg.trail_trigger * 0.8   # 수익보호 활성화 기준
+
+            if hwm_pnl >= cfg.trail_trigger:
+                trail_sl = pos["hwm"] * (1 - cfg.trail_pct)
+                eff_sl   = max(eff_sl, trail_sl)
+            elif hwm_pnl >= safe_thr:
+                eff_sl   = max(eff_sl, pos["buy_price"])  # 원금 보장
+
             sell_price = None
             exit_type  = None
 
-            if bar["low"] <= pos["sl"] and bar["high"] >= pos["tp"]:
-                sell_price, exit_type = pos["sl"], "손절"
-            elif bar["low"] <= pos["sl"]:
-                sell_price, exit_type = pos["sl"], "손절"
+            if bar["low"] <= eff_sl and bar["high"] >= pos["tp"]:
+                sell_price, exit_type = eff_sl, "손절"
+            elif bar["low"] <= eff_sl:
+                if eff_sl > pos["buy_price"]:
+                    exit_type = "트레일링" if hwm_pnl >= cfg.trail_trigger else "수익보호"
+                else:
+                    exit_type = "손절"
+                sell_price = eff_sl
             elif bar["high"] >= pos["tp"]:
                 sell_price, exit_type = pos["tp"], "익절"
             elif date >= pos["expire_date"]:
@@ -205,6 +226,7 @@ def simulate_portfolio(signals: pd.DataFrame, ohlcv: pd.DataFrame,
                     "sl":          buy_price * (1 + cfg.stop_loss),
                     "expire_date": expire_date,
                     "name":        row.get("name", ""),
+                    "hwm":         buy_price,   # 트레일링 스탑용 고점 추적
                 }
 
         # ── 3. 일별 포트폴리오 평가 ───────────────────

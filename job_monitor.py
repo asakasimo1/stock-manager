@@ -44,18 +44,71 @@ def main():
     bal = kis_api.get_balance()
     price_map = {h["ticker"]: h["eval_price"] for h in bal["holdings"]}
 
-    to_sell = []
+    # 트레일링 스탑 파라미터
+    trail_trigger = CFG.trail_trigger   # 이 수익률 달성 시 트레일링 활성화
+    trail_pct     = CFG.trail_pct       # 활성화 후 고점 대비 낙폭 허용치
+    safe_trigger  = trail_trigger * 0.8 # 수익보호(원금) 활성화 기준 (trail의 80%)
+
+    to_sell    = []
+    sl_changed = {}   # {ticker: new_sl} — 매도 아닌 포지션의 sl 갱신
+
     for ticker, pos in positions.items():
         cur_price = price_map.get(ticker)
         if cur_price is None:
             logger.warning("%s 잔고에서 현재가 미확인 — 건너뜀", ticker)
             continue
-        if cur_price <= pos["sl"]:
-            to_sell.append((ticker, pos, "손절", cur_price))
-        elif cur_price >= pos["tp"]:
-            to_sell.append((ticker, pos, "익절", cur_price))
 
-    for ticker, pos, reason, cur_price in to_sell:
+        buy_price = pos["buy_price"]
+        pnl_pct   = (cur_price - buy_price) / buy_price
+        orig_sl   = pos["sl"]
+        new_sl    = orig_sl   # sl은 단조 증가만 허용 (내리지 않음)
+
+        # ── 트레일링 / 수익보호 손절선 동적 상향 ────────────────────
+        if pnl_pct >= trail_trigger:
+            # 트레일링 스탑: 현재가 기준 고점 추적 (최대 손실 고정)
+            trail_sl = cur_price * (1 - trail_pct)
+            if trail_sl > new_sl:
+                new_sl = trail_sl
+                logger.info("[트레일링] %s  수익 %+.1f%%  sl %.0f→%.0f원",
+                            ticker, pnl_pct * 100, orig_sl, new_sl)
+        elif pnl_pct >= safe_trigger:
+            # 수익보호: 원금 이상으로 손절선 상향 (손실 완전 방지)
+            if buy_price > new_sl:
+                new_sl = buy_price
+                logger.info("[수익보호] %s  수익 %+.1f%%  sl %.0f→%.0f원(원금 확보)",
+                            ticker, pnl_pct * 100, orig_sl, new_sl)
+
+        if new_sl != orig_sl:
+            pos["sl"] = new_sl
+            sl_changed[ticker] = new_sl
+            # 원금 미만 → 원금 이상 전환 시 (처음 수익 보호 돌입) 알림
+            if orig_sl < buy_price <= new_sl:
+                notify.send(
+                    f"📈 <b>수익보호 돌입</b>  {pos.get('name','')} ({ticker})\n"
+                    f"  현재가 {cur_price:,}원  수익 {pnl_pct:+.1f}%\n"
+                    f"  손절선 {orig_sl:,.0f}원 → {new_sl:,.0f}원 (손실 없는 구간)"
+                )
+
+        # ── 매도 조건 체크 ────────────────────────────────────────
+        if cur_price <= pos["sl"]:
+            if pos["sl"] > buy_price:
+                reason = f"트레일링/수익보호 ({pnl_pct:+.1f}%)"
+                emoji  = "📉"
+            else:
+                reason = "손절"
+                emoji  = "🔴"
+            to_sell.append((ticker, pos, reason, cur_price, emoji))
+        elif cur_price >= pos["tp"]:
+            to_sell.append((ticker, pos, "익절", cur_price, "💰"))
+
+    # ── sl 변경 포지션 DB 반영 (매도 예정 제외) ─────────────────
+    sell_tickers = {t for t, *_ in to_sell}
+    for ticker, new_sl in sl_changed.items():
+        if ticker not in sell_tickers:
+            pos = positions[ticker]
+            state_db.upsert_position(ticker, pos)
+
+    for ticker, pos, reason, cur_price, emoji in to_sell:
         try:
             result  = kis_api.place_order(ticker, "SELL", pos["qty"])
             pnl     = (cur_price - pos["buy_price"]) * pos["qty"]
@@ -71,7 +124,6 @@ def main():
                 order_no=result["order_no"],
             )
 
-            emoji = "🔴" if reason == "손절" else "💰"
             notify.send(
                 f"{emoji} <b>{reason}</b>  {pos.get('name','')} ({ticker})\n"
                 f"  매수가 {pos['buy_price']:,}원 → 매도가 {cur_price:,}원\n"
