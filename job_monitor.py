@@ -47,7 +47,7 @@ def main():
     # 트레일링 스탑 파라미터
     trail_trigger = CFG.trail_trigger   # 이 수익률 달성 시 트레일링 활성화
     trail_pct     = CFG.trail_pct       # 활성화 후 고점 대비 낙폭 허용치
-    safe_trigger  = trail_trigger * 0.8 # 수익보호(원금) 활성화 기준 (trail의 80%)
+    safe_trigger  = round(trail_trigger * 0.8, 6)  # 수익보호(원금) 활성화 기준 (float 오차 방지)
 
     to_sell    = []
     sl_changed = {}   # {ticker: new_sl} — 매도 아닌 포지션의 sl 갱신

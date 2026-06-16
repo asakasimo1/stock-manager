@@ -139,7 +139,7 @@ def simulate_portfolio(signals: pd.DataFrame, ohlcv: pd.DataFrame,
             # 실효 손절가: 원래 sl / 수익보호(원금) / 트레일링 중 최고값
             hwm_pnl  = (pos["hwm"] - pos["buy_price"]) / pos["buy_price"]
             eff_sl   = pos["sl"]
-            safe_thr = cfg.trail_trigger * 0.8   # 수익보호 활성화 기준
+            safe_thr = round(cfg.trail_trigger * 0.8, 6)  # 수익보호 기준 (float 오차 방지)
 
             if hwm_pnl >= cfg.trail_trigger:
                 trail_sl = pos["hwm"] * (1 - cfg.trail_pct)
