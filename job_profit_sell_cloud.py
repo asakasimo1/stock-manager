@@ -8,8 +8,9 @@
 """
 import logging
 import os
+import time as _time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, time as dt_time
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -36,6 +37,10 @@ _env_sl = os.getenv("FORCE_STOP_LOSS",   "-4.0").strip()
 AUTO_PROFIT_PCT: float | None = float(_env_tp) if _env_tp else None
 AUTO_LOSS_PCT:   float | None = float(_env_sl) if _env_sl else None
 
+# KRX 정규시간(09:00~15:30)에만, 5분 1회 제한
+_AUTO_SELL_INTERVAL = 300
+_last_auto_sell     = 0.0
+
 
 def calc_target_price(buy_price: int, qty: int,
                       target_type: str, target_value: float) -> int:
@@ -52,13 +57,22 @@ def calc_target_price(buy_price: int, qty: int,
 
 
 def auto_sell_by_rule():
-    """보유 종목 자동매도 규칙 체크
+    """보유 종목 자동매도 규칙 체크 (KRX 정규 09:00~15:30, 5분 1회 제한)
     - 수익률 >= FORCE_TAKE_PROFIT% : 익절 매도 (None이면 비활성)
     - 수익률 <= FORCE_STOP_LOSS%   : 손절 매도 (None이면 비활성)
     """
+    global _last_auto_sell
+
     if AUTO_PROFIT_PCT is None and AUTO_LOSS_PCT is None:
         logger.info("강제 익절/손절 조건 비활성화 (FORCE_TAKE_PROFIT, FORCE_STOP_LOSS 미설정)")
         return
+
+    t = datetime.now(KST).time()
+    if not (dt_time(9, 0) <= t < dt_time(15, 30)):
+        return
+    if _time.time() - _last_auto_sell < _AUTO_SELL_INTERVAL:
+        return
+    _last_auto_sell = _time.time()
 
     tp_label = f"+{AUTO_PROFIT_PCT:.0f}%" if AUTO_PROFIT_PCT is not None else "비활성"
     sl_label = f"{AUTO_LOSS_PCT:.0f}%"    if AUTO_LOSS_PCT   is not None else "비활성"
