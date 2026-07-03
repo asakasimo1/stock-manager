@@ -1,0 +1,24 @@
+name: IPO 데이터 자동 갱신
+
+on:
+  schedule:
+    - cron: '0 1 * * *'   # 매일 10:00 KST (UTC+9)
+  workflow_dispatch:       # 수동 실행
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: IPO 크롤링 및 Gist/JSONBin 업데이트
+        env:
+          GH_TOKEN:       ${{ secrets.GH_TOKEN }}
+          GIST_ID:        ${{ secrets.GIST_ID }}
+          JSONBIN_BIN_ID: ${{ secrets.JSONBIN_BIN_ID }}
+          JSONBIN_KEY:    ${{ secrets.JSONBIN_KEY }}
+        run: node scripts/ipo_crawl.mjs
