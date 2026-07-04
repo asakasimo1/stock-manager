@@ -277,6 +277,17 @@ async function main() {
   const merged = mergeIpo(fresh, existingGist);
   console.log(`[IPO] 병합 완료: ${merged.length}건`);
 
+  // 건수 감소 방어: 기존 대비 10% 이상 줄면 탈락 종목 강제 보존
+  if (existingGist.length > 0 && merged.length < existingGist.length * 0.9) {
+    console.warn(`[IPO] ⚠️ 감소 감지 (${existingGist.length} → ${merged.length}건) — 탈락 종목 복원`);
+    const mergedNames = new Set(merged.map(r => r.name));
+    for (const old of existingGist) {
+      if (!old?.name || mergedNames.has(old.name) || !/[가-힣]/.test(old.name)) continue;
+      merged.push(old);
+    }
+    console.log(`[IPO] 복원 후: ${merged.length}건`);
+  }
+
   // 통계
   const statuses = {};
   for (const r of merged) statuses[r.status] = (statuses[r.status] || 0) + 1;
