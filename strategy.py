@@ -75,9 +75,27 @@ STRATEGY_PRESETS = {
         "max_positions":    5,
         "max_order_amount": 2_000_000,
         "max_daily_loss":   500_000,
-        # 공격형: 수익 크게 키우고 여유 있게 트레일링
         "trail_trigger":    0.10,
         "trail_pct":        0.07,
+    },
+    "rsi_rebound": {
+        "desc":             "RSI 반등 + EMA 크로스 — 과매도 회복 구간 진입 (손실 방어형)",
+        # 진입: RSI 30~55 구간 + EMA5>EMA20 + 거래량 1.2배 이상 + 양봉
+        "volume_mult":      1.2,
+        "day_return_min":   0.0,
+        "rsi_min":          30.0,
+        "rsi_max":          55.0,
+        "use_ema_cross":    True,
+        "ema_fast":         5,
+        "ema_slow":         20,
+        "stop_loss":        -0.05,
+        "take_profit":      0.12,
+        "hold_days":        10,
+        "max_positions":    5,
+        "max_order_amount": 2_000_000,
+        "max_daily_loss":   300_000,
+        "trail_trigger":    0.07,
+        "trail_pct":        0.04,
     },
 }
 
@@ -106,7 +124,12 @@ def load_strategy(name: str) -> tuple[Cfg, dict]:
 
     cfg = Cfg()
     cfg.volume_mult    = preset["volume_mult"]
-    cfg.day_return_min = preset["day_return_min"]
+    cfg.day_return_min = preset.get("day_return_min", 0.0)
+    cfg.rsi_min        = preset.get("rsi_min",        0.0)
+    cfg.rsi_max        = preset.get("rsi_max",        100.0)
+    cfg.use_ema_cross  = preset.get("use_ema_cross",  False)
+    cfg.ema_fast       = preset.get("ema_fast",       5)
+    cfg.ema_slow       = preset.get("ema_slow",       20)
     cfg.stop_loss      = preset["stop_loss"]
     cfg.take_profit    = preset["take_profit"]
     cfg.hold_days      = preset["hold_days"]

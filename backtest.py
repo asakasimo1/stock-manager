@@ -53,16 +53,21 @@ TOTAL_SELL_GAIN = 1 - SELL_COMMISSION - SELL_TAX          # 매도 실질 수취
 # ─────────────────────────────────────────
 class Cfg:
     vol_lookback:   int   = 20
-    volume_mult:    float = 2.0    # 거래량 배수
-    day_return_min: float = 0.005  # 신호 당일 최소 수익률
+    volume_mult:    float = 1.2    # 거래량 배수
+    day_return_min: float = 0.0    # (양봉 여부는 generate_signals에서 처리)
+    # RSI 필터 — 기본값 0/100 = 필터 비활성 (기존 전략과 동일하게 동작)
+    rsi_min:        float = 0.0
+    rsi_max:        float = 100.0
+    use_ema_cross:  bool  = False  # True 시 ema_fast > ema_slow 조건 추가
+    ema_fast:       int   = 5
+    ema_slow:       int   = 20
     stop_loss:      float = -0.07  # 손절 -7%
     take_profit:    float = 0.10   # 익절 +10%
-    hold_days:      int   = 10     # 최대 보유 일수
-    max_positions:  int   = 5      # 동시 최대 보유 종목 수
-    initial_cash:   float = 10_000_000   # 초기 자본
-    # 트레일링 스탑 파라미터
-    trail_trigger:  float = 0.10   # 이 수익률 달성 시 트레일링 스탑 활성화
-    trail_pct:      float = 0.05   # 활성화 이후 고점 대비 허용 낙폭 (이 비율만큼 빠지면 청산)
+    hold_days:      int   = 10
+    max_positions:  int   = 5
+    initial_cash:   float = 10_000_000
+    trail_trigger:  float = 0.10
+    trail_pct:      float = 0.05
 
 
 # ─────────────────────────────────────────
@@ -72,28 +77,52 @@ def add_features(df: pd.DataFrame, cfg: Cfg) -> pd.DataFrame:
     df = df.sort_values(["ticker", "date"]).copy()
     grp = df.groupby("ticker")
 
+    # 거래량
     df["vol_ma"] = grp["volume"].transform(
         lambda x: x.shift(1).rolling(cfg.vol_lookback, min_periods=10).mean()
     )
-    df["vol_ratio"]   = df["volume"] / df["vol_ma"]
-    df["day_return"]  = (df["close"] - df["open"]) / df["open"]
-    df["mom5"]        = grp["close"].transform(lambda x: x.pct_change(5))
+    df["vol_ratio"]  = df["volume"] / df["vol_ma"]
+    df["day_return"] = (df["close"] - df["open"]) / df["open"]
+    df["mom5"]       = grp["close"].transform(lambda x: x.pct_change(5))
+
+    # EMA
+    df["ema_fast"] = grp["close"].transform(
+        lambda x: x.ewm(span=cfg.ema_fast, adjust=False).mean()
+    )
+    df["ema_slow"] = grp["close"].transform(
+        lambda x: x.ewm(span=cfg.ema_slow, adjust=False).mean()
+    )
+
+    # RSI (Wilder EWM)
+    def _rsi(series, period=14):
+        delta    = series.diff()
+        gain     = delta.clip(lower=0)
+        loss     = (-delta).clip(lower=0)
+        avg_gain = gain.ewm(com=period - 1, min_periods=period).mean()
+        avg_loss = loss.ewm(com=period - 1, min_periods=period).mean()
+        rs = avg_gain / (avg_loss + 1e-9)
+        return 100 - (100 / (1 + rs))
+
+    df["rsi"] = grp["close"].transform(_rsi)
     return df
 
 
-# ─────────────────────────────────────────
-# 신호 생성
-# ─────────────────────────────────────────
 def generate_signals(df: pd.DataFrame, cfg: Cfg) -> pd.DataFrame:
-    sig = df[
+    mask = (
         (df["vol_ratio"]  >= cfg.volume_mult) &
-        (df["day_return"] >= cfg.day_return_min) &
-        (df["mom5"]       >  0) &
-        (df["volume"]     >  0) &
-        (df["open"]       >  0)
-    ].copy()
+        (df["day_return"] > 0) &               # 양봉
+        (df["rsi"]        >= cfg.rsi_min) &    # RSI 하한 (기본 0 = 비활성)
+        (df["rsi"]        <= cfg.rsi_max) &    # RSI 상한 (기본 100 = 비활성)
+        (df["volume"]     > 0) &
+        (df["open"]       > 0)
+    )
+    if getattr(cfg, "use_ema_cross", False):
+        mask = mask & (df["ema_fast"] > df["ema_slow"])
+
+    sig = df[mask].copy()
     return sig[["date", "ticker", "name", "close",
-                "vol_ratio", "day_return"]].reset_index(drop=True)
+                "vol_ratio", "day_return", "rsi"]].reset_index(drop=True)
+
 
 
 # ─────────────────────────────────────────

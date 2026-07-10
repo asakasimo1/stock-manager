@@ -29,12 +29,12 @@ logger = logging.getLogger(__name__)
 # ─────────────────────────────────────────
 # 전략 설정
 # ─────────────────────────────────────────
-CFG = Cfg()
-CFG.volume_mult    = 1.5
-CFG.day_return_min = 0.005
-CFG.stop_loss      = -0.07
-CFG.take_profit    = 0.20
-CFG.hold_days      = 15
+# STRATEGY 환경변수 기반으로 전략 로드 (기본: rsi_rebound)
+import os as _os
+from strategy import load_strategy as _load_strategy
+_STRATEGY_NAME = _os.getenv("STRATEGY", "rsi_rebound")
+CFG, _PRESET   = _load_strategy(_STRATEGY_NAME)
+logger.info("신호 전략: %s", _STRATEGY_NAME)
 
 # 외국인 순매수 최소 기준 (원)
 FOREIGN_MIN = 5_000_000_000    # 50억
