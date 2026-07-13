@@ -78,6 +78,8 @@ def add_features(df: pd.DataFrame, cfg: Cfg) -> pd.DataFrame:
     df["vol_ratio"]   = df["volume"] / df["vol_ma"]
     df["day_return"]  = (df["close"] - df["open"]) / df["open"]
     df["mom5"]        = grp["close"].transform(lambda x: x.pct_change(5))
+    rng = df["high"] - df["low"]
+    df["low_recovery"] = np.where(rng > 0, (df["close"] - df["low"]) / rng, 0.5)
     return df
 
 
@@ -94,6 +96,27 @@ def generate_signals(df: pd.DataFrame, cfg: Cfg) -> pd.DataFrame:
     ].copy()
     return sig[["date", "ticker", "name", "close",
                 "vol_ratio", "day_return"]].reset_index(drop=True)
+
+
+# ─────────────────────────────────────────
+# 반등 포착 신호 생성
+# ─────────────────────────────────────────
+def generate_rebound_signals(df: pd.DataFrame,
+                             vol_mult: float = 2.0,
+                             mom5_max: float = -0.07,
+                             recovery_min: float = 0.35) -> pd.DataFrame:
+    """반등 포착: 거래량 급증(2배↑) + 5일 낙폭(-7%↓) + 당일 양봉 + 아랫꼬리 회복"""
+    sig = df[
+        (df["vol_ratio"]    >= vol_mult)     &
+        (df["mom5"]         <= mom5_max)     &
+        (df["day_return"]   >  0)            &
+        (df["low_recovery"] >= recovery_min) &
+        (df["volume"]       >  0)            &
+        (df["open"]         >  0)
+    ].copy()
+    sig["signal_type"] = "rebound"
+    cols = ["date", "ticker", "name", "close", "vol_ratio", "day_return", "mom5", "low_recovery", "signal_type"]
+    return sig[cols].reset_index(drop=True)
 
 
 # ─────────────────────────────────────────
