@@ -278,7 +278,8 @@ def process_grid(job: dict) -> bool:
             if order["state"] == "done":
                 coin_qty  = order["executed_volume"] or grid["coin_qty"]
                 avg_price = order["avg_price"] or level
-                grid.update(coin_qty=coin_qty, last_buy_price=avg_price, buy_uuid="")
+                _buy_time = datetime.now(KST).strftime("%H:%M")
+                grid.update(coin_qty=coin_qty, last_buy_price=avg_price, buy_uuid="", buy_time=_buy_time)
 
                 # 상위 격자에 매도 주문 등록
                 sell_price = avg_price * (1 + grid_pct / 100)
@@ -330,6 +331,7 @@ def process_grid(job: dict) -> bool:
                 _now = datetime.now(KST).strftime("%Y-%m-%d %H:%M")
                 hist = job.setdefault("trade_history", [])
                 hist.append({"date": _now[:10], "time": _now[11:],
+                             "buy_time": grid.get("buy_time", ""),
                              "buy_price": round(buy_exec, 2),
                              "sell_price": round(sell_exec, 2),
                              "qty": round(coin_qty, 8),

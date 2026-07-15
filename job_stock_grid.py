@@ -167,7 +167,8 @@ def process_grid(job: dict) -> bool:
             if order_no not in pending:
                 qty = grid["qty"]
                 avg = grid["last_buy_price"]
-                grid.update(order_no="", org_no="")
+                _buy_time = datetime.now(KST).strftime("%H:%M")
+                grid.update(order_no="", org_no="", buy_time=_buy_time)
                 sell_price = kis_api.round_price(avg * (1 + grid_pct / 100))
                 if i + 1 < len(grids):
                     sell_price = max(sell_price, int(grids[i+1]["level"]))
@@ -196,6 +197,7 @@ def process_grid(job: dict) -> bool:
                 _now = datetime.now(KST).strftime("%Y-%m-%d %H:%M")
                 hist = job.setdefault("trade_history", [])
                 hist.append({"date": _now[:10], "time": _now[11:],
+                             "buy_time": grid.get("buy_time", ""),
                              "buy_price": round(buy_exec, 2),
                              "sell_price": round(sell_exec, 2),
                              "qty": qty,
