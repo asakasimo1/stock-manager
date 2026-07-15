@@ -1,6 +1,4 @@
 async function initCoinTrade() {
-  _restoreTradeSection('cb', false);
-  _restoreTradeSection('cs', false);
   _restoreTradeSection('cc', true);
   ctLoadConfig();
   await ctLoadAll();
@@ -34,6 +32,160 @@ async function initCoinTrade() {
   }
 
   ctCheckDaemonStatus();
+  ctLoadToday();
+}
+
+// ── 일별 수익 현황 ────────────────────────────────────────────
+async function ctFetchDay(date) {
+  const url = date === null ? '/api/coin-today' : `/api/coin-date?date=${date}`;
+  try {
+    const r = await fetch(url);
+    return r.ok ? await r.json() : null;
+  } catch { return null; }
+}
+
+function ctRenderDailyCard(data, idx) {
+  const wrap = document.getElementById('ct-daily-wrap');
+  if (!wrap) return;
+  const card = document.getElementById(`ct-day-card-${idx}`);
+  if (!card) return;
+
+  if (!data || data.error) {
+    card.innerHTML = `<div style="color:var(--muted);font-size:12px;padding:4px 0">데이터 없음</div>`;
+    return;
+  }
+  const net    = data.netProfit || 0;
+  const netCls = net > 0 ? '#22c55e' : net < 0 ? '#ef4444' : 'var(--muted)';
+  const netStr = (net >= 0 ? '+' : '') + net.toLocaleString() + '원';
+  const buyCnt  = data.buys?.length  || 0;
+  const sellCnt = data.sells?.length || 0;
+  const fee     = data.totalFee || 0;
+  const pending = data.pendingBuyCnt || data.unmatchedBuyCnt || 0;
+
+  let txStr = `매도 ${sellCnt}건`;
+  if (buyCnt > 0) txStr += ` · 매수 ${buyCnt}건`;
+  if (pending > 0) txStr += ` <span style="font-size:10px;font-weight:600;color:#f59e0b">(미매도 ${pending})</span>`;
+
+  card.innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
+      <div style="text-align:center">
+        <div style="font-size:9px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">실현손익</div>
+        <div style="font-size:17px;font-weight:800;color:${netCls}">${netStr}</div>
+      </div>
+      <div style="text-align:center">
+        <div style="font-size:9px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">체결</div>
+        <div style="font-size:13px;font-weight:700;color:var(--text);line-height:1.4">${txStr}</div>
+      </div>
+      <div style="text-align:center">
+        <div style="font-size:9px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">수수료</div>
+        <div style="font-size:17px;font-weight:800;color:var(--muted)">${fee.toLocaleString()}원</div>
+      </div>
+    </div>
+    ${(buyCnt + sellCnt) > 0 ? `
+    <div id="ct-day-detail-${idx}" style="display:none;margin-top:10px">
+      <div style="overflow-x:auto;border-radius:8px;border:1px solid var(--border)">
+        <table style="width:100%;border-collapse:collapse;font-size:11px">
+          <thead><tr style="background:var(--surface)">
+            <th style="padding:5px 8px;text-align:left;color:var(--muted);font-size:10px;font-weight:700">구분</th>
+            <th style="padding:5px 8px;text-align:left;color:var(--muted);font-size:10px;font-weight:700">시각</th>
+            <th style="padding:5px 8px;text-align:left;color:var(--muted);font-size:10px;font-weight:700">종목</th>
+            <th style="padding:5px 8px;text-align:right;color:var(--muted);font-size:10px;font-weight:700">수량</th>
+            <th style="padding:5px 8px;text-align:right;color:var(--muted);font-size:10px;font-weight:700">단가</th>
+            <th style="padding:5px 8px;text-align:right;color:var(--muted);font-size:10px;font-weight:700">손익</th>
+          </tr></thead>
+          <tbody>
+            ${[...(data.sells||[]).map(o => {
+              const p = o.profit || 0;
+              const pCls = p > 0 ? '#22c55e' : p < 0 ? '#ef4444' : 'var(--muted)';
+              const isGrid = o.source === 'grid';
+              const isLoss = p < 0;
+              const sellLabel = isLoss ? '손절' : '매도';
+              const sellColor = isLoss ? '#ef4444' : (isGrid ? '#3b82f6' : '#22c55e');
+              const qty = typeof o.qty === 'number'
+                ? (Number.isInteger(o.qty) ? o.qty.toLocaleString() : o.qty.toLocaleString(undefined, {maximumFractionDigits:6}))
+                : (o.qty || '—');
+              return `<tr style="border-top:1px solid var(--border)">
+                  <td style="padding:5px 8px;color:#f59e0b;font-weight:700">매수</td>
+                  <td style="padding:5px 8px;color:var(--muted);font-variant-numeric:tabular-nums">${o.buyTime || '—'}</td>
+                  <td style="padding:5px 8px;color:var(--text)">${o.name}</td>
+                  <td style="padding:5px 8px;text-align:right;color:var(--text);font-variant-numeric:tabular-nums">${qty}</td>
+                  <td style="padding:5px 8px;text-align:right;color:var(--muted);font-variant-numeric:tabular-nums">${Math.round(o.buyPrice||0).toLocaleString()}원</td>
+                  <td style="padding:5px 8px;text-align:right;color:var(--muted)">—</td>
+                </tr>
+                <tr>
+                  <td style="padding:5px 8px;color:${sellColor};font-weight:700">${sellLabel}</td>
+                  <td style="padding:5px 8px;color:var(--muted);font-variant-numeric:tabular-nums">${o.time}</td>
+                  <td style="padding:5px 8px;color:var(--text)">${o.name}</td>
+                  <td style="padding:5px 8px;text-align:right;color:var(--text);font-variant-numeric:tabular-nums">${qty}</td>
+                  <td style="padding:5px 8px;text-align:right;color:var(--text);font-variant-numeric:tabular-nums">${Math.round(o.sellPrice||0).toLocaleString()}원</td>
+                  <td style="padding:5px 8px;text-align:right;font-weight:700;color:${pCls}">${p>=0?'+':''}${p.toLocaleString()}원</td>
+                </tr>`;
+            }),
+            ...(data.buys||[]).map(o=>{
+              const qty = typeof o.qty === 'number'
+                ? (Number.isInteger(o.qty) ? o.qty.toLocaleString() : o.qty.toLocaleString(undefined, {maximumFractionDigits:6}))
+                : (o.qty || '—');
+              return `<tr style="border-top:1px solid var(--border)">
+                <td style="padding:5px 8px;color:#f59e0b;font-weight:700">매수</td>
+                <td style="padding:5px 8px;color:var(--muted);font-variant-numeric:tabular-nums">${o.time}</td>
+                <td style="padding:5px 8px;color:var(--text)">${o.name}</td>
+                <td style="padding:5px 8px;text-align:right;color:var(--text);font-variant-numeric:tabular-nums">${qty}</td>
+                <td style="padding:5px 8px;text-align:right;color:var(--muted);font-variant-numeric:tabular-nums">${Math.round(o.buyPrice||0).toLocaleString()}원</td>
+                <td style="padding:5px 8px;text-align:right;color:#f59e0b;font-size:10px">보유중</td>
+              </tr>`;
+            })].join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <button onclick="ctToggleDayDetail(${idx})" id="ct-day-toggle-${idx}"
+      style="margin-top:8px;background:none;border:none;color:var(--muted);font-size:11px;cursor:pointer;padding:0">▼ 상세 보기</button>
+    ` : ''}
+  `;
+}
+
+function ctToggleDayDetail(idx) {
+  const el  = document.getElementById(`ct-day-detail-${idx}`);
+  const btn = document.getElementById(`ct-day-toggle-${idx}`);
+  if (!el) return;
+  const open = el.style.display === 'none';
+  el.style.display = open ? 'block' : 'none';
+  if (btn) btn.textContent = open ? '▲ 접기' : '▼ 상세 보기';
+}
+
+async function ctLoadToday() {
+  const kstNow = new Date(Date.now() + 9 * 3600 * 1000);
+  const dates  = [null];
+  for (let i = 1; i <= 2; i++) {
+    const d = new Date(kstNow.getTime() - i * 86400000);
+    dates.push(d.toISOString().slice(0, 10));
+  }
+  const mm = String(kstNow.getMonth() + 1).padStart(2, '0');
+  const dd = String(kstNow.getDate()).padStart(2, '0');
+  const labels = [`오늘 (${mm}/${dd})`];
+  for (let i = 1; i <= 2; i++) {
+    const d = new Date(kstNow.getTime() - i * 86400000);
+    const m = String(d.getMonth()+1).padStart(2,'0');
+    const day = String(d.getDate()).padStart(2,'0');
+    labels.push(`${i===1?'어제':'그제'} (${m}/${day})`);
+  }
+  const wrap = document.getElementById('ct-daily-wrap');
+  if (!wrap) return;
+  wrap.innerHTML = dates.map((_, i) => `
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px">
+      <div style="font-size:10px;font-weight:700;color:var(--muted);margin-bottom:10px;display:flex;justify-content:space-between;align-items:center">
+        <span style="text-transform:uppercase;letter-spacing:.06em">${labels[i]}</span>
+        <span id="ct-day-loading-${i}" style="color:var(--muted);font-size:10px">로딩중…</span>
+      </div>
+      <div id="ct-day-card-${i}"></div>
+    </div>
+  `).join('');
+  await Promise.all(dates.map(async (date, i) => {
+    const data = await ctFetchDay(date);
+    const loadEl = document.getElementById(`ct-day-loading-${i}`);
+    if (loadEl) loadEl.remove();
+    ctRenderDailyCard(data, i);
+  }));
 }
 
 async function ctLoadAll() {

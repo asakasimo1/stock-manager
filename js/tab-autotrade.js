@@ -1,7 +1,6 @@
 async function initAutoTrade() {
-  _restoreTradeSection('ab', false);
-  _restoreTradeSection('at', false);
   _restoreTradeSection('ac', true);
+  _restoreTradeSection('ag', false);
   atLoadConfig();
   await atLoadAll();
 
@@ -85,15 +84,17 @@ async function atRefreshPrices() {
 async function atLoadAll() {
   try {
     // /api/data는 전역 캐시 재사용 (dashboard/portfolio 탭이 이미 로드했으면 네트워크 불필요)
-    const [rSell, rBuy, rCycle, gistData] = await Promise.all([
+    const [rSell, rBuy, rCycle, rGrid, gistData] = await Promise.all([
       fetch('/api/profit-sell'),
       fetch('/api/profit-buy'),
       fetch('/api/profit-cycle'),
+      fetch('/api/stock-grid'),
       _fetchGistData(),
     ]);
     _atJobs    = rSell.ok  ? await rSell.json()  : [];
     _abJobs    = rBuy.ok   ? await rBuy.json()   : [];
     _acJobs    = rCycle.ok ? await rCycle.json() : [];
+    _agJobs    = rGrid.ok  ? await rGrid.json()  : [];
     _atAccount = gistData.account_balance || null;
   } catch (e) {
     console.warn('자동매매 데이터 로드 실패:', e);
@@ -102,6 +103,8 @@ async function atLoadAll() {
   abRenderJobs();
   acRenderJobs();
   atRenderJobs();
+  agRenderJobs();
+  atLoadToday();
 }
 
 // ── 잔고 새로고침 (GitHub Actions balance job 트리거 → 30초 후 Gist 재조회) ──
@@ -1528,3 +1531,331 @@ function ctCheckDaemonStatus() {
   }
 }
 
+
+// ═══════════════════════════════════════════════════════════════
+// 주식 그리드 트레이딩  (ag- prefix)
+// ═══════════════════════════════════════════════════════════════
+let _agJobs = [];
+let _agAcTimer = null;
+
+// ── 종목 자동완성 ──────────────────────────────────────────────
+function onAgNameInput(val) {
+  if (!val || val.length < 1) { hideAgAc(); return; }
+  const results = (_stockList || []).filter(s =>
+    s.name.includes(val) || s.ticker.startsWith(val)
+  ).slice(0, 8);
+  const box = document.getElementById('ag-ac-list');
+  if (!box) return;
+  if (!results.length) { box.style.display = 'none'; return; }
+  box.innerHTML = results.map(s =>
+    `<div style="padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border)"
+       onmousedown="selectAgStock('${s.ticker}','${s.name}')">${s.name} <span style="color:var(--muted);font-size:11px">${s.ticker}</span></div>`
+  ).join('');
+  box.style.display = 'block';
+}
+function hideAgAc() { setTimeout(() => { const b = document.getElementById('ag-ac-list'); if(b) b.style.display='none'; }, 150); }
+function selectAgStock(ticker, name) {
+  document.getElementById('ag-ticker').value = ticker;
+  document.getElementById('ag-name').value   = name;
+  document.getElementById('ag-ticker-display').textContent = ticker;
+  hideAgAc();
+  // 현재가 조회 힌트
+  fetch(`/api/stock?ticker=${ticker}`).then(r=>r.json()).then(d=>{
+    const el = document.getElementById('ag-price-hint');
+    if (el && d.price) {
+      el.textContent = `현재가 ${d.price.toLocaleString()}원`;
+      // 상하한 자동 제안
+      const low  = Math.floor(d.price * 0.9 / 100) * 100;
+      const high = Math.ceil(d.price * 1.1 / 100) * 100;
+      const loEl = document.getElementById('ag-lower'); if(loEl && !loEl.value) loEl.value = low;
+      const hiEl = document.getElementById('ag-upper'); if(hiEl && !hiEl.value) hiEl.value = high;
+    }
+  }).catch(()=>{});
+}
+
+// ── 폼 토글 ───────────────────────────────────────────────────
+function agToggleForm() {
+  const form = document.getElementById('ag-form');
+  const btn  = document.getElementById('ag-add-btn');
+  if (!form) return;
+  const open = form.style.display === 'none' || !form.style.display;
+  form.style.display = open ? 'block' : 'none';
+  if (btn) btn.textContent = open ? '✕ 닫기' : '+ 추가';
+}
+
+// ── 등록 ──────────────────────────────────────────────────────
+async function agRegister() {
+  const ticker  = document.getElementById('ag-ticker').value.trim();
+  const name    = document.getElementById('ag-name').value.trim();
+  const lower   = parseInt(document.getElementById('ag-lower')?.value) || 0;
+  const upper   = parseInt(document.getElementById('ag-upper')?.value) || 0;
+  const gridPct = parseFloat(document.getElementById('ag-pct')?.value) || 1.5;
+  const krw     = parseInt(document.getElementById('ag-krw')?.value) || 0;
+  const reinit  = parseInt(document.getElementById('ag-reinit')?.value) || 0;
+  const msgEl   = document.getElementById('ag-msg');
+
+  if (!ticker) { if(msgEl) msgEl.innerHTML='<span style="color:var(--red)">종목을 검색해 선택하세요</span>'; return; }
+  if (lower <= 0 || upper <= 0) { if(msgEl) msgEl.innerHTML='<span style="color:var(--red)">하한/상한 가격을 입력하세요</span>'; return; }
+  if (upper <= lower) { if(msgEl) msgEl.innerHTML='<span style="color:var(--red)">상한이 하한보다 커야 합니다</span>'; return; }
+  if (krw < 10000) { if(msgEl) msgEl.innerHTML='<span style="color:var(--red)">격자당 금액 1만원 이상</span>'; return; }
+  if (gridPct < 0.5) { if(msgEl) msgEl.innerHTML='<span style="color:var(--red)">격자 간격 0.5% 이상</span>'; return; }
+
+  if(msgEl) msgEl.textContent = '등록 중...';
+  const payload = { ticker, name, lower_price: lower, upper_price: upper, grid_pct: gridPct, krw_per_grid: krw };
+  if (reinit >= 10) payload.auto_reinit_minutes = reinit;
+
+  try {
+    const r = await fetch('/api/stock-grid', {
+      method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload)
+    });
+    const d = await r.json();
+    if (r.ok && !d.error) {
+      if(msgEl) msgEl.innerHTML = '<span style="color:var(--green)">✅ 등록 완료 — 다음 30초 폴링에서 초기화 시작</span>';
+      document.getElementById('ag-form').style.display = 'none';
+      document.getElementById('ag-add-btn').textContent = '+ 추가';
+      await atLoadAll();
+    } else {
+      if(msgEl) msgEl.innerHTML = `<span style="color:var(--red)">${d.error || '저장 실패'}</span>`;
+    }
+  } catch(e) {
+    if(msgEl) msgEl.innerHTML = `<span style="color:var(--red)">오류: ${e.message}</span>`;
+  }
+}
+
+// ── 중단 ──────────────────────────────────────────────────────
+async function agStop(id) {
+  if (!confirm('그리드를 중단하고 모든 미체결 주문을 취소하시겠습니까?')) return;
+  const r = await fetch(`/api/stock-grid?id=${id}`, { method: 'DELETE' });
+  if (r.ok) await atLoadAll();
+}
+
+// ── 렌더 ──────────────────────────────────────────────────────
+function agRenderJobs() {
+  const el = document.getElementById('ag-list');
+  if (!el) return;
+  const jobs = Array.isArray(_agJobs) ? _agJobs : [];
+  const active  = jobs.filter(j => ['init','active','reinit','stopping'].includes(j.status));
+  const stopped = jobs.filter(j => ['stopped'].includes(j.status)).slice(0, 3);
+
+  if (!active.length && !stopped.length) {
+    el.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:8px 0">없음</div>';
+    return;
+  }
+
+  const statusLabel = { init:'초기화중', active:'운영중', reinit:'재초기화중', stopping:'중단중', stopped:'중단됨' };
+  const statusColor = { init:'var(--primary)', active:'var(--green)', reinit:'var(--orange)', stopping:'var(--red)', stopped:'var(--muted)' };
+
+  const renderJob = (job) => {
+    const grids = job.grids || [];
+    const buyCnt  = grids.filter(g=>g.state==='buy_waiting').length;
+    const sellCnt = grids.filter(g=>g.state==='sell_waiting').length;
+    const idleCnt = grids.filter(g=>g.state==='idle').length;
+    const pnl = job.total_profit_krw || 0;
+    const pnlColor = pnl >= 0 ? 'var(--green)' : 'var(--red)';
+    const canStop = ['init','active','reinit'].includes(job.status);
+
+    return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <div>
+          <span style="font-weight:700;font-size:13px">${job.name || job.ticker}</span>
+          <span style="font-size:11px;color:var(--muted);margin-left:6px">${job.ticker}</span>
+          <span style="font-size:11px;color:${statusColor[job.status]};margin-left:6px;font-weight:600">${statusLabel[job.status]||job.status}</span>
+        </div>
+        ${canStop ? `<button onclick="agStop('${job.id}')" style="padding:3px 10px;background:none;border:1px solid var(--red);border-radius:6px;font-size:11px;color:var(--red);cursor:pointer">중단</button>` : ''}
+      </div>
+      <div style="font-size:11px;color:var(--muted);display:flex;gap:12px;flex-wrap:wrap">
+        <span>범위 ${(job.lower_price||0).toLocaleString()}~${(job.upper_price||0).toLocaleString()}원</span>
+        <span>간격 ${job.grid_pct||1.5}%</span>
+        <span>격자당 ${(job.krw_per_grid||0).toLocaleString()}원</span>
+      </div>
+      ${grids.length ? `<div style="font-size:11px;color:var(--text);margin-top:6px;display:flex;gap:12px;flex-wrap:wrap">
+        <span style="color:var(--primary)">매수대기 ${buyCnt}개</span>
+        <span style="color:var(--orange)">매도대기 ${sellCnt}개</span>
+        <span style="color:var(--muted)">대기 ${idleCnt}개</span>
+        <span style="color:${pnlColor};font-weight:600">누적수익 ${pnl>=0?'+':''}${Math.round(pnl).toLocaleString()}원 (${job.trade_count||0}회)</span>
+      </div>` : ''}
+    </div>`;
+  };
+
+  el.innerHTML = active.map(renderJob).join('') +
+    (stopped.length ? `<div style="font-size:12px;color:var(--muted);margin-top:4px">종료된 잡</div>${stopped.map(renderJob).join('')}` : '');
+}
+
+
+// ── 자동 주식매매 일별 수익 현황 ──────────────────────────────────
+
+function atCalcDayProfit(dateStr) {
+  const BUY_FEE  = 0.00015;  // 매수 수수료 0.015%
+  const SELL_FEE = 0.00195;  // 매도 수수료 0.015% + 증권거래세 0.18%
+
+  // 매도잡: sell_price는 실제 체결가, buy_price는 잡 등록 시 평단 → 정확한 실현손익
+  const sells = (_atJobs || []).filter(j =>
+    j.status === 'done' && (j.executed_at || '').startsWith(dateStr)
+  ).map(j => {
+    const sellPrice = j.sell_price || j.exec_price || j.target_price || 0;
+    const buyPrice  = j.buy_price  || 0;
+    const qty       = j.qty        || 0;
+    const sellNet   = sellPrice * qty * (1 - SELL_FEE);
+    const buyCost   = buyPrice  * qty * (1 + BUY_FEE);
+    return { name: j.name || j.ticker, ticker: j.ticker, qty, buyPrice, sellPrice,
+      profit: Math.round(sellNet - buyCost),
+      time: (j.executed_at || '').slice(11, 16), buyTime: null };
+  });
+
+  // 사이클 매도: buy_price + sell_price_exec 모두 저장되어 있음
+  const cycleSells = (_acJobs || []).filter(j =>
+    j.sold_at && j.sold_at.startsWith(dateStr) && j.sell_price_exec && j.hold_qty
+  ).map(j => {
+    const sellPrice = j.sell_price_exec;
+    const buyPrice  = j.buy_price || 0;
+    const qty       = j.hold_qty;
+    const sellNet   = sellPrice * qty * (1 - SELL_FEE);
+    const buyCost   = buyPrice  * qty * (1 + BUY_FEE);
+    return { name: j.name || j.ticker, ticker: j.ticker, qty, buyPrice, sellPrice,
+      profit: Math.round(sellNet - buyCost),
+      time: (j.sold_at || '').slice(11, 16),
+      buyTime: (j.bought_at || '').slice(11, 16) || null };
+  });
+
+  // 주식 그리드 당일 체결 내역 (trade_history 배열)
+  const gridSells = (Array.isArray(_agJobs) ? _agJobs : []).flatMap(job => {
+    const hist = Array.isArray(job.trade_history) ? job.trade_history : [];
+    return hist
+      .filter(h => h.date === dateStr)
+      .map(h => ({
+        name:      job.name || job.ticker,
+        ticker:    job.ticker,
+        qty:       h.qty,
+        buyPrice:  h.buy_price,
+        sellPrice: h.sell_price,
+        profit:    Math.round(h.profit),
+        time:      (h.time || '').slice(0, 5),
+        buyTime:   (h.buy_time || '').slice(0, 5) || null,
+        source:    'grid',
+      }));
+  });
+
+  const items = [...sells, ...cycleSells, ...gridSells].sort((a, b) => a.time.localeCompare(b.time));
+  return {
+    date:      dateStr,
+    sells:     items,
+    netProfit: items.reduce((s, o) => s + o.profit, 0),
+  };
+}
+
+function atRenderDailyCard(data, idx) {
+  const card = document.getElementById(`at-day-card-${idx}`);
+  if (!card) return;
+
+  if (!data || !data.sells.length) {
+    card.innerHTML = '<div style="color:var(--muted);font-size:12px;padding:4px 0">체결 없음</div>';
+    return;
+  }
+  const net    = data.netProfit;
+  const netCls = net > 0 ? '#22c55e' : net < 0 ? '#ef4444' : 'var(--muted)';
+  const netStr = (net >= 0 ? '+' : '') + net.toLocaleString() + '원';
+  const cnt    = data.sells.length;
+
+  card.innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px">
+      <div style="text-align:center">
+        <div style="font-size:9px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">순수익</div>
+        <div style="font-size:17px;font-weight:800;color:${netCls}">${netStr}</div>
+      </div>
+      <div style="text-align:center">
+        <div style="font-size:9px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">매도 체결</div>
+        <div style="font-size:17px;font-weight:800;color:var(--text)">${cnt}건</div>
+      </div>
+    </div>
+    <div id="at-day-detail-${idx}" style="display:none;margin-top:10px">
+      <div style="overflow-x:auto;border-radius:8px;border:1px solid var(--border)">
+        <table style="width:100%;border-collapse:collapse;font-size:11px">
+          <thead><tr style="background:var(--surface)">
+            <th style="padding:5px 8px;text-align:left;color:var(--muted);font-size:10px;font-weight:700">구분</th>
+            <th style="padding:5px 8px;text-align:left;color:var(--muted);font-size:10px;font-weight:700">시각</th>
+            <th style="padding:5px 8px;text-align:left;color:var(--muted);font-size:10px;font-weight:700">종목</th>
+            <th style="padding:5px 8px;text-align:right;color:var(--muted);font-size:10px;font-weight:700">수량</th>
+            <th style="padding:5px 8px;text-align:right;color:var(--muted);font-size:10px;font-weight:700">단가</th>
+            <th style="padding:5px 8px;text-align:right;color:var(--muted);font-size:10px;font-weight:700">손익</th>
+          </tr></thead>
+          <tbody>
+            ${data.sells.map(o => {
+              const p = o.profit || 0;
+              const pCls = p > 0 ? '#22c55e' : p < 0 ? '#ef4444' : 'var(--muted)';
+              const isGrid = o.source === 'grid';
+              const isLoss = p < 0;
+              const sellLabel = isLoss ? '손절' : '매도';
+              const sellColor = isLoss ? '#ef4444' : (isGrid ? '#3b82f6' : '#22c55e');
+              const qty = typeof o.qty === 'number'
+                ? (Number.isInteger(o.qty) ? o.qty.toLocaleString() : o.qty.toLocaleString(undefined, {maximumFractionDigits:6}))
+                : o.qty;
+              return `<tr style="border-top:1px solid var(--border)">
+                  <td style="padding:5px 8px;color:#f59e0b;font-weight:700">매수</td>
+                  <td style="padding:5px 8px;color:var(--muted);font-variant-numeric:tabular-nums">${o.buyTime || '—'}</td>
+                  <td style="padding:5px 8px;color:var(--text)">${o.name}</td>
+                  <td style="padding:5px 8px;text-align:right;color:var(--text);font-variant-numeric:tabular-nums">${qty}</td>
+                  <td style="padding:5px 8px;text-align:right;color:var(--muted);font-variant-numeric:tabular-nums">${(o.buyPrice||0).toLocaleString()}원</td>
+                  <td style="padding:5px 8px;text-align:right;color:var(--muted)">—</td>
+                </tr>
+                <tr>
+                  <td style="padding:5px 8px;color:${sellColor};font-weight:700">${sellLabel}</td>
+                  <td style="padding:5px 8px;color:var(--muted);font-variant-numeric:tabular-nums">${o.time}</td>
+                  <td style="padding:5px 8px;color:var(--text)">${o.name}</td>
+                  <td style="padding:5px 8px;text-align:right;color:var(--text);font-variant-numeric:tabular-nums">${qty}</td>
+                  <td style="padding:5px 8px;text-align:right;color:var(--text);font-variant-numeric:tabular-nums">${(o.sellPrice||0).toLocaleString()}원</td>
+                  <td style="padding:5px 8px;text-align:right;font-weight:700;color:${pCls}">${p>=0?'+':''}${p.toLocaleString()}원</td>
+                </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <button onclick="atToggleDayDetail(${idx})" id="at-day-toggle-${idx}"
+      style="margin-top:8px;background:none;border:none;color:var(--muted);font-size:11px;cursor:pointer;padding:0">▼ 상세 보기</button>
+  `;
+}
+
+function atToggleDayDetail(idx) {
+  const el  = document.getElementById(`at-day-detail-${idx}`);
+  const btn = document.getElementById(`at-day-toggle-${idx}`);
+  if (!el) return;
+  const open = el.style.display === 'none';
+  el.style.display = open ? 'block' : 'none';
+  if (btn) btn.textContent = open ? '▲ 접기' : '▼ 상세 보기';
+}
+
+function atLoadToday() {
+  const kstNow = new Date(Date.now() + 9 * 3600 * 1000);
+  const dates  = [null];
+  for (let i = 1; i <= 2; i++) {
+    const d = new Date(kstNow.getTime() - i * 86400000);
+    dates.push(d.toISOString().slice(0, 10));
+  }
+  const mm = String(kstNow.getMonth() + 1).padStart(2, '0');
+  const dd = String(kstNow.getDate()).padStart(2, '0');
+  const labels = [`오늘 (${mm}/${dd})`];
+  for (let i = 1; i <= 2; i++) {
+    const d = new Date(kstNow.getTime() - i * 86400000);
+    const m = String(d.getMonth()+1).padStart(2,'0');
+    const day = String(d.getDate()).padStart(2,'0');
+    labels.push(`${i===1?'어제':'그제'} (${m}/${day})`);
+  }
+
+  const wrap = document.getElementById('at-daily-wrap');
+  if (!wrap) return;
+  const todayStr = kstNow.toISOString().slice(0, 10);
+  wrap.innerHTML = dates.map((_, i) => `
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px">
+      <div style="font-size:10px;font-weight:700;color:var(--muted);margin-bottom:10px;display:flex;justify-content:space-between;align-items:center">
+        <span style="text-transform:uppercase;letter-spacing:.06em">${labels[i]}</span>
+      </div>
+      <div id="at-day-card-${i}"></div>
+    </div>
+  `).join('');
+
+  dates.forEach((date, i) => {
+    const targetDate = date === null ? todayStr : date;
+    const dayData = atCalcDayProfit(targetDate);
+    atRenderDailyCard(dayData, i);
+  });
+}

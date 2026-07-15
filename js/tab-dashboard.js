@@ -14,13 +14,14 @@ async function initDashboard() {
     // 대시보드 데이터와 IPO 레코드를 동시에 로드
     // (_ipoRecords가 없으면 캘린더 모달의 청약완료·배정입력 버튼이 동작하지 않음)
     const ipoPromise = _ipoRecords.length > 0
-      ? Promise.resolve({ records: _ipoRecords })
+      ? Promise.resolve({ records: _ipoRecords, last_sync: _ipoLastSync })
       : fetch('/api/ipo').then(r => r.ok ? r.json() : {});
     const [dashData, ipoData] = await Promise.all([
       _fetchGistData(),
       ipoPromise,
     ]);
     _dashData = dashData;
+    if (ipoData.last_sync !== undefined) _ipoLastSync = ipoData.last_sync;
     // /api/ipo 실패 시 /api/data의 ipo 배열로 폴백 (GH_TOKEN 미설정 등)
     _ipoRecords = (ipoData.records && ipoData.records.length)
       ? ipoData.records
@@ -291,9 +292,42 @@ function exportIpoIcs() {
 }
 
 // ── 공모주 청약 현황 ─────────────────────────────────────
-let _ipoListItems = [], _ipoExpanded = false;
+let _ipoListItems = [], _ipoExpanded = false, _ipoLastSync = null;
 
 function renderIpoList(items) { _ipoListItems = items; _renderIpoList(); }
+
+function _ipoSyncWarningHtml() {
+  const sync = _ipoLastSync;
+  const today = new Date().toISOString().slice(0, 10);
+
+  // last_sync 필드가 있을 때: 명시적 오류 상태
+  if (sync) {
+    if (!sync.ok) {
+      return `<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:8px 12px;margin-bottom:8px;font-size:12px;color:#b91c1c">
+        ⚠️ 공모주 데이터 업데이트 오류 발생 중 (${sync.date || '날짜 미상'}) — 정보가 정확하지 않을 수 있습니다
+      </div>`;
+    }
+    const daysDiff = sync.date ? Math.floor((new Date(today) - new Date(sync.date)) / 86400000) : 99;
+    if (daysDiff >= 5) {
+      return `<div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:8px 12px;margin-bottom:8px;font-size:12px;color:#92400e">
+        ⚠️ 공모주 정보가 ${daysDiff}일째 업데이트되지 않았습니다 — 데이터가 최신이 아닐 수 있습니다
+      </div>`;
+    }
+    return '';
+  }
+
+  // last_sync 없을 때: fetched_at 기준 폴백
+  const dates = _ipoListItems.map(r => r.fetched_at).filter(Boolean).sort();
+  const lastFetch = dates[dates.length - 1];
+  if (!lastFetch) return '';
+  const daysDiff = Math.floor((new Date(today) - new Date(lastFetch)) / 86400000);
+  if (daysDiff >= 5) {
+    return `<div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:8px 12px;margin-bottom:8px;font-size:12px;color:#92400e">
+      ⚠️ 공모주 정보가 ${daysDiff}일째 업데이트되지 않았습니다 — 데이터가 최신이 아닐 수 있습니다
+    </div>`;
+  }
+  return '';
+}
 
 function _renderIpoList() {
   const el = document.getElementById('list-ipo');
@@ -332,7 +366,7 @@ function _renderIpoList() {
       </button>
     </div>` : '';
 
-  el.innerHTML = (toShow.length ? toShow : allSorted.slice(0, 3)).map(ipo => {
+  el.innerHTML = _ipoSyncWarningHtml() + (toShow.length ? toShow : allSorted.slice(0, 3)).map(ipo => {
     const sub = ipo.subscribed;
     const status = ipo.status || '';
     const emoji = STATUS_EMOJI[status] || '⚪';

@@ -159,6 +159,35 @@ async function triggerGHAction(ghToken, jobName) {
 }
 
 // ══════════════════════════════════════════════════════════
+// 주식 그리드 잡 CRUD
+// ══════════════════════════════════════════════════════════
+async function handleStockGridJobs(req, res, gistId, ghToken) {
+  const FILENAME = 'stock_grid_jobs.json';
+  if (req.method === 'GET') {
+    res.setHeader('Cache-Control', 'no-store');
+    return res.status(200).json(await readGistFile(gistId, ghToken, FILENAME));
+  }
+  if (req.method === 'POST') {
+    const job = req.body || {};
+    if (!job.ticker) return res.status(400).json({ error: 'ticker 필수' });
+    const jobs = await readGistFile(gistId, ghToken, FILENAME);
+    const list = Array.isArray(jobs) ? jobs : [];
+    list.unshift({ ...job, status: 'active', created_at: nowKst() });
+    const ok = await writeGistFile(gistId, ghToken, FILENAME, list);
+    return res.status(ok ? 200 : 500).json(ok ? { ok: true } : { error: '저장 실패' });
+  }
+  if (req.method === 'DELETE') {
+    const { id } = req.query;
+    if (!id) return res.status(400).json({ error: 'id 필수' });
+    const jobs = await readGistFile(gistId, ghToken, FILENAME);
+    const list = (Array.isArray(jobs) ? jobs : []).filter(j => j.id !== id);
+    const ok = await writeGistFile(gistId, ghToken, FILENAME, list);
+    return res.status(ok ? 200 : 500).json(ok ? { ok: true } : { error: '삭제 실패' });
+  }
+  return res.status(405).json({ error: 'Method not allowed' });
+}
+
+// ══════════════════════════════════════════════════════════
 // 코인 자동매매 잡 CRUD
 // ══════════════════════════════════════════════════════════
 async function handleCoinJobs(req, res, url, gistId, ghToken) {
@@ -596,18 +625,19 @@ async function handleCoinGrid(req, res, gistId, ghToken) {
     const jobs = await readGistFile(gistId, ghToken, FILENAME);
     const list = Array.isArray(jobs) ? jobs : [];
     const newJob = {
-      id:              Date.now().toString(36),
-      name:            b.name || `${b.ticker} 그리드`,
-      ticker:          b.ticker,
-      status:          'init',
-      grid_pct:        +b.grid_pct     || 1.5,
-      lower_price:     +b.lower_price,
-      upper_price:     +b.upper_price,
-      krw_per_grid:    +b.krw_per_grid,
-      grids:           [],
-      total_profit_krw: 0,
-      trade_count:     0,
-      created_at:      nowKst(),
+      id:                  Date.now().toString(36),
+      name:                b.name || `${b.ticker} 그리드`,
+      ticker:              b.ticker,
+      status:              'init',
+      grid_pct:            +b.grid_pct     || 1.5,
+      lower_price:         +b.lower_price,
+      upper_price:         +b.upper_price,
+      krw_per_grid:        +b.krw_per_grid,
+      stop_loss_on_escape: b.stop_loss_on_escape !== false,
+      grids:               [],
+      total_profit_krw:    0,
+      trade_count:         0,
+      created_at:          nowKst(),
     };
     list.unshift(newJob);
     const ok = await writeGistFile(gistId, ghToken, FILENAME, list);
@@ -645,6 +675,122 @@ async function handleCoinGrid(req, res, gistId, ghToken) {
   }
 
   return res.status(405).json({ error: 'Method not allowed' });
+}
+
+// ══════════════════════════════════════════════════════════
+// 일별 코인 거래 수익 집계
+// GET /api/coin-today         → 오늘(KST) 거래 집계
+// GET /api/coin-date?date=    → 특정 날짜(YYYY-MM-DD) 거래 집계
+// ══════════════════════════════════════════════════════════
+async function handleCoinDate(req, res, gistId, ghToken) {
+  const { date } = req.query;
+  const kstNow    = new Date(Date.now() + 9 * 3600000);
+  const targetDate = date || kstNow.toISOString().slice(0, 10);
+
+  const FEE = 0.0005; // 업비트 수수료 0.05% (매수·매도 각각)
+
+  const [buyJobs, sellJobs, cycleJobs, gridJobs] = await Promise.all([
+    readGistFile(gistId, ghToken, 'coin_buy_jobs.json'),
+    readGistFile(gistId, ghToken, 'coin_sell_jobs.json'),
+    readGistFile(gistId, ghToken, 'coin_cycle_jobs.json'),
+    readGistFile(gistId, ghToken, 'coin_grid_jobs.json'),
+  ]);
+
+  // ── 매수잡 당일 체결 (미매도 포지션 — 손익 미확정)
+  const buys = (Array.isArray(buyJobs) ? buyJobs : [])
+    .filter(j => j.status === 'done' && j.executed_at?.slice(0, 10) === targetDate)
+    .map(j => {
+      const qty    = j.exec_qty || j.qty || 0;
+      const price  = j.exec_price || 0;
+      const amount = Math.round(price * qty);
+      return { time: j.executed_at.slice(11, 16), name: j.name || j.ticker,
+               ticker: j.ticker, qty, buyPrice: price, amount,
+               fee: Math.round(amount * FEE), profit: null };
+    });
+
+  // ── 매도잡 당일 체결 → buy_price 기반 실현손익
+  //    매수가 전일이어도 sell job에 buy_price가 저장되어 있으므로 정확한 손익 계산 가능
+  const sells = (Array.isArray(sellJobs) ? sellJobs : [])
+    .filter(j => j.status === 'done' && j.executed_at?.slice(0, 10) === targetDate)
+    .map(j => {
+      const qty       = j.qty || 0;
+      const sellPrice = j.exec_price || 0;
+      const buyPrice  = j.buy_price  || 0;
+      const sellNet   = sellPrice * qty * (1 - FEE);
+      const buyCost   = buyPrice  * qty * (1 + FEE);
+      const profit    = Math.round(sellNet - buyCost);
+      const fee       = Math.round((sellPrice + buyPrice) * qty * FEE);
+      return { time: j.executed_at.slice(11, 16), buyTime: null,
+               name: j.name || j.ticker,
+               ticker: j.ticker, qty, buyPrice, sellPrice,
+               amount: Math.round(sellPrice * qty), fee, profit };
+    });
+
+  // ── 사이클잡 당일 매도 → buy_price 기반 실현손익
+  const cycleSells = (Array.isArray(cycleJobs) ? cycleJobs : [])
+    .filter(j => j.sold_at?.slice(0, 10) === targetDate && j.sell_price_exec && j.hold_qty)
+    .map(j => {
+      const qty       = j.hold_qty;
+      const sellPrice = j.sell_price_exec;
+      const buyPrice  = j.buy_price || 0;
+      const sellNet   = sellPrice * qty * (1 - FEE);
+      const buyCost   = buyPrice  * qty * (1 + FEE);
+      const profit    = Math.round(sellNet - buyCost);
+      const fee       = Math.round((sellPrice + buyPrice) * qty * FEE);
+      return { time: j.sold_at.slice(11, 16),
+               buyTime: (j.bought_at || '').slice(11, 16) || null,
+               name: j.name || j.ticker,
+               ticker: j.ticker, qty, buyPrice, sellPrice,
+               amount: Math.round(sellPrice * qty), fee, profit };
+    });
+
+  // ── 사이클잡 당일 매수 (아직 미매도인 것만)
+  const cycleBuys = (Array.isArray(cycleJobs) ? cycleJobs : [])
+    .filter(j => j.bought_at?.slice(0, 10) === targetDate && j.buy_price && j.hold_qty && !j.sold_at)
+    .map(j => {
+      const amount = Math.round((j.buy_price || 0) * j.hold_qty);
+      return { time: j.bought_at.slice(11, 16), name: j.name || j.ticker,
+               ticker: j.ticker, qty: j.hold_qty, buyPrice: j.buy_price,
+               amount, fee: Math.round(amount * FEE), profit: null };
+    });
+
+  // ── 코인 그리드 당일 체결 내역 (trade_history 배열)
+  const gridSells = (Array.isArray(gridJobs) ? gridJobs : []).flatMap(job => {
+    const hist = Array.isArray(job.trade_history) ? job.trade_history : [];
+    return hist
+      .filter(h => h.date === targetDate)
+      .map(h => ({
+        time:      (h.time || '').slice(0, 5),
+        buyTime:   (h.buy_time || '').slice(0, 5) || null,
+        name:      job.name || job.ticker,
+        ticker:    job.ticker,
+        qty:       h.qty,
+        buyPrice:  h.buy_price,
+        sellPrice: h.sell_price,
+        amount:    Math.round(h.sell_price * h.qty),
+        fee:       0,
+        profit:    Math.round(h.profit),
+        source:    'grid',
+      }));
+  });
+
+  const allBuys  = [...buys,  ...cycleBuys ].sort((a, b) => a.time.localeCompare(b.time));
+  const allSells = [...sells, ...cycleSells, ...gridSells].sort((a, b) => a.time.localeCompare(b.time));
+
+  // 실현손익 = 당일 체결된 매도의 (매도 - 매수) 손익 합계
+  const netProfit = Math.round(allSells.reduce((s, o) => s + (o.profit || 0), 0));
+  const totalFee  = Math.round([...allBuys, ...allSells].reduce((s, o) => s + (o.fee || 0), 0));
+
+  res.setHeader('Cache-Control', 'no-store');
+  return res.status(200).json({
+    date: targetDate,
+    netProfit,
+    totalFee,
+    buys:             allBuys,
+    sells:            allSells,
+    pendingBuyCnt:    allBuys.length,   // 당일 매수 후 아직 미매도
+    carryoverSellCnt: 0,
+  });
 }
 
 async function handleCoinPrice(req, res) {
@@ -694,8 +840,10 @@ export default async function handler(req, res) {
   if (url.includes('coin-price'))  return handleCoinPrice(req, res);
   if (url.includes('coin-signal')) return handleCoinSignal(req, res, gistId, ghToken);
   if (url.includes('coin-grid'))   return handleCoinGrid(req, res, gistId, ghToken);
+  if (url.includes('coin-today') || url.includes('coin-date')) return handleCoinDate(req, res, gistId, ghToken);
   if (url.includes('coin-'))       return handleCoinJobs(req, res, url, gistId, ghToken);
   if (url.includes('profit-'))     return handleStockJobs(req, res, url, gistId, ghToken);
+  if (url.includes('stock-grid'))  return handleStockGridJobs(req, res, gistId, ghToken);
 
   return res.status(404).json({ error: '알 수 없는 경로' });
 }

@@ -3,8 +3,10 @@
  * GET  /api/data             → { briefing, picks, signals, ipo, portfolio_meta, account_balance }
  * GET  /api/data?mode=account      → Gist account_balance만 반환
  * GET  /api/data?mode=kisbalance   → KIS 실시간 잔고 조회 후 Gist 업데이트
- * POST /api/data  body: { portfolio_meta: { cash: 1000000 } }
+ * POST /api/data  body: { portfolio_meta: { cash: 1000000 } }  → JSONBin 저장
  */
+
+import { readBin, writeBin } from './_jsonbin.js';
 
 // ── Gist 전체 읽기 캐시 (warm 인스턴스 간 재사용, 30초 TTL) ──
 let _gistCache   = null;
@@ -211,18 +213,17 @@ export default async function handler(req, res) {
     }
   }
 
-  // ── POST: portfolio_meta 저장 ─────────────────────────────
+  // ── POST: portfolio_meta 저장 (JSONBin) ──────────────────
   if (req.method === 'POST') {
-    if (!ghToken) return res.status(500).json({ error: 'GH_TOKEN 미설정' });
+    const jsonbinKey   = process.env.JSONBIN_KEY;
+    const jsonbinBinId = process.env.JSONBIN_BIN_ID;
+    if (!jsonbinKey || !jsonbinBinId) return res.status(500).json({ error: 'JSONBIN 환경변수 미설정' });
     try {
-      const meta = (req.body || {}).portfolio_meta || req.body || {};
-      const r = await fetch(`https://api.github.com/gists/${gistId}`, {
-        method: 'PATCH',
-        headers: { ...ghHeaders, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ files: { 'portfolio_meta.json': { content: JSON.stringify(meta, null, 2) } } }),
-      });
-      if (!r.ok) return res.status(r.status).json({ error: `Gist 저장 실패 ${r.status}` });
-      _gistCache = null; _gistCacheAt = 0; // 캐시 무효화 (POST 직후 GET이 최신값 반환하도록)
+      const meta    = (req.body || {}).portfolio_meta || req.body || {};
+      const binData = await readBin(jsonbinBinId, jsonbinKey, true);
+      const merged  = { ...binData, portfolio_meta: { ...(binData.portfolio_meta || {}), ...meta } };
+      await writeBin(jsonbinBinId, jsonbinKey, merged);
+      _gistCache = null; _gistCacheAt = 0;
       return res.status(200).json({ ok: true });
     } catch (e) {
       return res.status(500).json({ error: e.message });
@@ -256,6 +257,17 @@ export default async function handler(req, res) {
         if (key === 'account_balance.json')  result.account_balance  = data || null;
       } catch (_) {}
     }
+    // JSONBin portfolio_meta 오버레이 (Gist 쓰기 권한 없는 경우 대비)
+    try {
+      const jbKey   = process.env.JSONBIN_KEY;
+      const jbBinId = process.env.JSONBIN_BIN_ID;
+      if (jbKey && jbBinId) {
+        const binData = await readBin(jbBinId, jbKey);
+        if (binData.portfolio_meta) {
+          result.portfolio_meta = { ...result.portfolio_meta, ...binData.portfolio_meta };
+        }
+      }
+    } catch (_) {}
     res.setHeader('Cache-Control', 'no-store');
     return res.status(200).json(result);
   } catch (e) {

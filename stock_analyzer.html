@@ -108,7 +108,7 @@
   <button class="tab-btn" onclick="switchTab('market')">📊 시장현황</button>
   <button class="tab-btn" onclick="switchTab('etf')">💹 ETF</button>
   <button class="tab-btn" onclick="switchTab('stocks')">📊 개별주</button>
-  <button class="tab-btn" onclick="switchTab('autotrade')">🤖 자동매매</button>
+  <button class="tab-btn" onclick="switchTab('autotrade')">🤖 자동 주식매매</button>
   <button class="tab-btn" onclick="switchTab('cointrade')">🪙 자동코인매매</button>
 </nav>
 
@@ -833,168 +833,11 @@
   </div>
   <div id="at-account" style="margin-bottom:20px"></div>
 
-  <!-- ── 매수 섹션 ─────────────────────────────────────── -->
-  <div style="background:var(--surface);border:2px solid #2563eb;border-radius:14px;overflow:hidden;margin-bottom:10px">
-    <div onclick="toggleTradeSection('ab')" style="padding:14px 18px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;background:#2563eb18">
-      <span style="font-size:14px;font-weight:700;color:#2563eb">🛒 매수 잡 등록</span>
-      <span id="ab-toggle-icon" style="color:#2563eb;font-size:13px;font-weight:700">▶</span>
-    </div>
-    <div id="ab-body" style="display:none;padding:18px 20px">
-    <div style="display:flex;flex-direction:column;gap:12px">
-
-      <!-- 종목명 검색 -->
-      <div>
-        <div style="font-size:11px;color:var(--muted);margin-bottom:4px">종목명 *</div>
-        <div style="position:relative">
-          <input id="ab-name" type="text" placeholder="예: 삼성전자" autocomplete="off"
-            oninput="onAbNameInput(this.value)" onblur="hideAbAc()"
-            style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
-          <div id="ab-ac-list" style="display:none;position:absolute;top:calc(100% + 3px);left:0;right:0;z-index:400;
-            background:var(--surface);border:1.5px solid var(--primary);border-radius:8px;overflow:hidden;
-            box-shadow:0 4px 16px rgba(0,0,0,.15)"></div>
-        </div>
-        <div style="font-size:11px;color:var(--muted);margin-top:3px">
-          종목코드: <span id="ab-ticker-display" style="color:var(--primary);font-weight:600">—</span>
-          <input id="ab-ticker" type="hidden" />
-        </div>
-      </div>
-
-      <!-- 매수 조건 -->
-      <div>
-        <div style="font-size:11px;color:var(--muted);margin-bottom:6px">매수 조건</div>
-        <div style="display:flex;gap:14px;margin-bottom:10px;flex-wrap:nowrap">
-          <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:13px;white-space:nowrap">
-            <input type="radio" name="ab-cond" value="limit" checked onchange="abCondChange()" /> 가격 이하 시
-          </label>
-          <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:13px;white-space:nowrap">
-            <input type="radio" name="ab-cond" value="market" onchange="abCondChange()" /> 즉시 시장가
-          </label>
-        </div>
-        <div id="ab-limit-row">
-          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">목표 매수가 (원) — 현재가 ≤ 이 가격일 때 매수</div>
-          <input id="ab-target-price" type="number" min="0" placeholder="예: 4800"
-            style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px"
-            oninput="abUpdateHint()" />
-        </div>
-        <div id="ab-hint" style="font-size:11px;color:var(--muted);margin-top:5px"></div>
-      </div>
-
-      <!-- 수량 / 금액 -->
-      <div>
-        <div style="font-size:11px;color:var(--muted);margin-bottom:6px">매수 기준</div>
-        <div style="display:flex;gap:14px;margin-bottom:8px;flex-wrap:nowrap">
-          <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:13px;white-space:nowrap">
-            <input type="radio" name="ab-qty-type" value="qty" checked onchange="abQtyTypeChange()" /> 수량 (주)
-          </label>
-          <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:13px;white-space:nowrap">
-            <input type="radio" name="ab-qty-type" value="amount" onchange="abQtyTypeChange()" /> 금액 (원)
-          </label>
-        </div>
-        <input id="ab-qty-val" type="number" min="1" placeholder="예: 2"
-          style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
-        <div id="ab-qty-hint" style="font-size:11px;color:var(--muted);margin-top:4px">매수할 수량 (주)</div>
-      </div>
-    </div>
-
-    <button onclick="abRegister()"
-      style="margin-top:14px;width:100%;padding:10px;background:#2563eb;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">
-      매수 잡 등록
-    </button>
-    <div id="ab-msg" style="font-size:12px;margin-top:8px;text-align:center;min-height:18px"></div>
-    </div><!-- /ab-body -->
+  <!-- 최근 3일 매매 수익 현황 -->
+  <div style="font-size:12px;font-weight:700;color:var(--text);margin-bottom:10px">📊 일별 수익 현황</div>
+  <div id="at-daily-wrap" style="display:flex;flex-direction:column;gap:10px;margin-bottom:20px">
+    <!-- JS(atLoadToday)가 채움 -->
   </div>
-
-  <!-- 매수 활성 잡 -->
-  <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:8px">⚡ 매수 대기</div>
-  <div id="ab-active-list" style="margin-bottom:24px"><div style="color:var(--muted);font-size:13px;padding:8px 0">없음</div></div>
-
-  <!-- 구분선 -->
-  <div style="border-top:1px solid var(--border);margin:8px 0 20px"></div>
-
-  <!-- ── 매도 섹션 ─────────────────────────────────────── -->
-  <div style="background:var(--surface);border:2px solid #3b82f6;border-radius:14px;overflow:hidden;margin-bottom:10px">
-    <div onclick="toggleTradeSection('at')" style="padding:14px 18px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;background:#3b82f618">
-      <span style="font-size:14px;font-weight:700;color:#3b82f6">💰 매도 등록</span>
-      <span id="at-toggle-icon" style="color:#3b82f6;font-size:13px;font-weight:700">▶</span>
-    </div>
-    <div id="at-body" style="display:none;padding:18px 20px">
-    <!-- 자동매도 규칙 안내 -->
-    <div style="background:#1e3a5f22;border:1px solid #3b82f644;border-radius:8px;padding:8px 12px;margin-bottom:14px;font-size:11px;color:var(--text);line-height:1.8">
-      <b>🤖 자동매도 규칙 (항상 적용 · 매 5분 체크)</b><br>
-      🚀 수익률 <b style="color:#16a34a">+<span id="at-rule-profit">20</span>% 이상</b> 도달 시 전량 즉시 익절<br>
-      🔴 수익률 <b style="color:#dc2626">-<span id="at-rule-stop">4</span>% 이하</b> 도달 시 전량 즉시 손절
-    </div>
-    <div style="display:flex;flex-direction:column;gap:12px">
-      <!-- 보유종목 칩 -->
-      <div id="at-holding-chips" style="display:none">
-        <div style="font-size:11px;color:var(--muted);margin-bottom:5px">보유종목</div>
-        <div id="at-holding-chips-inner" style="display:flex;flex-wrap:wrap;gap:6px"></div>
-      </div>
-      <!-- 종목명 검색 -->
-      <div>
-        <div style="font-size:11px;color:var(--muted);margin-bottom:4px">종목명 *</div>
-        <div style="position:relative">
-          <input id="at-name" type="text" placeholder="종목명 검색 (보유종목은 클릭 시 표시)" autocomplete="off"
-            onfocus="onAtNameFocus()" oninput="onAtNameInput(this.value)" onblur="hideAtAc()"
-            style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
-          <div id="at-ac-list" style="display:none;position:absolute;top:calc(100% + 3px);left:0;right:0;z-index:400;
-            background:var(--surface);border:1.5px solid var(--primary);border-radius:8px;overflow:hidden;
-            box-shadow:0 4px 16px rgba(0,0,0,.15)"></div>
-        </div>
-        <div style="font-size:11px;color:var(--muted);margin-top:3px;display:flex;justify-content:space-between;align-items:center">
-          <span>종목코드: <span id="at-ticker-display" style="color:var(--primary);font-weight:600">—</span></span>
-          <span id="at-cur-price-wrap" style="display:none">
-            현재가: <span id="at-cur-price" style="color:var(--text);font-weight:700">—</span>
-            <span id="at-cur-pct" style="margin-left:4px;font-size:10px"></span>
-          </span>
-          <input id="at-ticker" type="hidden" />
-        </div>
-      </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-        <div>
-          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">수량</div>
-          <input id="at-qty" type="number" min="1" placeholder="자동입력"
-            style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
-        </div>
-        <div>
-          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">평균매수단가 (원)</div>
-          <input id="at-buyprice" type="number" min="0" placeholder="자동입력"
-            style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px"
-            oninput="atUpdateHint()" />
-        </div>
-      </div>
-    </div>
-    <div style="margin-top:12px">
-      <div style="font-size:11px;color:var(--muted);margin-bottom:6px">목표 유형</div>
-      <div style="display:flex;gap:14px;margin-bottom:10px;flex-wrap:nowrap">
-        <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:13px;white-space:nowrap">
-          <input type="radio" name="at-type" value="amount" checked onchange="atTypeChange()" /> 수익금액 (원)
-        </label>
-        <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:13px;white-space:nowrap">
-          <input type="radio" name="at-type" value="pct" onchange="atTypeChange()" /> 수익률 (%)
-        </label>
-        <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:13px;white-space:nowrap">
-          <input type="radio" name="at-type" value="price" onchange="atTypeChange()" /> 지정가 (원)
-        </label>
-      </div>
-      <input id="at-target" type="number" min="0" step="1" placeholder="예: 50"
-        style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
-      <div id="at-target-hint" style="font-size:11px;color:var(--muted);margin-top:5px">수수료 차감 후 순이익 50원 이상 시 매도</div>
-    </div>
-    <button onclick="atRegister()"
-      style="margin-top:14px;width:100%;padding:10px;background:var(--primary);color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">
-      등록
-    </button>
-    <div id="at-msg" style="font-size:12px;margin-top:8px;text-align:center;min-height:18px"></div>
-    </div><!-- /at-body -->
-  </div>
-
-  <!-- 활성 잡 -->
-  <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:8px">⚡ 활성 잡</div>
-  <div id="at-active-list" style="margin-bottom:20px"><div style="color:var(--muted);font-size:13px;padding:12px 0">없음</div></div>
-
-  <!-- 구분선 -->
-  <div style="border-top:1px solid var(--border);margin:8px 0 20px"></div>
 
   <!-- ── 사이클 트레이딩 섹션 ─────────────────────────── -->
   <div style="background:var(--surface);border:2px solid #16a34a;border-radius:14px;overflow:hidden;margin-bottom:10px">
@@ -1122,6 +965,86 @@
   <!-- 구분선 -->
   <div style="border-top:1px solid var(--border);margin:8px 0 20px"></div>
 
+  <!-- ── 주식 그리드 트레이딩 섹션 ─────────────────────── -->
+  <div style="background:var(--surface);border:2px solid #7c3aed;border-radius:14px;overflow:hidden;margin-bottom:10px">
+    <div onclick="toggleTradeSection('ag')" style="padding:14px 18px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;background:#7c3aed18">
+      <div>
+        <span style="font-size:14px;font-weight:700;color:#7c3aed">📊 그리드 트레이딩</span>
+        <span style="font-size:11px;color:var(--muted);margin-left:8px">격자별 지정가 매수↔매도 자동반복</span>
+      </div>
+      <span id="ag-toggle-icon" style="color:#7c3aed;font-size:13px;font-weight:700">▶</span>
+    </div>
+    <div id="ag-body" style="display:none;padding:18px 20px">
+
+      <!-- 등록 버튼 -->
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <span style="font-size:12px;color:var(--muted)">가격 범위 내 격자 주문을 자동으로 반복합니다</span>
+        <button onclick="agToggleForm()" id="ag-add-btn"
+          style="padding:5px 14px;background:#7c3aed;color:#fff;border:none;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer">+ 추가</button>
+      </div>
+
+      <!-- 등록 폼 -->
+      <div id="ag-form" style="display:none;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:12px">
+        <div style="margin-bottom:10px">
+          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">종목명 *</div>
+          <div style="position:relative">
+            <input id="ag-name" type="text" placeholder="종목명 검색 (예: 빅텍)" autocomplete="off"
+              oninput="onAgNameInput(this.value)" onblur="hideAgAc()"
+              style="width:100%;box-sizing:border-box;padding:7px 10px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text);font-size:13px">
+            <div id="ag-ac-list" style="display:none;position:absolute;top:calc(100% + 2px);left:0;right:0;z-index:400;
+              background:var(--surface);border:1.5px solid #7c3aed;border-radius:8px;overflow:hidden;box-shadow:0 4px 16px rgba(0,0,0,.15)"></div>
+          </div>
+          <div style="font-size:11px;color:var(--muted);margin-top:3px">
+            종목코드: <span id="ag-ticker-display" style="color:#7c3aed;font-weight:600">—</span>
+            <span id="ag-price-hint" style="margin-left:8px;color:var(--primary)"></span>
+          </div>
+          <input id="ag-ticker" type="hidden">
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+          <div>
+            <div style="font-size:10px;color:var(--muted);margin-bottom:3px">하한 가격 (원) *</div>
+            <input id="ag-lower" type="number" min="0" placeholder="예: 13000"
+              style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:13px;box-sizing:border-box">
+          </div>
+          <div>
+            <div style="font-size:10px;color:var(--muted);margin-bottom:3px">상한 가격 (원) *</div>
+            <input id="ag-upper" type="number" min="0" placeholder="예: 17000"
+              style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:13px;box-sizing:border-box">
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+          <div>
+            <div style="font-size:10px;color:var(--muted);margin-bottom:3px">격자 간격 (%)</div>
+            <input id="ag-pct" type="number" value="1.5" min="0.5" step="0.1"
+              style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:13px;box-sizing:border-box">
+          </div>
+          <div>
+            <div style="font-size:10px;color:var(--muted);margin-bottom:3px">격자당 금액 (원) *</div>
+            <input id="ag-krw" type="number" min="10000" step="10000" placeholder="예: 100000"
+              style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:13px;box-sizing:border-box">
+          </div>
+        </div>
+        <div style="margin-bottom:10px">
+          <div style="font-size:10px;color:var(--muted);margin-bottom:3px">자동 재초기화 (분, 0=비활성)</div>
+          <input id="ag-reinit" type="number" value="0" min="0"
+            style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:13px;box-sizing:border-box">
+          <div style="font-size:10px;color:var(--muted);margin-top:3px">범위 이탈 후 N분 경과 시 현재가 기준 자동 재설정</div>
+        </div>
+        <button onclick="agRegister()" style="width:100%;padding:9px;background:#7c3aed;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">
+          그리드 등록
+        </button>
+        <div id="ag-msg" style="font-size:12px;margin-top:7px;text-align:center;min-height:16px"></div>
+      </div>
+
+      <!-- 활성 그리드 잡 목록 -->
+      <div id="ag-list"><div style="color:var(--muted);font-size:13px;padding:8px 0">없음</div></div>
+
+    </div>
+  </div>
+
+  <!-- 구분선 -->
+  <div style="border-top:1px solid var(--border);margin:8px 0 20px"></div>
+
   <!-- 완료/취소 내역 (매수+매도 통합) -->
   <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:8px">📋 완료 / 취소 내역</div>
   <div id="at-history-list"><div style="color:var(--muted);font-size:13px;padding:12px 0">없음</div></div>
@@ -1202,194 +1125,11 @@
   </div>
   <div id="ct-account" style="margin-bottom:20px"></div>
 
-  <!-- ── 매수 섹션 ─────────────────────────────────────── -->
-  <div style="background:var(--surface);border:2px solid #f59e0b;border-radius:14px;overflow:hidden;margin-bottom:10px">
-    <div onclick="toggleTradeSection('cb')" style="padding:14px 18px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;background:#f59e0b18">
-      <span style="font-size:14px;font-weight:700;color:#f59e0b">🛒 코인 매수 잡 등록</span>
-      <span id="cb-toggle-icon" style="color:#f59e0b;font-size:13px;font-weight:700">▶</span>
-    </div>
-    <div id="cb-body" style="display:none;padding:18px 20px">
-    <div style="font-size:11px;color:var(--muted);margin-bottom:10px;background:#1e1a0022;border:1px solid #f59e0b33;border-radius:8px;padding:8px 12px;line-height:1.8">
-      💡 업비트 수수료: 매수/매도 각 <b>0.05%</b> &nbsp;|&nbsp; 24시간 365일 거래 가능
-    </div>
-    <div style="display:flex;flex-direction:column;gap:12px">
-
-      <!-- 코인 검색 -->
-      <div>
-        <div style="font-size:11px;color:var(--muted);margin-bottom:4px">코인명 또는 심볼 *</div>
-        <div style="position:relative">
-          <input id="cb-name" type="text" placeholder="예: 비트코인 또는 BTC" autocomplete="off"
-            oninput="onCbNameInput(this.value)" onblur="hideCbAc()"
-            style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
-          <div id="cb-ac-list" style="display:none;position:absolute;top:calc(100% + 3px);left:0;right:0;z-index:400;
-            background:var(--surface);border:1.5px solid #f59e0b;border-radius:8px;overflow:hidden;
-            box-shadow:0 4px 16px rgba(0,0,0,.15)"></div>
-        </div>
-        <div style="font-size:11px;color:var(--muted);margin-top:3px;display:flex;justify-content:space-between;align-items:center">
-          <span>마켓: <span id="cb-ticker-display" style="color:#f59e0b;font-weight:600">—</span></span>
-          <span id="cb-cur-price-wrap" style="display:none">
-            현재가: <span id="cb-cur-price" style="font-weight:700">—</span>
-            <span id="cb-cur-pct" style="margin-left:4px;font-size:10px"></span>
-          </span>
-          <input id="cb-ticker" type="hidden" />
-        </div>
-      </div>
-
-      <!-- 매수 조건 -->
-      <div>
-        <div style="font-size:11px;color:var(--muted);margin-bottom:6px">매수 조건</div>
-        <div style="display:flex;gap:14px;margin-bottom:10px;flex-wrap:nowrap">
-          <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:13px;white-space:nowrap">
-            <input type="radio" name="cb-cond" value="market_krw" checked onchange="cbCondChange()" /> 즉시 시장가
-          </label>
-          <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:13px;white-space:nowrap">
-            <input type="radio" name="cb-cond" value="limit" onchange="cbCondChange()" /> 지정가
-          </label>
-        </div>
-        <div id="cb-limit-row" style="display:none">
-          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">목표 매수가 (원) — 이 가격으로 지정가 주문 즉시 등록</div>
-          <input id="cb-target-price" type="number" min="0" placeholder="예: 85000000"
-            style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
-        </div>
-      </div>
-
-      <!-- 매수 방식 선택 -->
-      <div>
-        <div style="font-size:11px;color:var(--muted);margin-bottom:6px">매수 방식</div>
-        <div style="display:flex;gap:14px;margin-bottom:10px">
-          <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:13px">
-            <input type="radio" name="cb-amount-type" value="krw" checked onchange="cbAmountTypeChange()" /> KRW 금액
-          </label>
-          <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:13px">
-            <input type="radio" name="cb-amount-type" value="qty" onchange="cbAmountTypeChange()" /> 코인 수량
-          </label>
-        </div>
-        <div id="cb-krw-row">
-          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">매수 금액 (원)</div>
-          <input id="cb-krw-amount" type="number" min="5000" step="1000" placeholder="예: 100000 (최소 5,000원)"
-            style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px"
-            oninput="cbUpdateHint()" />
-        </div>
-        <div id="cb-qty-row" style="display:none">
-          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">코인 수량</div>
-          <input id="cb-coin-qty" type="number" min="0" step="any" placeholder="예: 10.5"
-            style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px"
-            oninput="cbUpdateHint()" />
-        </div>
-        <div id="cb-hint" style="font-size:11px;color:var(--muted);margin-top:4px">매수에 사용할 KRW 금액</div>
-      </div>
-    </div>
-
-    <button onclick="cbRegister()"
-      style="margin-top:14px;width:100%;padding:10px;background:#f59e0b;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">
-      매수 잡 등록
-    </button>
-    <div id="cb-msg" style="font-size:12px;margin-top:8px;text-align:center;min-height:18px"></div>
-    </div><!-- /cb-body -->
+  <!-- 최근 3일 매매 수익 현황 -->
+  <div style="font-size:12px;font-weight:700;color:var(--text);margin-bottom:10px">📊 일별 수익 현황</div>
+  <div id="ct-daily-wrap" style="display:flex;flex-direction:column;gap:10px;margin-bottom:20px">
+    <!-- JS(ctLoadToday)가 채움 -->
   </div>
-
-  <!-- 매수 대기 잡 -->
-  <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:8px">⚡ 매수 대기</div>
-  <div id="cb-active-list" style="margin-bottom:24px"><div style="color:var(--muted);font-size:13px;padding:8px 0">없음</div></div>
-
-  <div style="border-top:1px solid var(--border);margin:8px 0 20px"></div>
-
-  <!-- ── 매도 섹션 ─────────────────────────────────────── -->
-  <div style="background:var(--surface);border:2px solid #3b82f6;border-radius:14px;overflow:hidden;margin-bottom:10px">
-    <div onclick="toggleTradeSection('cs')" style="padding:14px 18px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;background:#3b82f618">
-      <span style="font-size:14px;font-weight:700;color:#3b82f6">💰 코인 매도 등록</span>
-      <span id="cs-toggle-icon" style="color:#3b82f6;font-size:13px;font-weight:700">▶</span>
-    </div>
-    <div id="cs-body" style="display:none;padding:18px 20px">
-    <div style="background:#1e3a5f22;border:1px solid #3b82f644;border-radius:8px;padding:8px 12px;margin-bottom:14px;font-size:11px;color:var(--text);line-height:1.8">
-      <b>🤖 자동매도 규칙 (항상 적용 · 매 5분 체크)</b><br>
-      🚀 수익률 <b style="color:#16a34a">+20% 이상</b> 도달 시 전량 즉시 익절<br>
-      🔴 수익률 <b style="color:#dc2626">-4% 이하</b> 도달 시 전량 즉시 손절
-    </div>
-    <div style="display:flex;flex-direction:column;gap:12px">
-      <!-- 보유 코인 칩 -->
-      <div id="ct-holding-chips" style="display:none">
-        <div style="font-size:11px;color:var(--muted);margin-bottom:5px">보유 코인</div>
-        <div id="ct-holding-chips-inner" style="display:flex;flex-wrap:wrap;gap:6px"></div>
-      </div>
-      <!-- 코인 검색 -->
-      <div>
-        <div style="font-size:11px;color:var(--muted);margin-bottom:4px">코인명 *</div>
-        <div style="position:relative">
-          <input id="cs-name" type="text" placeholder="코인명 검색" autocomplete="off"
-            onfocus="onCsNameFocus()" oninput="onCsNameInput(this.value)" onblur="hideCsAc()"
-            style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
-          <div id="cs-ac-list" style="display:none;position:absolute;top:calc(100% + 3px);left:0;right:0;z-index:400;
-            background:var(--surface);border:1.5px solid var(--primary);border-radius:8px;overflow:hidden;
-            box-shadow:0 4px 16px rgba(0,0,0,.15)"></div>
-        </div>
-        <div style="font-size:11px;color:var(--muted);margin-top:3px;display:flex;justify-content:space-between;align-items:center">
-          <span>마켓: <span id="cs-ticker-display" style="color:var(--primary);font-weight:600">—</span></span>
-          <span id="cs-cur-price-wrap" style="display:none">
-            현재가: <span id="cs-cur-price" style="font-weight:700">—</span>
-            <span id="cs-cur-pct" style="margin-left:4px;font-size:10px"></span>
-          </span>
-          <input id="cs-ticker" type="hidden" />
-        </div>
-      </div>
-      <!-- 매도 방식 선택 -->
-      <div style="margin-bottom:10px">
-        <div style="font-size:11px;color:var(--muted);margin-bottom:6px">매도 방식</div>
-        <div style="display:flex;gap:14px">
-          <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:13px">
-            <input type="radio" name="cs-amount-type" value="qty" checked onchange="csAmountTypeChange()" /> 코인 수량
-          </label>
-          <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:13px">
-            <input type="radio" name="cs-amount-type" value="krw" onchange="csAmountTypeChange()" /> KRW 금액
-          </label>
-        </div>
-      </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-        <div>
-          <div id="cs-qty-label" style="font-size:11px;color:var(--muted);margin-bottom:4px">수량 (코인)</div>
-          <input id="cs-qty" type="number" min="0" step="any" placeholder="자동입력 (전량)"
-            style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
-          <div id="cs-krw-row" style="display:none">
-            <div style="font-size:11px;color:var(--muted);margin-bottom:4px">매도 금액 (원)</div>
-            <input id="cs-krw-amount" type="number" min="5000" step="1000" placeholder="예: 50000"
-              style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
-          </div>
-        </div>
-        <div>
-          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">평균매수단가 (원)</div>
-          <input id="cs-buyprice" type="number" min="0" step="any" placeholder="자동입력"
-            style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px"
-            oninput="csUpdateHint()" />
-        </div>
-      </div>
-      <div>
-        <div style="font-size:11px;color:var(--muted);margin-bottom:6px">목표 유형</div>
-        <div style="display:flex;gap:14px;margin-bottom:10px;flex-wrap:nowrap">
-          <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:13px;white-space:nowrap">
-            <input type="radio" name="cs-type" value="pct" checked onchange="csTypeChange()" /> 수익률 (%)
-          </label>
-          <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:13px;white-space:nowrap">
-            <input type="radio" name="cs-type" value="price" onchange="csTypeChange()" /> 지정가 (원)
-          </label>
-        </div>
-        <input id="cs-target" type="number" min="0" step="any" placeholder="예: 5"
-          style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
-        <div id="cs-target-hint" style="font-size:11px;color:var(--muted);margin-top:5px">수수료 차감 후 순수익 5% 이상 시 매도</div>
-      </div>
-    </div>
-    <button onclick="csRegister()"
-      style="margin-top:14px;width:100%;padding:10px;background:var(--primary);color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">
-      매도 잡 등록
-    </button>
-    <div id="cs-msg" style="font-size:12px;margin-top:8px;text-align:center;min-height:18px"></div>
-    </div><!-- /cs-body -->
-  </div>
-
-  <!-- 활성 매도 잡 -->
-  <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:8px">⚡ 활성 매도 잡</div>
-  <div id="cs-active-list" style="margin-bottom:20px"><div style="color:var(--muted);font-size:13px;padding:12px 0">없음</div></div>
-
-  <div style="border-top:1px solid var(--border);margin:8px 0 20px"></div>
 
   <!-- ── 사이클 트레이딩 섹션 ─────────────────────────── -->
   <div style="background:var(--surface);border:2px solid #16a34a;border-radius:14px;overflow:hidden;margin-bottom:10px">
