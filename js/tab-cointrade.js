@@ -1191,7 +1191,9 @@ async function ctSaveGridEdit(id) {
     }
   }
 
-  patch.auto_reinit_minutes = (reinit >= 10) ? reinit : null;
+  if (reinitV !== '') {
+    patch.auto_reinit_minutes = (reinit >= 10) ? reinit : null;
+  }
 
   try {
     const r = await fetch(`/api/coin-grid?id=${encodeURIComponent(id)}`, {
