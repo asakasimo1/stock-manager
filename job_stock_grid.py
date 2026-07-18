@@ -309,7 +309,8 @@ def _check_out_of_range(job: dict, cur_price: int) -> bool:
             elapsed = (datetime.now(KST) - since).total_seconds() / 60
         except (ValueError, TypeError):
             elapsed = 0
-        if elapsed >= auto_min:
+        market_open = "0900" <= datetime.now(KST).strftime("%H%M") <= "1530"
+        if elapsed >= auto_min and market_open:
             n_each = 5
             step = 1 + float(job.get("grid_pct", 1.5)) / 100
             nl = kis_api.round_price(cur_price / step ** n_each)
