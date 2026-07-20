@@ -30,7 +30,19 @@ MAX_FACTOR_POSITIONS = int(os.getenv("MAX_FACTOR_POSITIONS") or "10")   # 최대
 FACTOR_ORDER_AMOUNT  = int(os.getenv("FACTOR_ORDER_AMOUNT")  or "0")    # 0이면 균등 분배
 
 
+def _is_first_monday(d: date) -> bool:
+    """매월 첫 번째 월요일 여부.
+    cron은 '일자 AND 요일' 조건을 표현할 수 없어(day-of-month/day-of-week는 OR로 결합됨)
+    워크플로우는 매주 월요일마다 트리거하고, 실제 실행 여부는 여기서 걸러낸다."""
+    return d.weekday() == 0 and d.day <= 7
+
+
 def main():
+    force_run = os.getenv("FACTOR_FORCE_RUN") == "true"
+    if not force_run and not _is_first_monday(date.today()):
+        logger.info("오늘(%s)은 매월 첫 번째 월요일이 아님 — 팩터 리밸런싱 건너뜀", date.today())
+        return
+
     logger.info("=" * 55)
     logger.info("  멀티팩터 월간 리밸런싱 — %s", date.today())
     logger.info("=" * 55)

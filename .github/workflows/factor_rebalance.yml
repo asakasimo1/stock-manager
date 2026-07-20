@@ -1,0 +1,41 @@
+name: 팩터 리밸런싱
+permissions:
+  contents: read
+on:
+  schedule:
+    # cron은 "N번째 요일"을 표현 못하므로(day-of-month·day-of-week는 OR로 결합되어
+    # '1-7 * 1'은 매달 1~7일 전체 + 모든 월요일에 중복 발동하는 버그가 있었음)
+    # 매주 월요일마다 트리거하고, 실제 첫째 주 여부는 job_factor_rebalance.py가 판단한다.
+    - cron: '10 0 * * 1'   # 매주 월요일 09:10 KST
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  KIS_APP_KEY:           ${{ secrets.KIS_APP_KEY }}
+  KIS_APP_SECRET:        ${{ secrets.KIS_APP_SECRET }}
+  KIS_ACCOUNT_NO:        ${{ secrets.KIS_ACCOUNT_NO }}
+  PAPER_TRADE:           ${{ secrets.PAPER_TRADE }}
+  SUPABASE_URL:          ${{ secrets.SUPABASE_URL }}
+  SUPABASE_KEY:          ${{ secrets.SUPABASE_KEY }}
+  MAX_FACTOR_POSITIONS:  ${{ secrets.MAX_FACTOR_POSITIONS }}
+  FACTOR_ORDER_AMOUNT:   ${{ secrets.FACTOR_ORDER_AMOUNT }}
+  TELEGRAM_BOT_TOKEN:    ${{ secrets.TELEGRAM_BOT_TOKEN }}
+  TELEGRAM_CHAT_ID:      ${{ secrets.TELEGRAM_CHAT_ID }}
+  KRX_ID:                ${{ secrets.KRX_ID }}
+  KRX_PW:                ${{ secrets.KRX_PW }}
+  FACTOR_FORCE_RUN:      ${{ github.event_name == 'workflow_dispatch' }}
+
+jobs:
+  factor_rebalance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: pip-
+      - run: pip install -r requirements.txt
+      - run: python job_factor_rebalance.py

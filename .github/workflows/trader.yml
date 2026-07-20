@@ -1,44 +1,27 @@
-name: 자동매매 봇
+name: 자동매매 봇 (수동 전용)
 permissions:
   contents: write
 on:
-  schedule:
-    # ── 코인 (Upbit) ──
-    # coin-daemon.service(systemd)가 30초 폴링으로 24/7 처리 → 크론 비활성화
-    # - cron: '*/5 * * * *'  # 코인 매수/매도/사이클 (coin-daemon 대체)
-    # ── 주식 매매 (KRW 마켓, 평일 장중) ──
-    # cycle/monitor는 Oracle VM stock-daemon이 30초 폴링으로 대체 → 크론 비활성화
-    - cron: '5 0 * * 1-5'      # 09:05 KST — 주식 매수 (장시작)
-    - cron: '30 1 * * 1-5'    # 10:30 KST — 주식 매수 (장중 1차)
-    - cron: '30 4 * * 1-5'    # 13:30 KST — 주식 매수 (장중 2차)
-    # - cron: '*/30 0-6 * * 1-5' # 09:00~15:30 KST 30분마다 — 주식 모니터링 (daemon 대체)
-    - cron: '20 6 * * 1-5'     # 15:20 KST — 마감 청산
-    # - cron: '*/10 23 * * 0-4'  # 08:00~08:50 KST — NXT 프리마켓 사이클 (daemon 대체)
-    # - cron: '*/10 0-10 * * 1-5' # 09:00~19:50 KST — KRX+NXT 사이클 트레이딩 (daemon 대체)
-    # ── 주식 신호·리포트 (GitHub Actions 유지) ──
-    - cron: '50 23 * * 0-4'  # 08:50 KST — 신호 생성 (장시작 전)
-    - cron: '15 1 * * 1-5'   # 10:15 KST — 신호 생성 (장중 1차)
-    - cron: '15 4 * * 1-5'   # 13:15 KST — 신호 생성 (장중 2차)
-    - cron: '35 6 * * 1-5'   # 15:35 KST — 일간 리포트
-    - cron: '10 0 1-7 * 1'   # 매월 첫 번째 월요일 09:10 KST — 팩터 리밸런싱
-    - cron: '0 23 * * 0-4'   # 08:00 KST — 로그 정리
+  # ── 코인 (Upbit) ──
+  # coin-daemon.service(systemd)가 30초 폴링으로 24/7 처리 → 크론 비활성화
+  # ── 주식 사이클/모니터링 ──
+  # cycle/monitor는 Oracle VM stock-daemon이 30초 폴링으로 대체 → 크론 비활성화
+  #
+  # 스케줄 실행 잡(signals/buy/close/report/factor_rebalance/cleanup_logs)은
+  # 각각 signals.yml / buy.yml / close.yml / report.yml / factor_rebalance.yml /
+  # cleanup_logs.yml 로 분리됨 (GitHub Actions가 한 워크플로우에 크론이 많으면
+  # 스케줄 트리거가 지연·누락되는 문제 완화 목적).
   workflow_dispatch:
     inputs:
       job:
         description: '실행할 job'
         required: true
-        default: 'signals'
+        default: 'balance'
         type: choice
         options:
-          - signals
-          - report
-          - factor_rebalance
-          - cleanup_logs
           - balance
           - test_today
-          - buy
           - monitor
-          - close
           - profit_sell
           - cycle
           - monitor_036030
@@ -73,83 +56,6 @@ env:
   UPBIT_SECRET_KEY:      ${{ secrets.UPBIT_SECRET_KEY }}
 
 jobs:
-
-  # ════════════════════════════════════════════════
-  # GitHub Actions 자동 실행 잡 (스케줄)
-  # ════════════════════════════════════════════════
-
-  # ── 08:50 신호 생성 ──────────────────────────
-  signals:
-    if: >-
-      github.event.schedule == '50 23 * * 0-4' ||
-      github.event.schedule == '15 1 * * 1-5' ||
-      github.event.schedule == '15 4 * * 1-5' ||
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'signals')
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: '3.12' }
-      - uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: pip-${{ hashFiles('requirements.txt') }}
-          restore-keys: pip-
-      - run: pip install -r requirements.txt
-      - run: python job_signals.py
-
-  # ── 15:35 일간 리포트 ────────────────────────
-  report:
-    if: github.event.schedule == '35 6 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'report')
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: '3.12' }
-      - uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: pip-${{ hashFiles('requirements.txt') }}
-          restore-keys: pip-
-      - run: pip install -r requirements.txt
-      - run: python job_report.py
-
-  # ── 매월 첫 번째 월요일 09:10 팩터 리밸런싱 ──
-  factor_rebalance:
-    if: github.event.schedule == '10 0 1-7 * 1' || (github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'factor_rebalance')
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: '3.12' }
-      - uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: pip-${{ hashFiles('requirements.txt') }}
-          restore-keys: pip-
-      - run: pip install -r requirements.txt
-      - run: python job_factor_rebalance.py
-
-  # ── 08:00 KST 로그 정리 ─────────────────────
-  cleanup_logs:
-    if: github.event.schedule == '0 23 * * 0-4' || (github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'cleanup_logs')
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          persist-credentials: true
-      - uses: actions/setup-python@v5
-        with: { python-version: '3.12' }
-      - name: 로그 정리 실행
-        run: python job_cleanup_logs.py
-      - name: 정리된 로그 커밋
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add --ignore-errors profit_buy_cloud.log profit_sell_cloud.log cycle_cloud.log coin_buy_cloud.log coin_sell_cloud.log || true
-          git diff --cached --quiet || git commit -m "logs: 3일 경과 로그 정리 [skip ci]"
-          git push origin HEAD:main
 
   # ════════════════════════════════════════════════
   # 수동 실행 전용 (workflow_dispatch)
@@ -192,26 +98,6 @@ jobs:
       - run: python job_signals.py
       - run: python job_buy.py
 
-  # ── 매수 (09:05 KST + 수동) ─────────────────
-  buy:
-    if: >-
-      github.event.schedule == '5 0 * * 1-5' ||
-      github.event.schedule == '30 1 * * 1-5' ||
-      github.event.schedule == '30 4 * * 1-5' ||
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'buy')
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: '3.12' }
-      - uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: pip-${{ hashFiles('requirements.txt') }}
-          restore-keys: pip-
-      - run: pip install -r requirements.txt
-      - run: python job_buy.py
-
   # ── 모니터링 (수동 전용 — 스케줄 크론은 stock-daemon 대체) ──────────
   monitor:
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'monitor'
@@ -227,22 +113,6 @@ jobs:
           restore-keys: pip-
       - run: pip install -r requirements.txt
       - run: python job_monitor.py
-
-  # ── 마감 청산 (15:20 KST + 수동) ─────────────
-  close:
-    if: github.event.schedule == '20 6 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'close')
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: '3.12' }
-      - uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: pip-${{ hashFiles('requirements.txt') }}
-          restore-keys: pip-
-      - run: pip install -r requirements.txt
-      - run: python job_close.py
 
   # ── 수익매도 즉시 실행 (수동) ────────────────
   profit_sell:
@@ -385,11 +255,9 @@ jobs:
         env:
           FORCE_DONE_TICKER: ${{ github.event.inputs.force_done_ticker }}
 
-  # ── 코인 매수 (5분마다 + 수동) ──────────────
+  # ── 코인 매수 (수동 — 상시 폴링은 coin-daemon 대체) ──────────
   coin_buy:
-    if: >
-      github.event.schedule == '*/5 * * * *' ||
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'coin_buy')
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'coin_buy'
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
@@ -403,11 +271,9 @@ jobs:
       - run: pip install -r requirements.txt
       - run: python job_coin_buy.py
 
-  # ── 코인 매도·사이클 (5분마다 + 수동) ────────
+  # ── 코인 매도·사이클 (수동 — 상시 폴링은 coin-daemon 대체) ────────
   coin_sell:
-    if: >
-      github.event.schedule == '*/5 * * * *' ||
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'coin_sell')
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'coin_sell'
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
@@ -437,13 +303,9 @@ jobs:
       - run: pip install -r requirements.txt
       - run: python job_balance.py
 
-  # ── 코인 잔고 현행화 (5분마다 + 수동) ────────
+  # ── 코인 잔고 현행화 (수동) ────────
   coin_balance:
-    needs: [coin_buy, coin_sell]
-    if: >
-      always() &&
-      (needs.coin_buy.result == 'success' || needs.coin_sell.result == 'success') ||
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'coin_balance')
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'coin_balance'
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
