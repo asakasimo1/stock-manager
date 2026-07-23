@@ -47,7 +47,13 @@ def main():
     # 트레일링 스탑 파라미터
     trail_trigger = CFG.trail_trigger   # 이 수익률 달성 시 트레일링 활성화
     trail_pct     = CFG.trail_pct       # 활성화 후 고점 대비 낙폭 허용치
-    safe_trigger  = round(trail_trigger * 0.8, 6)  # 수익보호(원금) 활성화 기준 (float 오차 방지)
+
+    # 단계별 손절선 상향 래칫 — trail_trigger 대비 비율로 스케일
+    # (trigger_frac, lock_frac): 수익률이 trail_trigger*trigger_frac에 도달하면
+    #                            손절선을 buy_price*(1+trail_trigger*lock_frac)로 상향
+    # optimized(trail_trigger=10%) 기준: +2%→본전, +4%→+1.5%확정, +6%→+3.5%확정
+    # (0~trail_trigger 구간에 보호장치가 없어 "올랐다가 손절"이 자주 발생하던 문제 개선)
+    RATCHET_STEPS = [(0.20, 0.00), (0.40, 0.15), (0.60, 0.35)]
 
     to_sell    = []
     sl_changed = {}   # {ticker: new_sl} — 매도 아닌 포지션의 sl 갱신
@@ -63,7 +69,7 @@ def main():
         orig_sl   = pos["sl"]
         new_sl    = orig_sl   # sl은 단조 증가만 허용 (내리지 않음)
 
-        # ── 트레일링 / 수익보호 손절선 동적 상향 ────────────────────
+        # ── 트레일링 / 단계별 수익보호 손절선 동적 상향 ────────────────
         if pnl_pct >= trail_trigger:
             # 트레일링 스탑: 현재가 기준 고점 추적 (최대 손실 고정)
             trail_sl = cur_price * (1 - trail_pct)
@@ -71,11 +77,14 @@ def main():
                 new_sl = trail_sl
                 logger.info("[트레일링] %s  수익 %+.1f%%  sl %.0f→%.0f원",
                             ticker, pnl_pct * 100, orig_sl, new_sl)
-        elif pnl_pct >= safe_trigger:
-            # 수익보호: 원금 이상으로 손절선 상향 (손실 완전 방지)
-            if buy_price > new_sl:
-                new_sl = buy_price
-                logger.info("[수익보호] %s  수익 %+.1f%%  sl %.0f→%.0f원(원금 확보)",
+        else:
+            for trig_frac, lock_frac in RATCHET_STEPS:
+                if pnl_pct >= trail_trigger * trig_frac:
+                    lock_sl = buy_price * (1 + trail_trigger * lock_frac)
+                    if lock_sl > new_sl:
+                        new_sl = lock_sl
+            if new_sl != orig_sl:
+                logger.info("[수익보호래칫] %s  수익 %+.1f%%  sl %.0f→%.0f원",
                             ticker, pnl_pct * 100, orig_sl, new_sl)
 
         if new_sl != orig_sl:

@@ -19,6 +19,11 @@ logger = logging.getLogger(__name__)
 STRATEGY_NAME = os.getenv("STRATEGY", "optimized")
 CFG, _PRESET  = load_strategy(STRATEGY_NAME)
 
+# 매도 시 증권거래세+수수료 등 왕복 비용 추정치 (기본 0.3%) — 이보다 수익률이
+# 높아야 "수수료 제외 실질 수익"으로 보고 마감 강제 익절 대상에 포함시킨다.
+# 실제 계좌 수수료율에 맞춰 GH Secret CLOSE_PROFIT_FEE_PCT로 조정 가능.
+CLOSE_PROFIT_FEE_PCT = float(os.getenv("CLOSE_PROFIT_FEE_PCT", "0.003"))
+
 
 def main():
     logger.info("=== 마감 청산 (15:20) ===")
@@ -40,36 +45,48 @@ def main():
 
     for ticker, pos in list(positions.items()):
         hold = (today - pos["buy_date"]).days if isinstance(pos["buy_date"], date) else 0
-        if hold < CFG.hold_days:
-            continue
         try:
             cur_price = price_map.get(ticker)
             if not cur_price:
                 # 잔고에 없는 경우(이미 매도됐거나 다른 계좌) get_price() 폴백
                 cur_price = int(kis_api.get_price(ticker)["stck_prpr"])
+        except Exception as e:
+            logger.error("%s 현재가 조회 실패: %s", ticker, e)
+            continue
 
-            result     = kis_api.place_order(ticker, "SELL", pos["qty"])
-            pnl        = (cur_price - pos["buy_price"]) * pos["qty"]
-            pnl_pct    = (cur_price - pos["buy_price"]) / pos["buy_price"] * 100
-            daily_pnl += pnl
+        pnl_pct = (cur_price - pos["buy_price"]) / pos["buy_price"]
+
+        if hold >= CFG.hold_days:
+            reason, emoji = "기간청산", "🏁"
+        elif pnl_pct > CLOSE_PROFIT_FEE_PCT:
+            # 보유기간은 남았지만, 수수료 제외 실질 수익이 나 있으면 장마감 전 강제 익절
+            reason, emoji = "마감익절", "💰"
+        else:
+            continue  # 보유기간 남았고 수수료 제외 실익도 없음 → 다음날로 유지
+
+        try:
+            result      = kis_api.place_order(ticker, "SELL", pos["qty"])
+            pnl         = (cur_price - pos["buy_price"]) * pos["qty"]
+            pnl_pct_100 = pnl_pct * 100
+            daily_pnl  += pnl
             state_db.delete_position(ticker)
             state_db.set_meta("daily_pnl", daily_pnl)
 
             gist_writer.log_trade(
                 ticker=ticker, name=pos.get("name", ""),
                 trade_type="sell", price=cur_price, qty=pos["qty"],
-                pnl=pnl, pnl_pct=pnl_pct, reason="기간청산",
+                pnl=pnl, pnl_pct=pnl_pct_100, reason=reason,
                 order_no=result["order_no"],
             )
 
             notify.send(
-                f"🏁 <b>기간 청산</b>  {pos.get('name','')} ({ticker})\n"
+                f"{emoji} <b>{reason}</b>  {pos.get('name','')} ({ticker})\n"
                 f"  {hold}일 보유  매도가 {cur_price:,}원\n"
-                f"  손익: <b>{pnl:+,}원 ({pnl_pct:+.2f}%)</b>\n"
+                f"  손익: <b>{pnl:+,}원 ({pnl_pct_100:+.2f}%)</b>\n"
                 f"  주문번호: {result['order_no']}"
             )
-            logger.info("기간 청산  %s  %d일 보유  주문번호: %s",
-                        ticker, hold, result["order_no"])
+            logger.info("%s  %s  %d일 보유  주문번호: %s",
+                        reason, ticker, hold, result["order_no"])
         except Exception as e:
             logger.error("%s 마감 청산 실패: %s", ticker, e)
             notify.send(f"❌ 마감 청산 실패: {ticker} — {e}")

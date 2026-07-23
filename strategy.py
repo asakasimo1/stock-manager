@@ -14,7 +14,7 @@ STRATEGY_PRESETS = {
         "volume_mult":      1.5,
         "day_return_min":   0.005,
         "stop_loss":        -0.04,
-        "take_profit":      0.20,
+        "take_profit":      0.07,
         "hold_days":        15,
         "max_positions":    5,
         "max_order_amount": 2_000_000,
