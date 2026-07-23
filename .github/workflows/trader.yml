@@ -4,14 +4,14 @@ permissions:
 on:
   # ── 코인 (Upbit) ──
   # coin-daemon.service(systemd)가 30초 폴링으로 24/7 처리 → 크론 비활성화
-  # ── 주식 사이클/모니터링 ──
-  # cycle/monitor는 Oracle VM stock-daemon(job_profit_sell_cloud 등)이 30초 폴링으로
-  # 대체 → 크론 비활성화. monitor는 수동 실행 옵션도 제거함 (job_monitor.py 미사용, 혼선 방지)
+  # ── 주식 매수/청산/사이클/모니터링 ──
+  # signals/buy/close/cycle/monitor는 전부 Oracle VM stock-daemon
+  # (job_profit_buy_cloud/job_profit_sell_cloud/job_cycle_cloud/job_stock_grid,
+  # 30초 폴링 상시 실행)이 대체함 → 관련 워크플로우·수동 잡 전부 제거 (혼선 방지).
+  # signals.yml/buy.yml/close.yml 워크플로우 파일 자체도 삭제함.
   #
-  # 스케줄 실행 잡(signals/buy/close/report/factor_rebalance/cleanup_logs)은
-  # 각각 signals.yml / buy.yml / close.yml / report.yml / factor_rebalance.yml /
-  # cleanup_logs.yml 로 분리됨 (GitHub Actions가 한 워크플로우에 크론이 많으면
-  # 스케줄 트리거가 지연·누락되는 문제 완화 목적).
+  # report.yml(일일 리포트) / factor_rebalance.yml(월간 팩터 리밸런싱) /
+  # cleanup_logs.yml(로그 정리)은 VM 데몬에 없는 기능이라 그대로 유지.
   workflow_dispatch:
     inputs:
       job:
@@ -21,9 +21,6 @@ on:
         type: choice
         options:
           - balance
-          - test_today
-          - profit_sell
-          - cycle
           - monitor_036030
           - force_done_submitted
           - coin_buy
@@ -77,88 +74,6 @@ jobs:
           restore-keys: pip-
       - run: pip install -r requirements.txt
       - run: python job_balance.py
-
-  # ── 오늘 테스트: 신호 생성 → 즉시 매수 ─────
-  test_today:
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'test_today'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          persist-credentials: true
-      - uses: actions/setup-python@v5
-        with: { python-version: '3.12' }
-      - uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: pip-${{ hashFiles('requirements.txt') }}
-          restore-keys: pip-
-      - run: pip install -r requirements.txt
-      - run: python job_signals.py
-      - run: python job_buy.py
-
-  # ── 모니터링 (수동 전용 — 스케줄 크론은 stock-daemon 대체) ──────────
-  # ── 수익매도 즉시 실행 (수동) ────────────────
-  profit_sell:
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'profit_sell'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          persist-credentials: true
-      - uses: actions/setup-python@v5
-        with: { python-version: '3.12' }
-      - uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: pip-${{ hashFiles('requirements.txt') }}
-          restore-keys: pip-
-      - run: pip install -r requirements.txt
-      - run: python job_profit_buy_cloud.py
-      - run: python job_profit_sell_cloud.py
-      - run: python job_cycle_cloud.py
-      - name: 로그 파일 커밋
-        if: always()
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add profit_buy_cloud.log profit_sell_cloud.log
-          git diff --cached --quiet && exit 0
-          git commit -m "logs: profit/sell 업데이트 $(date +'%Y-%m-%d %H:%M') KST [skip ci]"
-          for i in 1 2 3; do
-            git pull --rebase origin main && git push origin HEAD:main && break
-            sleep 5
-          done
-
-  # ── 사이클 (수동 전용 — 스케줄 크론은 stock-daemon 대체) ──────────────
-  cycle:
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'cycle'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          persist-credentials: true
-      - uses: actions/setup-python@v5
-        with: { python-version: '3.12' }
-      - uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: pip-${{ hashFiles('requirements.txt') }}
-          restore-keys: pip-
-      - run: pip install -r requirements.txt
-      - run: python job_cycle_cloud.py
-      - name: 로그 파일 커밋
-        if: always()
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git pull --rebase origin main || true
-          git add cycle_cloud.log
-          git diff --cached --quiet || git commit -m "logs: 사이클 즉시실행 $(date +'%Y-%m-%d %H:%M') KST [skip ci]"
-          git push origin HEAD:main
 
   # ── 케이티알파 모니터링 (수동) ───────────────
   monitor_036030:
