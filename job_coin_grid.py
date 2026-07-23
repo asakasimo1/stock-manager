@@ -44,6 +44,7 @@ def build_levels(lower: float, upper: float, grid_pct: float) -> list:
 
 UPBIT_MIN_ORDER = 5000  # 업비트 최소 주문금액(원)
 MAX_ACTIVE_BUYS = 10   # 동시 매수 대기 주문 최대 개수
+_escape_times: dict = {}  # Gist 저장 실패 대비 메모리 이탈 타이머 (ticker→escaped_at_str)
 
 def _buy_qty(krw: float, price: float) -> float:
     # ceil 사용: 수수료 차감 없이 올림 → 주문금액이 krw 이상 보장
@@ -188,6 +189,7 @@ def initialize_grid(job: dict) -> bool:
                 ticker, len(levels), f"{cur_price:,.0f}", min(len(buy_candidates), MAX_ACTIVE_BUYS))
 
     grids = []
+    funds_exhausted = False
     for level in levels:
         grid = {
             "level":           level,
@@ -198,7 +200,7 @@ def initialize_grid(job: dict) -> bool:
             "last_buy_price":  0,
             "last_sell_price": 0,
         }
-        if level in active_buy_set:
+        if level in active_buy_set and not funds_exhausted:
             try:
                 order_price = upbit_api.round_bid_price(level)
                 coin_qty    = _buy_qty(krw_per_grid, order_price)
@@ -215,12 +217,13 @@ def initialize_grid(job: dict) -> bool:
                 err = str(e)
                 if "insufficient_funds" in err:
                     logger.warning("  잔액 부족 — 초기화 중단 (이후 격자는 idle)")
-                    break
-                if "too_many_requests" in err or "429" in err:
+                    funds_exhausted = True  # break 대신 flag: 남은 격자 idle로 추가
+                elif "too_many_requests" in err or "429" in err:
                     logger.warning("  Rate limit(429) — 초기화 중단 (나머지 idle → 다음 사이클에 복구)")
-                    break
-                logger.error("  격자 %s원 매수 주문 실패: %s", f"{level:,.0f}", e)
-        grids.append(grid)
+                    funds_exhausted = True
+                else:
+                    logger.error("  격자 %s원 매수 주문 실패: %s", f"{level:,.0f}", e)
+        grids.append(grid)  # 항상 추가 (idle 포함) → 고아 코인 매도 등록에 필요
 
     job.update(grids=grids, init_price=cur_price,
                status="active", initialized_at=now_kst())
@@ -275,7 +278,8 @@ def process_grid(job: dict) -> bool:
             if order["state"] == "done":
                 coin_qty  = order["executed_volume"] or grid["coin_qty"]
                 avg_price = order["avg_price"] or level
-                grid.update(coin_qty=coin_qty, last_buy_price=avg_price, buy_uuid="")
+                _buy_time = datetime.now(KST).strftime("%H:%M")
+                grid.update(coin_qty=coin_qty, last_buy_price=avg_price, buy_uuid="", buy_time=_buy_time)
 
                 # 상위 격자에 매도 주문 등록
                 sell_price = avg_price * (1 + grid_pct / 100)
@@ -324,6 +328,16 @@ def process_grid(job: dict) -> bool:
                 pnl = (sell_exec * (1 - SELL_FEE) - buy_exec * (1 + BUY_FEE)) * coin_qty
                 job["total_profit_krw"] = round(job.get("total_profit_krw", 0) + pnl, 2)
                 job["trade_count"]      = job.get("trade_count", 0) + 1
+                _now = datetime.now(KST).strftime("%Y-%m-%d %H:%M")
+                hist = job.setdefault("trade_history", [])
+                hist.append({"date": _now[:10], "time": _now[11:],
+                             "buy_time": grid.get("buy_time", ""),
+                             "buy_price": round(buy_exec, 2),
+                             "sell_price": round(sell_exec, 2),
+                             "qty": round(coin_qty, 8),
+                             "profit": round(pnl, 2)})
+                if len(hist) > 500:
+                    job["trade_history"] = hist[-500:]
                 grid.update(sell_uuid="")
                 changed = True
                 logger.info("★ 매도체결 @ %s원 순수익 %+.0f원 (누적 %+.0f원 / %d회)",
@@ -511,9 +525,11 @@ def _check_auto_reinit(job: dict, cur_price: float) -> bool:
         lower = float(job["lower_price"])
         upper = float(job["upper_price"])
 
+    ticker_key = job.get("ticker", "")
     if lower <= cur_price <= upper:
-        if job.get("escaped_at"):
-            del job["escaped_at"]
+        if job.get("escaped_at") or ticker_key in _escape_times:
+            job.pop("escaped_at", None)
+            _escape_times.pop(ticker_key, None)
             logger.info("그리드 범위 복귀: %s (현재가 %s원)", job.get("name"), f"{cur_price:,.0f}")
             return True
         return False
@@ -521,11 +537,15 @@ def _check_auto_reinit(job: dict, cur_price: float) -> bool:
     # 이탈 상태
     is_below = cur_price < lower
     now = datetime.now(KST)
-    escaped_at_str = job.get("escaped_at")
+    escaped_at_str = job.get("escaped_at") or _escape_times.get(ticker_key)
+    if escaped_at_str and not job.get("escaped_at"):
+        job["escaped_at"] = escaped_at_str  # Gist 실패 대비 메모리에서 복원
 
     if not escaped_at_str:
         # 첫 이탈 감지: 기록만 하고 손절하지 않음 (X분 대기)
-        job["escaped_at"] = now_kst()
+        escaped_now = now_kst()
+        _escape_times[ticker_key] = escaped_now
+        job["escaped_at"] = escaped_now
         direction = "하단" if is_below else "상단"
         logger.info("그리드 %s 이탈 감지: %s 현재가 %s원 (범위 %s~%s원, %d분 후 재설정)",
                     direction, job.get("name"), f"{cur_price:,.0f}",
@@ -549,6 +569,7 @@ def _check_auto_reinit(job: dict, cur_price: float) -> bool:
             job["lower_price"] = round(cur_price - half, 2)
             job["upper_price"] = round(cur_price + half, 2)
             job.pop("escaped_at", None)
+            _escape_times.pop(job.get("ticker", ""), None)
             job["status"] = "reinit"
             logger.info("그리드 자동 재설정 트리거: %s → 새 범위 %s~%s원",
                         job.get("name"), f"{job['lower_price']:,.1f}", f"{job['upper_price']:,.1f}")
@@ -590,7 +611,7 @@ def _sync_orphan_coins(job: dict) -> bool:
     coin_key   = ticker.split("-")[-1].upper()
     actual_qty = 0.0
     for h in bal.get("holdings", []):
-        if h.get("ticker", "").upper() == coin_key:
+        if h.get("symbol", "").upper() == coin_key:  # ticker는 KRW-XRP, symbol은 XRP
             actual_qty = float(h.get("qty", 0))
             break
 
@@ -685,11 +706,33 @@ def main():
                 changed = True      # stop 만 됐어도 저장 필요
 
         elif status in ("init",) or (status == "active" and not job.get("grids")):
-            logger.info("그리드 초기화: %s", name)
-            if initialize_grid(job):
-                changed = True
-                if _sync_orphan_coins(job):
+            # grids:[] 상태에서도 이탈 체크 (escaped_at 미설정 버그 수정)
+            if status == "active" and job.get("auto_reinit_minutes"):
+                try:
+                    cur_p = upbit_api.get_price(job["ticker"])["price"]
+                    if _check_auto_reinit(job, cur_p):
+                        changed = True
+                except Exception as e:
+                    logger.warning("이탈 체크 실패 %s: %s", name, e)
+
+            if job.get("status") == "reinit":
+                logger.info("그리드 재초기화 실행: %s", name)
+                stop_grid(job)
+                job["status"] = "init"
+                if initialize_grid(job):
                     changed = True
+                    if _sync_orphan_coins(job):
+                        changed = True
+                else:
+                    changed = True
+            elif not job.get("escaped_at"):
+                logger.info("그리드 초기화: %s", name)
+                if initialize_grid(job):
+                    changed = True
+                    if _sync_orphan_coins(job):
+                        changed = True
+            else:
+                logger.info("이탈 감지 후 reinit 대기 중: %s", name)
 
         elif status == "active":
             logger.info("그리드 처리: %s", name)

@@ -256,21 +256,105 @@ async function writeJsonBin(data) {
   if (!r.ok) throw new Error(`JSONBin write error: ${r.status}`);
 }
 
+// ── IPOSTOCK 폴백 파서 ───────────────────────────────────────
+async function fetchParseIpoStock(today) {
+  const year = new Date().getFullYear();
+  const res = await fetch('http://www.ipostock.co.kr/sub03/ipo04.asp', {
+    headers: { 'User-Agent': UA, 'Referer': 'http://www.ipostock.co.kr/', 'Accept-Language': 'ko-KR,ko;q=0.9' },
+    signal: AbortSignal.timeout(20000),
+  });
+  if (!res.ok) throw new Error(`IPOSTOCK HTTP ${res.status}`);
+  const html = await res.text();
+
+  function ipoDate(mmdd, ref = null) {
+    const [mm, dd] = mmdd.split('.');
+    let d = new Date(year, parseInt(mm) - 1, parseInt(dd));
+    const base = ref ? new Date(ref) : new Date();
+    if ((base - d) / 86400000 > 90) d = new Date(year + 1, parseInt(mm) - 1, parseInt(dd));
+    return d.toISOString().slice(0, 10);
+  }
+
+  const records = [], seen = new Set();
+  for (const m of html.matchAll(/<tr\s+height="30"[^>]*>(.*?)<\/tr>/gis)) {
+    const row = m[1];
+    const dm = /(\d{2})\.(\d{2})\s*(?:&nbsp;)*\s*~\s*(?:&nbsp;)*\s*(\d{2})\.(\d{2})/.exec(row);
+    if (!dm) continue;
+    const dateStart = ipoDate(`${dm[1]}.${dm[2]}`);
+    const dateEnd   = ipoDate(`${dm[3]}.${dm[4]}`, dateStart);
+    const nm = /view_04\.asp\?code=[^&"]+[^>]*>[^<]*<font[^>]*>(?:<b>)?([^<]+)(?:<\/b>)?<\/font>/is.exec(row);
+    if (!nm) continue;
+    const name = nm[1].trim().replace(/\.+$/, '');
+    if (seen.has(name)) continue;
+    seen.add(name);
+    const tds = [...row.matchAll(/<td[^>]*>(.*?)<\/td>/gis)]
+      .map(t => t[1].replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').trim()).filter(Boolean);
+    let bandLow = 0, bandHigh = 0, priceIpo = 0;
+    for (const td of tds) {
+      const bm = /^([\d,]+)원~([\d,]+)원$/.exec(td);
+      if (bm) { bandLow = parseNum(bm[1]); bandHigh = parseNum(bm[2]); break; }
+    }
+    const pc = tds.filter(t => /^[\d,]+원$/.test(t));
+    if (pc.length) priceIpo = parseNum(pc[0]);
+    const dc = tds.filter(t => /^\d{2}\.\d{2}$/.test(t));
+    const dateList = dc.length >= 2 ? ipoDate(dc[dc.length - 1], dateStart) : '';
+    let instRate = null;
+    for (const td of tds) { const rm = /([\d,]+\.?\d*)\s*:\s*1/.exec(td); if (rm) { instRate = parseFloat(rm[1].replace(/,/g,'')); break; } }
+    const broker = [...tds].reverse().find(t => /[가-힣]/.test(t) && t.length < 20) || '';
+    const score = calcScore(name, instRate, null, priceIpo, bandLow, bandHigh);
+    const status = calcStatus(dateStart, dateEnd);
+    records.push({
+      name, date_sub_start: dateStart, date_sub_end: dateEnd,
+      date_allot: '', date_list: dateList,
+      price_ipo: priceIpo, price_band_low: bandLow, price_band_high: bandHigh,
+      broker, inst_comp_rate: instRate, lock_up_pct: null,
+      band_position: bandHigh > bandLow ? (priceIpo - bandLow) / (bandHigh - bandLow) : 0.5,
+      score, recommendation: recommend(name, score),
+      status, subscribed: false, shares_alloc: null,
+      note: name.includes('스팩') ? '스팩주: 원금보장형, 수익 낮음' : '',
+      fetched_at: today,
+    });
+  }
+  const ORDER = { '청약중': 0, '청약예정': 1, '청약완료': 2, '상장완료': 3 };
+  records.sort((a, b) => (ORDER[a.status] ?? 9) - (ORDER[b.status] ?? 9) || a.date_sub_start.localeCompare(b.date_sub_start));
+  return records;
+}
+
 // ── 메인 ─────────────────────────────────────────────────────
 async function main() {
   const today = TODAY();
   console.log(`[IPO] 크롤링 시작: ${today}`);
 
-  console.log('[IPO] 38.co.kr 데이터 가져오는 중...');
-  const [mainHtml, demandMap] = await Promise.all([
-    fetchEucKr('https://www.38.co.kr/html/fund/index.htm?o=k'),
-    fetchDemandData(),
-  ]);
-  const plain = stripHtml(mainHtml);
-  const listingMap = parseListingDates(plain);
-  const fresh = parseSchedule(plain, listingMap, demandMap, today);
-  console.log(`[IPO] 크롤링 완료: ${fresh.length}건`);
-  if (fresh.length === 0) { console.error('[IPO] 파싱 결과 0건, 종료'); process.exit(1); }
+  // 1단계: 38.co.kr 시도
+  let fresh = [];
+  try {
+    console.log('[IPO] 38.co.kr 데이터 가져오는 중...');
+    const [mainHtml, demandMap] = await Promise.all([
+      fetchEucKr('https://www.38.co.kr/html/fund/index.htm?o=k'),
+      fetchDemandData(),
+    ]);
+    const plain = stripHtml(mainHtml);
+    const listingMap = parseListingDates(plain);
+    fresh = parseSchedule(plain, listingMap, demandMap, today);
+    console.log(`[IPO] 38.co.kr 크롤링 완료: ${fresh.length}건`);
+  } catch (e) {
+    console.warn(`[IPO] 38.co.kr 실패: ${e.message} — IPOSTOCK 폴백 시도`);
+  }
+
+  // 2단계: 38.co.kr 실패/0건이면 IPOSTOCK 폴백
+  if (fresh.length === 0) {
+    try {
+      console.log('[IPO] IPOSTOCK 데이터 가져오는 중...');
+      fresh = await fetchParseIpoStock(today);
+      console.log(`[IPO] IPOSTOCK 크롤링 완료: ${fresh.length}건`);
+    } catch (e) {
+      console.warn(`[IPO] IPOSTOCK 실패: ${e.message}`);
+    }
+  }
+
+  if (fresh.length === 0) {
+    console.error('[IPO] 모든 소스 실패, 기존 Gist 유지');
+    process.exit(0);
+  }
 
   console.log('[IPO] Gist 기존 데이터 읽는 중...');
   const existingGist = await readGistIpo();

@@ -1,11 +1,14 @@
 """
-수익매도 클라우드 잡 — GitHub Actions에서 5분마다 실행
+수익매도 클라우드 잡 — Oracle VM stock-daemon이 30초 폴링(5분 1회 제한)으로 상시 실행
 1) Gist profit_sell_jobs.json 에서 활성 잡 읽기 → 목표 달성 시 즉시 매도
 2) 계좌 보유 종목 자동매도 규칙 (매 5분 체크)
-   - 수익률 +FORCE_TAKE_PROFIT% 이상 → 전량 즉시 매도 (익절, 기본 20%)
+   - 수익률 +FORCE_TAKE_PROFIT% 이상 → 전량 즉시 매도 (익절, 시간대별 10%/6%)
    - 수익률 -FORCE_STOP_LOSS% 이하  → 전량 즉시 매도 (손절, 기본 4%)
-   - 환경변수 FORCE_TAKE_PROFIT / FORCE_STOP_LOSS 로 조정 (빈 값이면 해당 조건 비활성)
+   - 단계별 손절 래칫: 보유 중 도달한 최고 수익률(peak)에 따라 손절 하한을 올려
+     "올랐다가 손절"을 방지 (+2%→0%, +4%→+1.5%, +6%→+3.5% 아래로 못 내려가면 청산)
+   - 환경변수 FORCE_STOP_LOSS 로 손절 기준 조정 (빈 값이면 손절 비활성). 익절은 시간대별 고정.
 """
+from __future__ import annotations
 import logging
 import os
 import time as _time
@@ -31,15 +34,25 @@ logger.addHandler(_fh)
 BUY_FEE_RATE  = 0.00015            # 매수 수수료 0.015%
 SELL_FEE_RATE = 0.00015 + 0.0018   # 매도 수수료 + 증권거래세 0.195%
 
-# 강제 익절/손절 — 환경변수로 조정 가능, 빈 값이면 해당 조건 비활성화
-_env_tp = os.getenv("FORCE_TAKE_PROFIT", "20.0").strip()
-_env_sl = os.getenv("FORCE_STOP_LOSS",   "-4.0").strip()
-AUTO_PROFIT_PCT: float | None = float(_env_tp) if _env_tp else None
-AUTO_LOSS_PCT:   float | None = float(_env_sl) if _env_sl else None
+# 손절 — 환경변수로 조정 가능, 빈 값이면 비활성
+_env_sl = os.getenv("FORCE_STOP_LOSS", "-4.0").strip()
+AUTO_LOSS_PCT: float | None = float(_env_sl) if _env_sl else None
+# 익절은 시간 기반 (auto_sell_by_rule 내부에서 결정):
+#   09:00~11:00: +10% (장 첫 2시간 급등 대응)
+#   11:00 이후:  +6%  (완만한 수익 실현)
 
 # KRX 정규시간(09:00~15:30)에만, 5분 1회 제한
 _AUTO_SELL_INTERVAL = 300
 _last_auto_sell     = 0.0
+
+# 티커별 이번 보유기간 중 관찰된 최고 수익률(%) — 단계별 손절 래칫에 사용.
+# daemon_stock.py 하나의 프로세스가 하루 종일 떠있으므로 메모리 상태로 충분하며,
+# 매도 완료/미보유 시 아래에서 자동으로 정리된다.
+_peak_pnl: dict[str, float] = {}
+
+# (peak 도달 기준 %, 그 시점 손절 하한 %) — peak이 낮은 순서로 정렬
+# +2% 한 번이라도 찍으면 최악의 경우도 본전, +6% 찍으면 +3.5%는 지키고 나온다
+_RATCHET_STEPS = [(2.0, 0.0), (4.0, 1.5), (6.0, 3.5)]
 
 
 def calc_target_price(buy_price: int, qty: int,
@@ -58,25 +71,31 @@ def calc_target_price(buy_price: int, qty: int,
 
 def auto_sell_by_rule():
     """보유 종목 자동매도 규칙 체크 (KRX 정규 09:00~15:30, 5분 1회 제한)
-    - 수익률 >= FORCE_TAKE_PROFIT% : 익절 매도 (None이면 비활성)
-    - 수익률 <= FORCE_STOP_LOSS%   : 손절 매도 (None이면 비활성)
+    시간 기반 익절:
+      09:00~11:00 (장 첫 2시간): +10% — 급등 시 빠르게 실현
+      11:00 이후:               +6%  — 완만한 수익 실현
+    손절: FORCE_STOP_LOSS% (기본 -4%)
     """
     global _last_auto_sell
 
-    if AUTO_PROFIT_PCT is None and AUTO_LOSS_PCT is None:
-        logger.info("강제 익절/손절 조건 비활성화 (FORCE_TAKE_PROFIT, FORCE_STOP_LOSS 미설정)")
-        return
-
     t = datetime.now(KST).time()
+    # 시간 기반 익절 기준 결정
+    if dt_time(9, 0) <= t < dt_time(11, 0):
+        take_profit = 10.0   # 장 첫 2시간: 급등 익절
+    else:
+        take_profit = 6.0    # 11:00 이후: 완만한 익절
+
+    if AUTO_LOSS_PCT is None:
+        logger.info("손절 조건 비활성화 (FORCE_STOP_LOSS 미설정)")
+
     if not (dt_time(9, 0) <= t < dt_time(15, 30)):
         return
     if _time.time() - _last_auto_sell < _AUTO_SELL_INTERVAL:
         return
     _last_auto_sell = _time.time()
 
-    tp_label = f"+{AUTO_PROFIT_PCT:.0f}%" if AUTO_PROFIT_PCT is not None else "비활성"
-    sl_label = f"{AUTO_LOSS_PCT:.0f}%"    if AUTO_LOSS_PCT   is not None else "비활성"
-    logger.info("강제 익절 %s / 강제 손절 %s", tp_label, sl_label)
+    sl_label = f"{AUTO_LOSS_PCT:.0f}%" if AUTO_LOSS_PCT is not None else "비활성"
+    logger.info("강제 익절 +%.0f%% / 강제 손절 %s", take_profit, sl_label)
 
     try:
         bal = kis_api.get_balance()
@@ -84,21 +103,42 @@ def auto_sell_by_rule():
         logger.error("잔고 조회 실패: %s", e)
         return
 
+    # 매도 완료·미보유 종목의 래칫 상태 정리 (다음에 재매수하면 0부터 새로 시작)
+    held_tickers = {h["ticker"] for h in bal["holdings"]}
+    for stale in list(_peak_pnl):
+        if stale not in held_tickers:
+            _peak_pnl.pop(stale, None)
+
     for h in bal["holdings"]:
-        pnl_pct   = h["pnl_pct"]
-        is_profit = AUTO_PROFIT_PCT is not None and pnl_pct >= AUTO_PROFIT_PCT
-        is_loss   = AUTO_LOSS_PCT   is not None and pnl_pct <= AUTO_LOSS_PCT
-        if not is_profit and not is_loss:
+        ticker  = h["ticker"]
+        pnl_pct = h["pnl_pct"]
+        peak    = max(_peak_pnl.get(ticker, pnl_pct), pnl_pct)
+        _peak_pnl[ticker] = peak
+
+        # 단계별 손절 래칫 — peak이 도달한 가장 높은 단계의 하한선 아래로 내려오면 청산
+        ratchet_floor = None
+        for trig, floor in _RATCHET_STEPS:
+            if peak >= trig:
+                ratchet_floor = floor
+
+        is_profit  = pnl_pct >= take_profit
+        is_loss    = AUTO_LOSS_PCT is not None and pnl_pct <= AUTO_LOSS_PCT
+        is_ratchet = ratchet_floor is not None and pnl_pct <= ratchet_floor
+        if not is_profit and not is_loss and not is_ratchet:
             continue
 
-        ticker    = h["ticker"]
         name      = h["name"]
         qty       = h["qty"]
         cur_price = h["eval_price"]
-        reason    = f"익절 (+{AUTO_PROFIT_PCT:.0f}% 달성)" if is_profit else f"손절 ({AUTO_LOSS_PCT:.0f}% 도달)"
-        emoji     = "🚀" if is_profit else "🔴"
+        if is_profit:
+            reason, emoji = f"익절 (+{take_profit:.0f}% 달성)", "🚀"
+        elif is_ratchet:
+            reason, emoji = f"수익보호 (최고 {peak:+.1f}% → {ratchet_floor:+.1f}% 하회)", "📉"
+        else:
+            reason, emoji = f"손절 ({AUTO_LOSS_PCT:.0f}% 도달)", "🔴"
 
-        logger.info("★ 자동매도 [%s] — %s(%s) 수익률 %.2f%%", reason, name, ticker, pnl_pct)
+        logger.info("★ 자동매도 [%s] — %s(%s) 수익률 %.2f%% (peak %.2f%%)",
+                    reason, name, ticker, pnl_pct, peak)
         try:
             result = kis_api.place_order(ticker, "SELL", qty, order_type="market")
             pnl = (cur_price - h["avg_price"]) * qty
@@ -109,6 +149,7 @@ def auto_sell_by_rule():
             )
             logger.info("자동매도 완료 %s %d주 @ %d원  주문번호: %s",
                         ticker, qty, cur_price, result.get("order_no", ""))
+            _peak_pnl.pop(ticker, None)
         except Exception as e:
             logger.error("%s 자동매도 실패: %s", ticker, e)
             notify.send(f"❌ 자동매도 실패: {name}({ticker}) — {e}")

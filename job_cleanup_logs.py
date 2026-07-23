@@ -5,6 +5,7 @@
 정책: 3일 이상 지난 로그 항목 → 핵심 10줄 요약으로 대체 후 삭제
 """
 
+from __future__ import annotations
 import os, logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path

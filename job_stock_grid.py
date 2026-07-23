@@ -100,7 +100,8 @@ def initialize_grid(job: dict) -> bool:
                 time.sleep(0.25)
                 r = kis_api.place_order(ticker, "BUY", qty, level, "limit")
                 grid.update(state="buy_waiting", order_no=r["order_no"],
-                            org_no=r.get("org_no", ""), qty=qty, last_buy_price=level)
+                            org_no=r.get("org_no", ""), qty=qty, last_buy_price=level,
+                            order_date=str(datetime.now(KST).date()))
                 logger.info("  매수등록 %s원 %d주 %s", f"{level:,}", qty, r["order_no"])
                 _invalidate_pending()
             except Exception as e:
@@ -137,7 +138,8 @@ def _fill_idle(grids, ticker, cur_price, krw_per_grid, bwc_fn):
             time.sleep(0.25)
             r = kis_api.place_order(ticker, "BUY", qty, level, "limit")
             grid.update(state="buy_waiting", order_no=r["order_no"],
-                        org_no=r.get("org_no",""), qty=qty, last_buy_price=level)
+                        org_no=r.get("org_no",""), qty=qty, last_buy_price=level,
+                        order_date=str(datetime.now(KST).date()))
             _invalidate_pending()
             logger.info("  idle보충 %s원 %d주 %s", f"{level:,}", qty, r["order_no"])
             break
@@ -155,6 +157,10 @@ def process_grid(job: dict) -> bool:
     changed      = False
     pending      = _get_pending_set()
 
+    _now_kst    = datetime.now(KST)
+    today_str   = _now_kst.strftime("%Y-%m-%d")
+    market_open = "0900" <= _now_kst.strftime("%H%M") <= "1530"
+
     def bwc():
         return sum(1 for g in grids if g.get("state") == "buy_waiting")
 
@@ -165,50 +171,103 @@ def process_grid(job: dict) -> bool:
 
         if state == "buy_waiting" and order_no:
             if order_no not in pending:
-                qty = grid["qty"]
-                avg = grid["last_buy_price"]
-                grid.update(order_no="", org_no="")
-                sell_price = kis_api.round_price(avg * (1 + grid_pct / 100))
-                if i + 1 < len(grids):
-                    sell_price = max(sell_price, int(grids[i+1]["level"]))
-                try:
-                    time.sleep(0.25)
-                    r = kis_api.place_order(ticker, "SELL", qty, sell_price, "limit")
-                    grid.update(state="sell_waiting", order_no=r["order_no"],
-                                org_no=r.get("org_no",""), last_sell_price=sell_price)
-                    changed = True
-                    _invalidate_pending()
-                    logger.info("★매수체결 %s원 -> 매도등록 %s원 %d주",
-                                f"{avg:,}", f"{sell_price:,}", qty)
-                    _fill_idle(grids, ticker, avg, krw_per_grid, bwc)
-                except Exception as e:
-                    grid.update(state="idle")
-                    logger.error("매도등록실패 %s원: %s", f"{level:,}", e)
+                order_date = grid.get("order_date", "")
+                if order_date and order_date < today_str:
+                    # 전일 미체결 → 장 시작 시 재등록
+                    if market_open:
+                        qty2 = _buy_qty(krw_per_grid, level)
+                        try:
+                            time.sleep(0.25)
+                            r = kis_api.place_order(ticker, "BUY", qty2, level, "limit")
+                            grid.update(state="buy_waiting", order_no=r["order_no"],
+                                        org_no=r.get("org_no",""), qty=qty2,
+                                        last_buy_price=level, order_date=today_str)
+                            changed = True
+                            _invalidate_pending()
+                            logger.info("↻전일만료→재등록(매수) %s원 %d주", f"{level:,}", qty2)
+                        except Exception as e:
+                            grid.update(state="idle", order_no="", org_no="")
+                            logger.error("만료재등록실패(매수) %s원: %s", f"{level:,}", e)
+                else:
+                    # 당일 체결 → 매도 등록 (장 중에만 처리)
+                    if market_open:
+                        qty = grid["qty"]
+                        avg = grid["last_buy_price"]
+                        _buy_time = datetime.now(KST).strftime("%H:%M")
+                        grid.update(order_no="", org_no="", buy_time=_buy_time)
+                        sell_price = kis_api.round_price(avg * (1 + grid_pct / 100))
+                        if i + 1 < len(grids):
+                            sell_price = max(sell_price, int(grids[i+1]["level"]))
+                        try:
+                            time.sleep(0.25)
+                            r = kis_api.place_order(ticker, "SELL", qty, sell_price, "limit")
+                            grid.update(state="sell_waiting", order_no=r["order_no"],
+                                        org_no=r.get("org_no",""), last_sell_price=sell_price,
+                                        order_date=today_str)
+                            changed = True
+                            _invalidate_pending()
+                            logger.info("★매수체결 %s원 -> 매도등록 %s원 %d주",
+                                        f"{avg:,}", f"{sell_price:,}", qty)
+                            _fill_idle(grids, ticker, avg, krw_per_grid, bwc)
+                        except Exception as e:
+                            grid.update(state="idle")
+                            logger.error("매도등록실패 %s원: %s", f"{level:,}", e)
 
         elif state == "sell_waiting" and order_no:
             if order_no not in pending:
-                sell_exec = grid["last_sell_price"]
-                buy_exec  = grid["last_buy_price"]
-                qty       = grid["qty"]
-                pnl = (sell_exec * 0.998 - buy_exec * 1.00015) * qty
-                job["total_profit_krw"] = round(job.get("total_profit_krw", 0) + pnl, 0)
-                job["trade_count"]      = job.get("trade_count", 0) + 1
-                grid.update(order_no="", org_no="")
-                changed = True
-                _invalidate_pending()
-                logger.info("★매도체결 %s원 수익 %+.0f원 (누적 %+.0f원 %d회)",
-                            f"{sell_exec:,}", pnl, job["total_profit_krw"], job["trade_count"])
-                qty2 = _buy_qty(krw_per_grid, level)
-                try:
-                    time.sleep(0.25)
-                    r = kis_api.place_order(ticker, "BUY", qty2, level, "limit")
-                    grid.update(state="buy_waiting", order_no=r["order_no"],
-                                org_no=r.get("org_no",""), qty=qty2, last_buy_price=level)
-                    _invalidate_pending()
-                    logger.info("  재매수등록 %s원 %d주", f"{level:,}", qty2)
-                except Exception as e:
-                    grid.update(state="idle")
-                    logger.error("재매수실패 %s원: %s", f"{level:,}", e)
+                order_date = grid.get("order_date", "")
+                if order_date and order_date < today_str:
+                    # 전일 미체결 매도 → 장 시작 시 재등록 (보유 주식 재매도)
+                    if market_open:
+                        sell_price = int(grid["last_sell_price"])
+                        qty = grid["qty"]
+                        try:
+                            time.sleep(0.25)
+                            r = kis_api.place_order(ticker, "SELL", qty, sell_price, "limit")
+                            grid.update(order_no=r["order_no"],
+                                        org_no=r.get("org_no",""), order_date=today_str)
+                            changed = True
+                            _invalidate_pending()
+                            logger.info("↻전일만료→재등록(매도) %s원 %d주", f"{sell_price:,}", qty)
+                        except Exception as e:
+                            grid.update(order_no="", org_no="")
+                            logger.error("만료재등록실패(매도) %s원: %s", f"{level:,}", e)
+                else:
+                    # 당일 체결 (장 중에만 처리)
+                    if market_open:
+                        sell_exec = grid["last_sell_price"]
+                        buy_exec  = grid["last_buy_price"]
+                        qty       = grid["qty"]
+                        pnl = (sell_exec * 0.998 - buy_exec * 1.00015) * qty
+                        job["total_profit_krw"] = round(job.get("total_profit_krw", 0) + pnl, 0)
+                        job["trade_count"]      = job.get("trade_count", 0) + 1
+                        _now = datetime.now(KST).strftime("%Y-%m-%d %H:%M")
+                        hist = job.setdefault("trade_history", [])
+                        hist.append({"date": _now[:10], "time": _now[11:],
+                                     "buy_time": grid.get("buy_time", ""),
+                                     "buy_price": round(buy_exec, 2),
+                                     "sell_price": round(sell_exec, 2),
+                                     "qty": qty,
+                                     "profit": round(pnl, 2)})
+                        if len(hist) > 500:
+                            job["trade_history"] = hist[-500:]
+                        grid.update(order_no="", org_no="")
+                        changed = True
+                        _invalidate_pending()
+                        logger.info("★매도체결 %s원 수익 %+.0f원 (누적 %+.0f원 %d회)",
+                                    f"{sell_exec:,}", pnl, job["total_profit_krw"], job["trade_count"])
+                        qty2 = _buy_qty(krw_per_grid, level)
+                        try:
+                            time.sleep(0.25)
+                            r = kis_api.place_order(ticker, "BUY", qty2, level, "limit")
+                            grid.update(state="buy_waiting", order_no=r["order_no"],
+                                        org_no=r.get("org_no",""), qty=qty2,
+                                        last_buy_price=level, order_date=today_str)
+                            _invalidate_pending()
+                            logger.info("  재매수등록 %s원 %d주", f"{level:,}", qty2)
+                        except Exception as e:
+                            grid.update(state="idle")
+                            logger.error("재매수실패 %s원: %s", f"{level:,}", e)
 
     return changed
 
@@ -250,7 +309,8 @@ def _check_out_of_range(job: dict, cur_price: int) -> bool:
             elapsed = (datetime.now(KST) - since).total_seconds() / 60
         except (ValueError, TypeError):
             elapsed = 0
-        if elapsed >= auto_min:
+        market_open = "0900" <= datetime.now(KST).strftime("%H%M") <= "1530"
+        if elapsed >= auto_min and market_open:
             n_each = 5
             step = 1 + float(job.get("grid_pct", 1.5)) / 100
             nl = kis_api.round_price(cur_price / step ** n_each)
