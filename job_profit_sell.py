@@ -16,6 +16,7 @@
   --close-time  장 마감 포기 시각 KST HH:MM (기본 15:35)
 """
 
+from __future__ import annotations
 import argparse
 import logging
 import time

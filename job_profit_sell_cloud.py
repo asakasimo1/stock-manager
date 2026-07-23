@@ -6,6 +6,7 @@
    - 수익률 -FORCE_STOP_LOSS% 이하  → 전량 즉시 매도 (손절, 기본 4%)
    - 환경변수 FORCE_TAKE_PROFIT / FORCE_STOP_LOSS 로 조정 (빈 값이면 해당 조건 비활성)
 """
+from __future__ import annotations
 import logging
 import os
 import time as _time
@@ -31,11 +32,12 @@ logger.addHandler(_fh)
 BUY_FEE_RATE  = 0.00015            # 매수 수수료 0.015%
 SELL_FEE_RATE = 0.00015 + 0.0018   # 매도 수수료 + 증권거래세 0.195%
 
-# 강제 익절/손절 — 환경변수로 조정 가능, 빈 값이면 해당 조건 비활성화
-_env_tp = os.getenv("FORCE_TAKE_PROFIT", "20.0").strip()
-_env_sl = os.getenv("FORCE_STOP_LOSS",   "-4.0").strip()
-AUTO_PROFIT_PCT: float | None = float(_env_tp) if _env_tp else None
-AUTO_LOSS_PCT:   float | None = float(_env_sl) if _env_sl else None
+# 손절 — 환경변수로 조정 가능, 빈 값이면 비활성
+_env_sl = os.getenv("FORCE_STOP_LOSS", "-4.0").strip()
+AUTO_LOSS_PCT: float | None = float(_env_sl) if _env_sl else None
+# 익절은 시간 기반 (auto_sell_by_rule 내부에서 결정):
+#   09:00~11:00: +10% (장 첫 2시간 급등 대응)
+#   11:00 이후:  +6%  (완만한 수익 실현)
 
 # KRX 정규시간(09:00~15:30)에만, 5분 1회 제한
 _AUTO_SELL_INTERVAL = 300
@@ -58,25 +60,31 @@ def calc_target_price(buy_price: int, qty: int,
 
 def auto_sell_by_rule():
     """보유 종목 자동매도 규칙 체크 (KRX 정규 09:00~15:30, 5분 1회 제한)
-    - 수익률 >= FORCE_TAKE_PROFIT% : 익절 매도 (None이면 비활성)
-    - 수익률 <= FORCE_STOP_LOSS%   : 손절 매도 (None이면 비활성)
+    시간 기반 익절:
+      09:00~11:00 (장 첫 2시간): +10% — 급등 시 빠르게 실현
+      11:00 이후:               +6%  — 완만한 수익 실현
+    손절: FORCE_STOP_LOSS% (기본 -4%)
     """
     global _last_auto_sell
 
-    if AUTO_PROFIT_PCT is None and AUTO_LOSS_PCT is None:
-        logger.info("강제 익절/손절 조건 비활성화 (FORCE_TAKE_PROFIT, FORCE_STOP_LOSS 미설정)")
-        return
-
     t = datetime.now(KST).time()
+    # 시간 기반 익절 기준 결정
+    if dt_time(9, 0) <= t < dt_time(11, 0):
+        take_profit = 10.0   # 장 첫 2시간: 급등 익절
+    else:
+        take_profit = 6.0    # 11:00 이후: 완만한 익절
+
+    if AUTO_LOSS_PCT is None:
+        logger.info("손절 조건 비활성화 (FORCE_STOP_LOSS 미설정)")
+
     if not (dt_time(9, 0) <= t < dt_time(15, 30)):
         return
     if _time.time() - _last_auto_sell < _AUTO_SELL_INTERVAL:
         return
     _last_auto_sell = _time.time()
 
-    tp_label = f"+{AUTO_PROFIT_PCT:.0f}%" if AUTO_PROFIT_PCT is not None else "비활성"
-    sl_label = f"{AUTO_LOSS_PCT:.0f}%"    if AUTO_LOSS_PCT   is not None else "비활성"
-    logger.info("강제 익절 %s / 강제 손절 %s", tp_label, sl_label)
+    sl_label = f"{AUTO_LOSS_PCT:.0f}%" if AUTO_LOSS_PCT is not None else "비활성"
+    logger.info("강제 익절 +%.0f%% / 강제 손절 %s", take_profit, sl_label)
 
     try:
         bal = kis_api.get_balance()
@@ -86,8 +94,8 @@ def auto_sell_by_rule():
 
     for h in bal["holdings"]:
         pnl_pct   = h["pnl_pct"]
-        is_profit = AUTO_PROFIT_PCT is not None and pnl_pct >= AUTO_PROFIT_PCT
-        is_loss   = AUTO_LOSS_PCT   is not None and pnl_pct <= AUTO_LOSS_PCT
+        is_profit = pnl_pct >= take_profit
+        is_loss   = AUTO_LOSS_PCT is not None and pnl_pct <= AUTO_LOSS_PCT
         if not is_profit and not is_loss:
             continue
 
@@ -95,7 +103,7 @@ def auto_sell_by_rule():
         name      = h["name"]
         qty       = h["qty"]
         cur_price = h["eval_price"]
-        reason    = f"익절 (+{AUTO_PROFIT_PCT:.0f}% 달성)" if is_profit else f"손절 ({AUTO_LOSS_PCT:.0f}% 도달)"
+        reason    = f"익절 (+{take_profit:.0f}% 달성)" if is_profit else f"손절 ({AUTO_LOSS_PCT:.0f}% 도달)"
         emoji     = "🚀" if is_profit else "🔴"
 
         logger.info("★ 자동매도 [%s] — %s(%s) 수익률 %.2f%%", reason, name, ticker, pnl_pct)

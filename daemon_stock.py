@@ -21,6 +21,7 @@ load_dotenv()
 import job_profit_buy_cloud
 import job_profit_sell_cloud
 import job_cycle_cloud
+import job_stock_grid
 import job_balance
 import kis_api
 
@@ -56,6 +57,7 @@ def main():
                 job_profit_buy_cloud.main()
                 job_profit_sell_cloud.main()
                 job_cycle_cloud.main()
+                job_stock_grid.main()
                 # 매 N 사이클마다 잔고 Gist 업데이트 (heartbeat + 대시보드 갱신)
                 if cycle % BALANCE_EVERY == 0:
                     try:

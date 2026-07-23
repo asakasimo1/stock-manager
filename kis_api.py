@@ -405,9 +405,11 @@ def place_order(ticker: str, side: str, qty: int,
     if data.get("rt_cd") != "0":
         raise RuntimeError(f"주문 실패 [{side} {ticker} {qty}주]: {data.get('msg1')}")
 
-    order_no = data.get("output", {}).get("ODNO", "")
+    out = data.get("output", {})
+    order_no = out.get("ODNO", "")
+    org_no   = out.get("KRX_FWDG_ORD_ORGNO", "")
     logger.info("주문 완료  %s %s %s주  주문번호: %s", side, ticker, qty, order_no)
-    return {"order_no": order_no, "message": data.get("msg1", "")}
+    return {"order_no": order_no, "org_no": org_no, "message": data.get("msg1", "")}
 
 
 # ─────────────────────────────────────────
@@ -442,8 +444,71 @@ def get_pending_orders() -> list[dict]:
             "qty":      int(item.get("ord_qty", 0)),
             "filled":   int(item.get("tot_ccld_qty", 0)),
             "price":    int(item.get("ord_unpr", 0)),
+            "org_no":   item.get("krx_fwdg_ord_orgno", ""),
         })
     return orders
+
+
+
+
+# ─────────────────────────────────────────
+# 5. 주문 취소
+# ─────────────────────────────────────────
+def cancel_order(order_no: str, org_no: str = "") -> bool:
+    """당일 미체결 지정가 주문 취소. 이미 체결/없으면 True 반환."""
+    if not org_no:
+        pending = get_pending_orders()
+        found = next((o for o in pending if o["order_no"] == order_no), None)
+        if not found:
+            logger.info("취소 대상 없음(이미 체결됨?): %s", order_no)
+            return True
+        org_no = found.get("org_no", "")
+
+    cano, acnt = _account_parts()
+    tr_id = "VTTC0803U" if PAPER else "TTTC0803U"
+    body = {
+        "CANO":                cano,
+        "ACNT_PRDT_CD":        acnt,
+        "KRX_FWDG_ORD_ORGNO": org_no,
+        "ORGN_ODNO":           order_no,
+        "ORD_DVSN":            "00",
+        "RVSE_CNCL_DVSN_CD":   "02",
+        "ORD_QTY":             "0",
+        "ORD_UNPR":            "0",
+        "QTY_ALL_ORD_YN":      "Y",
+    }
+    try:
+        resp = _api_post(
+            f"{BASE_URL}/uapi/domestic-stock/v1/trading/order-rvsecncl",
+            headers=_headers(tr_id),
+            json=body,
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        ok = data.get("rt_cd") == "0"
+        if not ok:
+            logger.warning("주문취소 실패 %s: %s", order_no, data.get("msg1"))
+        return ok
+    except Exception as e:
+        logger.error("주문취소 오류 %s: %s", order_no, e)
+        return False
+
+
+# ─────────────────────────────────────────
+# 6. 주식 호가 단위 반올림
+# ─────────────────────────────────────────
+def round_price(price: float) -> int:
+    """KRX 호가 단위로 내림 (지정가 매수는 호가 단위 맞춤 필수)"""
+    p = int(price)
+    if p < 1000:     unit = 1
+    elif p < 5000:   unit = 5
+    elif p < 10000:  unit = 10
+    elif p < 50000:  unit = 50
+    elif p < 100000: unit = 100
+    elif p < 500000: unit = 500
+    else:            unit = 1000
+    return (p // unit) * unit
 
 
 # ─────────────────────────────────────────

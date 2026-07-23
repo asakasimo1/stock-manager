@@ -20,7 +20,7 @@ import requests
 from dotenv import load_dotenv
 
 import kis_api
-from backtest import add_features, generate_signals, Cfg
+from backtest import add_features, generate_signals, generate_rebound_signals, Cfg
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -29,12 +29,12 @@ logger = logging.getLogger(__name__)
 # ─────────────────────────────────────────
 # 전략 설정
 # ─────────────────────────────────────────
-# STRATEGY 환경변수 기반으로 전략 로드 (기본: rsi_rebound)
-import os as _os
-from strategy import load_strategy as _load_strategy
-_STRATEGY_NAME = _os.getenv("STRATEGY", "rsi_rebound")
-CFG, _PRESET   = _load_strategy(_STRATEGY_NAME)
-logger.info("신호 전략: %s", _STRATEGY_NAME)
+CFG = Cfg()
+CFG.volume_mult    = 1.5
+CFG.day_return_min = 0.005
+CFG.stop_loss      = -0.07
+CFG.take_profit    = 0.20
+CFG.hold_days      = 15
 
 # 외국인 순매수 최소 기준 (원)
 FOREIGN_MIN = 5_000_000_000    # 50억
@@ -96,18 +96,16 @@ def get_investor_trading(ticker: str) -> dict:
 
 
 # ─────────────────────────────────────────
-# 시그널 1: 기술적 (거래량 + 모멘텀)
+# 내부 헬퍼: KOSPI OHLCV 데이터 공통 조회
 # ─────────────────────────────────────────
-def get_technical_signals(top_n: int = 300) -> list[str]:
-    """전일 기준 거래량 급증 + 모멘텀 종목 코드 리스트"""
+def _fetch_ohlcv(top_n: int = 300) -> pd.DataFrame:
+    """KOSPI 상위 top_n 종목 60일 OHLCV 한 번에 조회"""
     kospi = fdr.StockListing("KOSPI")
     kospi = kospi[kospi["Marcap"] > 0].sort_values("Marcap", ascending=False).head(top_n)
     tickers = kospi["Code"].tolist()
     names   = dict(zip(kospi["Code"], kospi["Name"]))
 
-    # vol_lookback=20이므로 여유있게 60일치만 조회 (전체기간 조회 시 timeout 방지)
     start_date = (datetime.today() - timedelta(days=60)).strftime("%Y-%m-%d")
-
     frames = []
     for code in tickers:
         try:
@@ -127,18 +125,27 @@ def get_technical_signals(top_n: int = 300) -> list[str]:
         time.sleep(0.1)
 
     if not frames:
-        return []
+        return pd.DataFrame()
+    return pd.concat(frames, ignore_index=True)
 
-    ohlcv   = pd.concat(frames, ignore_index=True)
+
+# ─────────────────────────────────────────
+# 시그널 1: 기술적 (거래량 + 모멘텀)
+# ─────────────────────────────────────────
+def get_technical_signals(top_n: int = 300) -> list[dict]:
+    """전일 기준 거래량 급증 + 모멘텀 종목"""
+    ohlcv = _fetch_ohlcv(top_n)
+    if ohlcv.empty:
+        return []
     ohlcv   = add_features(ohlcv, CFG)
     signals = generate_signals(ohlcv, CFG)
-
-    # 전일 신호만
-    latest = ohlcv["date"].max()
+    latest  = ohlcv["date"].max()
     today_sigs = signals[signals["date"] == latest]
-
     logger.info("기술적 시그널 %d종목 (기준일: %s)", len(today_sigs), latest.date())
-    return today_sigs[["ticker", "name", "vol_ratio", "day_return"]].to_dict("records")
+    result = today_sigs[["ticker", "name", "vol_ratio", "day_return"]].to_dict("records")
+    for r in result:
+        r["signal_type"] = "momentum"
+    return result
 
 
 # ─────────────────────────────────────────
@@ -166,6 +173,55 @@ def get_foreign_buy_signals(tickers: list[str],
     logger.info("수급 시그널 %d종목 (외국인 순매수 %.0f억 이상)",
                 len(buy_set), foreign_min / 1e8)
     return buy_set
+
+
+# ─────────────────────────────────────────
+# 통합 시그널 — 모멘텀 + 반등 포착 합산
+# ─────────────────────────────────────────
+def get_combined_signals(top_n: int = 300) -> list[dict]:
+    """
+    모멘텀 전략 OR 반등 포착 전략 중 하나라도 해당하면 포함
+    - 모멘텀: 거래량 1.5배↑ + 당일 +0.5%↑ + 5일 모멘텀 양수
+    - 반등  : 거래량 2배↑  + 5일 -7%↓  + 당일 양봉 + 아랫꼬리 35%↑
+    """
+    ohlcv = _fetch_ohlcv(top_n)
+    if ohlcv.empty:
+        logger.warning("OHLCV 데이터 없음")
+        return []
+
+    ohlcv  = add_features(ohlcv, CFG)
+    latest = ohlcv["date"].max()
+
+    # 모멘텀
+    mom_df  = generate_signals(ohlcv, CFG)
+    mom_today = mom_df[mom_df["date"] == latest].copy()
+    mom_today["signal_type"] = "momentum"
+    mom_records = mom_today[["ticker","name","vol_ratio","day_return","signal_type"]].to_dict("records")
+
+    # 반등
+    reb_df  = generate_rebound_signals(ohlcv)
+    reb_today = reb_df[reb_df["date"] == latest].copy()
+    reb_records = reb_today[["ticker","name","vol_ratio","day_return","signal_type"]].to_dict("records")
+    for r in reb_today[["ticker","name","vol_ratio","day_return","mom5","low_recovery","signal_type"]].to_dict("records"):
+        # 반등 후보는 extra 필드 포함
+        pass
+
+    # 합집합 (모멘텀 우선, ticker 중복 제거)
+    seen     = set()
+    combined = []
+    for rec in mom_records:
+        if rec["ticker"] not in seen:
+            seen.add(rec["ticker"])
+            combined.append(rec)
+
+    for rec in reb_today[["ticker","name","vol_ratio","day_return","mom5","low_recovery","signal_type"]].to_dict("records"):
+        if rec["ticker"] not in seen:
+            seen.add(rec["ticker"])
+            combined.append(rec)
+
+    logger.info("통합 시그널: 모멘텀 %d + 반등 %d = 합산 %d종목 (기준일: %s)",
+                len(mom_records), len(reb_records), len(combined), latest.date())
+    return combined
 
 
 # ─────────────────────────────────────────
