@@ -5,7 +5,8 @@ on:
   # ── 코인 (Upbit) ──
   # coin-daemon.service(systemd)가 30초 폴링으로 24/7 처리 → 크론 비활성화
   # ── 주식 사이클/모니터링 ──
-  # cycle/monitor는 Oracle VM stock-daemon이 30초 폴링으로 대체 → 크론 비활성화
+  # cycle/monitor는 Oracle VM stock-daemon(job_profit_sell_cloud 등)이 30초 폴링으로
+  # 대체 → 크론 비활성화. monitor는 수동 실행 옵션도 제거함 (job_monitor.py 미사용, 혼선 방지)
   #
   # 스케줄 실행 잡(signals/buy/close/report/factor_rebalance/cleanup_logs)은
   # 각각 signals.yml / buy.yml / close.yml / report.yml / factor_rebalance.yml /
@@ -21,7 +22,6 @@ on:
         options:
           - balance
           - test_today
-          - monitor
           - profit_sell
           - cycle
           - monitor_036030
@@ -99,21 +99,6 @@ jobs:
       - run: python job_buy.py
 
   # ── 모니터링 (수동 전용 — 스케줄 크론은 stock-daemon 대체) ──────────
-  monitor:
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'monitor'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: '3.12' }
-      - uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: pip-${{ hashFiles('requirements.txt') }}
-          restore-keys: pip-
-      - run: pip install -r requirements.txt
-      - run: python job_monitor.py
-
   # ── 수익매도 즉시 실행 (수동) ────────────────
   profit_sell:
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'profit_sell'
