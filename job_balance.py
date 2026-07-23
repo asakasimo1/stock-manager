@@ -90,8 +90,8 @@ def main():
             ],
         }
         ok = gist_writer._write_gist({"account_balance.json": account_data})
-        logger.info("잔고 Gist 업데이트 %s — 보유 %d종목  당일손익 %+,d원 (%+.2f%%)",
-                    "완료" if ok else "실패", len(bal["holdings"]), daily_pnl, day_ret)
+        logger.info("잔고 Gist 업데이트 %s — 보유 %d종목  당일손익 %s원 (%+.2f%%)",
+                    "완료" if ok else "실패", len(bal["holdings"]), f"{daily_pnl:+,.0f}", day_ret)
         for h in bal["holdings"]:
             logger.info("  %s %s  %d주  평균 %d원  현재 %d원  손익 %+.2f%%",
                         h["ticker"], h["name"], h["qty"],
