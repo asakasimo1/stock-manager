@@ -718,7 +718,8 @@ async function handleCoinDate(req, res, gistId, ghToken) {
       const buyPrice  = j.buy_price  || 0;
       const sellNet   = sellPrice * qty * (1 - FEE);
       const buyCost   = buyPrice  * qty * (1 + FEE);
-      const profit    = Math.round(sellNet - buyCost);
+      // buy_price=0이면 수익 계산 불가 → null로 처리 (netProfit 합산 제외)
+      const profit    = buyPrice > 0 ? Math.round(sellNet - buyCost) : null;
       const fee       = Math.round((sellPrice + buyPrice) * qty * FEE);
       return { time: j.executed_at.slice(11, 16), buyTime: null,
                name: j.name || j.ticker,
@@ -735,7 +736,8 @@ async function handleCoinDate(req, res, gistId, ghToken) {
       const buyPrice  = j.buy_price || 0;
       const sellNet   = sellPrice * qty * (1 - FEE);
       const buyCost   = buyPrice  * qty * (1 + FEE);
-      const profit    = Math.round(sellNet - buyCost);
+      // buy_price=0이면 수익 계산 불가 → null로 처리
+      const profit    = buyPrice > 0 ? Math.round(sellNet - buyCost) : null;
       const fee       = Math.round((sellPrice + buyPrice) * qty * FEE);
       return { time: j.sold_at.slice(11, 16),
                buyTime: (j.bought_at || '').slice(11, 16) || null,
@@ -769,7 +771,8 @@ async function handleCoinDate(req, res, gistId, ghToken) {
         sellPrice: h.sell_price,
         amount:    Math.round(h.sell_price * h.qty),
         fee:       0,
-        profit:    Math.round(h.profit),
+        // buy_price=0이면 Oracle VM이 잘못 계산한 값 → null로 덮어씀
+        profit:    h.buy_price ? Math.round(h.profit) : null,
         source:    'grid',
       }));
   });

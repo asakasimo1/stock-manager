@@ -95,12 +95,16 @@ function ctRenderDailyCard(data, idx) {
           </tr></thead>
           <tbody>
             ${[...(data.sells||[]).map(o => {
-              const p = o.profit || 0;
-              const pCls = p > 0 ? '#22c55e' : p < 0 ? '#ef4444' : 'var(--muted)';
-              const isGrid = o.source === 'grid';
-              const isLoss = p < 0;
+              const p = o.profit;
+              const hasProfit = p !== null && p !== undefined;
+              const pRounded  = hasProfit ? Math.round(p) : null;
+              const pCls      = !hasProfit ? 'var(--muted)' : pRounded > 0 ? '#22c55e' : pRounded < 0 ? '#ef4444' : 'var(--muted)';
+              const pStr      = hasProfit ? `${pRounded >= 0 ? '+' : ''}${pRounded.toLocaleString()}원` : '<span style="font-size:10px">매수가 미기록</span>';
+              const isGrid    = o.source === 'grid';
+              const isLoss    = hasProfit && pRounded < 0;
               const sellLabel = isLoss ? '손절' : '매도';
               const sellColor = isLoss ? '#ef4444' : (isGrid ? '#3b82f6' : '#22c55e');
+              const buyPriceStr = o.buyPrice ? `${Math.round(o.buyPrice).toLocaleString()}원` : '—';
               const qty = typeof o.qty === 'number'
                 ? (Number.isInteger(o.qty) ? o.qty.toLocaleString() : o.qty.toLocaleString(undefined, {maximumFractionDigits:6}))
                 : (o.qty || '—');
@@ -109,7 +113,7 @@ function ctRenderDailyCard(data, idx) {
                   <td style="padding:5px 8px;color:var(--muted);font-variant-numeric:tabular-nums">${o.buyTime || '—'}</td>
                   <td style="padding:5px 8px;color:var(--text)">${o.name}</td>
                   <td style="padding:5px 8px;text-align:right;color:var(--text);font-variant-numeric:tabular-nums">${qty}</td>
-                  <td style="padding:5px 8px;text-align:right;color:var(--muted);font-variant-numeric:tabular-nums">${Math.round(o.buyPrice||0).toLocaleString()}원</td>
+                  <td style="padding:5px 8px;text-align:right;color:var(--muted);font-variant-numeric:tabular-nums">${buyPriceStr}</td>
                   <td style="padding:5px 8px;text-align:right;color:var(--muted)">—</td>
                 </tr>
                 <tr>
@@ -118,7 +122,7 @@ function ctRenderDailyCard(data, idx) {
                   <td style="padding:5px 8px;color:var(--text)">${o.name}</td>
                   <td style="padding:5px 8px;text-align:right;color:var(--text);font-variant-numeric:tabular-nums">${qty}</td>
                   <td style="padding:5px 8px;text-align:right;color:var(--text);font-variant-numeric:tabular-nums">${Math.round(o.sellPrice||0).toLocaleString()}원</td>
-                  <td style="padding:5px 8px;text-align:right;font-weight:700;color:${pCls}">${p>=0?'+':''}${p.toLocaleString()}원</td>
+                  <td style="padding:5px 8px;text-align:right;font-weight:700;color:${pCls}">${pStr}</td>
                 </tr>`;
             }),
             ...(data.buys||[]).map(o=>{

@@ -1699,7 +1699,7 @@ function atCalcDayProfit(dateStr) {
     const sellNet   = sellPrice * qty * (1 - SELL_FEE);
     const buyCost   = buyPrice  * qty * (1 + BUY_FEE);
     return { name: j.name || j.ticker, ticker: j.ticker, qty, buyPrice, sellPrice,
-      profit: Math.round(sellNet - buyCost),
+      profit: buyPrice > 0 ? Math.round(sellNet - buyCost) : null,
       time: (j.executed_at || '').slice(11, 16), buyTime: null };
   });
 
@@ -1713,7 +1713,7 @@ function atCalcDayProfit(dateStr) {
     const sellNet   = sellPrice * qty * (1 - SELL_FEE);
     const buyCost   = buyPrice  * qty * (1 + BUY_FEE);
     return { name: j.name || j.ticker, ticker: j.ticker, qty, buyPrice, sellPrice,
-      profit: Math.round(sellNet - buyCost),
+      profit: buyPrice > 0 ? Math.round(sellNet - buyCost) : null,
       time: (j.sold_at || '').slice(11, 16),
       buyTime: (j.bought_at || '').slice(11, 16) || null };
   });
@@ -1729,7 +1729,7 @@ function atCalcDayProfit(dateStr) {
         qty:       h.qty,
         buyPrice:  h.buy_price,
         sellPrice: h.sell_price,
-        profit:    Math.round(h.profit),
+        profit:    h.buy_price ? Math.round(h.profit) : null,
         time:      (h.time || '').slice(0, 5),
         buyTime:   (h.buy_time || '').slice(0, 5) || null,
         source:    'grid',
@@ -1740,7 +1740,7 @@ function atCalcDayProfit(dateStr) {
   return {
     date:      dateStr,
     sells:     items,
-    netProfit: items.reduce((s, o) => s + o.profit, 0),
+    netProfit: items.reduce((s, o) => s + (o.profit ?? 0), 0),
   };
 }
 
@@ -1781,12 +1781,16 @@ function atRenderDailyCard(data, idx) {
           </tr></thead>
           <tbody>
             ${data.sells.map(o => {
-              const p = o.profit || 0;
-              const pCls = p > 0 ? '#22c55e' : p < 0 ? '#ef4444' : 'var(--muted)';
-              const isGrid = o.source === 'grid';
-              const isLoss = p < 0;
+              const p = o.profit;
+              const hasProfit = p !== null && p !== undefined;
+              const pRounded  = hasProfit ? Math.round(p) : null;
+              const pCls      = !hasProfit ? 'var(--muted)' : pRounded > 0 ? '#22c55e' : pRounded < 0 ? '#ef4444' : 'var(--muted)';
+              const pStr      = hasProfit ? `${pRounded >= 0 ? '+' : ''}${pRounded.toLocaleString()}원` : '<span style="font-size:10px">매수가 미기록</span>';
+              const isGrid    = o.source === 'grid';
+              const isLoss    = hasProfit && pRounded < 0;
               const sellLabel = isLoss ? '손절' : '매도';
               const sellColor = isLoss ? '#ef4444' : (isGrid ? '#3b82f6' : '#22c55e');
+              const buyPriceStr = o.buyPrice ? `${o.buyPrice.toLocaleString()}원` : '—';
               const qty = typeof o.qty === 'number'
                 ? (Number.isInteger(o.qty) ? o.qty.toLocaleString() : o.qty.toLocaleString(undefined, {maximumFractionDigits:6}))
                 : o.qty;
@@ -1795,7 +1799,7 @@ function atRenderDailyCard(data, idx) {
                   <td style="padding:5px 8px;color:var(--muted);font-variant-numeric:tabular-nums">${o.buyTime || '—'}</td>
                   <td style="padding:5px 8px;color:var(--text)">${o.name}</td>
                   <td style="padding:5px 8px;text-align:right;color:var(--text);font-variant-numeric:tabular-nums">${qty}</td>
-                  <td style="padding:5px 8px;text-align:right;color:var(--muted);font-variant-numeric:tabular-nums">${(o.buyPrice||0).toLocaleString()}원</td>
+                  <td style="padding:5px 8px;text-align:right;color:var(--muted);font-variant-numeric:tabular-nums">${buyPriceStr}</td>
                   <td style="padding:5px 8px;text-align:right;color:var(--muted)">—</td>
                 </tr>
                 <tr>
@@ -1804,7 +1808,7 @@ function atRenderDailyCard(data, idx) {
                   <td style="padding:5px 8px;color:var(--text)">${o.name}</td>
                   <td style="padding:5px 8px;text-align:right;color:var(--text);font-variant-numeric:tabular-nums">${qty}</td>
                   <td style="padding:5px 8px;text-align:right;color:var(--text);font-variant-numeric:tabular-nums">${(o.sellPrice||0).toLocaleString()}원</td>
-                  <td style="padding:5px 8px;text-align:right;font-weight:700;color:${pCls}">${p>=0?'+':''}${p.toLocaleString()}원</td>
+                  <td style="padding:5px 8px;text-align:right;font-weight:700;color:${pCls}">${pStr}</td>
                 </tr>`;
             }).join('')}
           </tbody>
