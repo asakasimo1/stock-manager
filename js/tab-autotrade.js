@@ -99,11 +99,11 @@ async function atLoadAll() {
   } catch (e) {
     console.warn('자동매매 데이터 로드 실패:', e);
   }
-  atRenderAccount();
-  abRenderJobs();
-  acRenderJobs();
-  atRenderJobs();
-  agRenderJobs();
+  try { atRenderAccount(); } catch (e) { console.warn('atRenderAccount 오류:', e); }
+  try { abRenderJobs();    } catch (e) { console.warn('abRenderJobs 오류:', e); }
+  try { acRenderJobs();    } catch (e) { console.warn('acRenderJobs 오류:', e); }
+  try { atRenderJobs();    } catch (e) { console.warn('atRenderJobs 오류:', e); }
+  try { agRenderJobs();    } catch (e) { console.warn('agRenderJobs 오류:', e); }
   atLoadToday();
 }
 
@@ -667,6 +667,7 @@ function atRenderJobs() {
 // ══════════════════════════════════════════════════════════
 // 자동매매 — 매수 잡 (ab = auto buy)
 // ══════════════════════════════════════════════════════════
+let _atJobs = [], _abJobs = [], _acJobs = [];
 
 // ── 종목명 자동완성 ──────────────────────────────────────
 let _abAcTimer = null;
