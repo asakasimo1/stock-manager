@@ -202,12 +202,12 @@ async function ctLoadAll() {
       fetch('/api/coin-signal'),
       fetch('/api/coin-grid'),
     ]);
-    _ctBuyJobs    = rBuy.ok    ? await rBuy.json()    : [];
-    _ctSellJobs   = rSell.ok   ? await rSell.json()   : [];
-    _ctCycleJobs  = rCycle.ok  ? await rCycle.json()  : [];
-    _ctAccount    = rAccount.ok ? await rAccount.json() : null;
-    _ctSignalJobs = rSignal.ok ? await rSignal.json() : [];
-    _ctGridJobs   = rGrid.ok   ? await rGrid.json()   : [];
+    if (rBuy.ok)    _ctBuyJobs    = await rBuy.json();
+    if (rSell.ok)   _ctSellJobs   = await rSell.json();
+    if (rCycle.ok)  _ctCycleJobs  = await rCycle.json();
+    if (rAccount.ok) _ctAccount   = await rAccount.json();
+    if (rSignal.ok) _ctSignalJobs = await rSignal.json();
+    if (rGrid.ok)   _ctGridJobs   = await rGrid.json();
   } catch (e) {
     console.warn('코인 데이터 로드 실패:', e);
   }

@@ -91,10 +91,10 @@ async function atLoadAll() {
       fetch('/api/stock-grid'),
       _fetchGistData(),
     ]);
-    _atJobs    = rSell.ok  ? await rSell.json()  : [];
-    _abJobs    = rBuy.ok   ? await rBuy.json()   : [];
-    _acJobs    = rCycle.ok ? await rCycle.json() : [];
-    _agJobs    = rGrid.ok  ? await rGrid.json()  : [];
+    if (rSell.ok)  _atJobs    = await rSell.json();
+    if (rBuy.ok)   _abJobs    = await rBuy.json();
+    if (rCycle.ok) _acJobs    = await rCycle.json();
+    if (rGrid.ok)  _agJobs    = await rGrid.json();
     _atAccount = gistData.account_balance || null;
   } catch (e) {
     console.warn('자동매매 데이터 로드 실패:', e);
