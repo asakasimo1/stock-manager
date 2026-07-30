@@ -1,6 +1,4 @@
 async function initAutoTrade() {
-  _restoreTradeSection('at', true);
-  _restoreTradeSection('ab', true);
   _restoreTradeSection('ac', true);
   _restoreTradeSection('ag', false);
   atLoadConfig();
@@ -669,7 +667,6 @@ function atRenderJobs() {
 // ══════════════════════════════════════════════════════════
 // 자동매매 — 매수 잡 (ab = auto buy)
 // ══════════════════════════════════════════════════════════
-let _atJobs = [], _abJobs = [], _acJobs = [];
 
 // ── 종목명 자동완성 ──────────────────────────────────────
 let _abAcTimer = null;
