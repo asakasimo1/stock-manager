@@ -21,6 +21,10 @@ def main():
     logger.info("  일간 리포트 — %s", date.today())
     logger.info("=" * 50)
 
+    if not kis_api._is_krx_open_day():
+        logger.info("오늘은 KRX 휴장일 — 리포트 생략")
+        return
+
     try:
         bal          = kis_api.get_balance()
         total        = bal["total_eval"]

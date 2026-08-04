@@ -93,10 +93,48 @@ def _is_nxt_aftermarket() -> bool:
 def _is_nxt_time() -> bool:
     return _is_nxt_premarket() or _is_nxt_aftermarket()
 
+
+# ─────────────────────────────────────────
+# 공휴일(휴장일) 체크 — KIS 휴장일조회 API 사용
+# (pykrx는 pandas 의존이라 VM 시스템 python3엔 미설치 — 이미 쓰는 KIS API로 대체,
+#  1일 1회만 조회해 캐시하므로 30초 폴링 루프에 부담 없음)
+# ─────────────────────────────────────────
+_holiday_cache: dict = {}
+_holiday_cache_date: str = ""
+
+
+def _is_krx_open_day(target_date: str = None) -> bool:
+    """지정일(기본: 오늘)이 KRX 개장일인지 확인. 실패 시 True(개장으로 간주 — 기존 동작 유지)."""
+    global _holiday_cache, _holiday_cache_date
+    today_str = datetime.now(_KST).strftime("%Y%m%d")
+    d = target_date or today_str
+
+    if _holiday_cache_date != today_str:
+        try:
+            resp = _api_get(
+                f"{BASE_URL}/uapi/domestic-stock/v1/quotations/chk-holiday",
+                headers=_headers("CTCA0903R"),
+                params={"BASS_DT": today_str, "CTX_AREA_NK": "", "CTX_AREA_FK": ""},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            new_cache = {item.get("bass_dt"): item.get("opnd_yn") == "Y" for item in data.get("output", [])}
+            _holiday_cache = new_cache
+            _holiday_cache_date = today_str
+        except Exception as e:
+            logger.warning("휴장일조회 실패, 개장일로 간주: %s", e)
+            return True
+
+    return _holiday_cache.get(d, True)
+
+
 def is_any_market_open() -> bool:
-    """KRX 또는 NXT 거래 가능 시간 (08:00~20:00 KST 평일)"""
+    """KRX 또는 NXT 거래 가능 시간 (08:00~20:00 KST, 평일 + 공휴일 아닌 날)"""
     now = datetime.now(_KST)
     if now.weekday() >= 5:   # 토·일 제외
+        return False
+    if not _is_krx_open_day():
         return False
     t = now.time()
     return dt_time(8, 0) <= t < dt_time(20, 0)
@@ -448,6 +486,70 @@ def get_pending_orders() -> list[dict]:
         })
     return orders
 
+
+def get_daily_executions(target_date: str = None) -> list[dict]:
+    """지정일(기본: 오늘)의 실제 체결 내역 전체 조회 (KRX+NXT 통합, SOR 기준).
+    자동매매 잡뿐 아니라 MTS 앱 등에서 수동으로 낸 주문의 체결도 전부 포함된다
+    (KIS 계좌 자체의 체결 이력이므로 주문 경로와 무관).
+    target_date: YYYYMMDD 형식. 생략 시 오늘(KST)."""
+    cano, acnt = _account_parts()
+    d = target_date or datetime.now(_KST).strftime("%Y%m%d")
+    tr_id = "VTTC0081R" if PAPER else "TTTC0081R"
+
+    executions: list[dict] = []
+    fk100, nk100 = "", ""
+    while True:
+        resp = _api_get(
+            f"{BASE_URL}/uapi/domestic-stock/v1/trading/inquire-daily-ccld",
+            headers=_headers(tr_id, {"tr_cont": "N" if fk100 else ""}),
+            params={
+                "CANO":             cano,
+                "ACNT_PRDT_CD":     acnt,
+                "INQR_STRT_DT":     d,
+                "INQR_END_DT":      d,
+                "SLL_BUY_DVSN_CD":  "00",   # 00=전체(매수+매도)
+                "PDNO":             "",
+                "ORD_GNO_BRNO":     "",
+                "ODNO":             "",
+                "CCLD_DVSN":        "01",   # 01=체결만
+                "INQR_DVSN":        "00",   # 00=역순
+                "INQR_DVSN_1":      "",
+                "INQR_DVSN_3":      "00",   # 00=전체
+                "EXCG_ID_DVSN_CD":  "SOR",  # SOR(통합) — KRX만 지정하면 NXT 체결이 누락됨(실측 확인됨)
+                "CTX_AREA_FK100":   fk100,
+                "CTX_AREA_NK100":   nk100,
+            },
+            timeout=10,
+        )
+        if not resp.ok:
+            logger.warning("일별체결조회 실패 상태코드=%s 응답=%s", resp.status_code, resp.text[:300])
+            resp.raise_for_status()
+        data = resp.json()
+        if data.get("rt_cd") != "0":
+            raise RuntimeError(f"일별체결조회 실패: {data.get('msg1')}")
+
+        for item in data.get("output1", []):
+            qty = int(item.get("tot_ccld_qty", 0))
+            if qty <= 0:
+                continue
+            executions.append({
+                "order_no":  item.get("odno"),
+                "ticker":    item.get("pdno"),
+                "name":      item.get("prdt_name"),
+                "side":      "BUY" if item.get("sll_buy_dvsn_cd") == "02" else "SELL",
+                "qty":       qty,
+                "price":     int(float(item.get("avg_prvs") or 0)),
+                "time":      item.get("ord_tmd", ""),      # HHMMSS
+                "excg_cd":   item.get("excg_dvsn_cd", ""),  # 거래소구분코드 (참고용, 코드→명칭 매핑 미확인)
+            })
+
+        tr_cont = resp.headers.get("tr_cont", "")
+        fk100 = data.get("ctx_area_fk100", "").strip()
+        nk100 = data.get("ctx_area_nk100", "").strip()
+        if tr_cont not in ("F", "M") or not fk100:
+            break
+
+    return executions
 
 
 

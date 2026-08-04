@@ -54,6 +54,43 @@ def _sync_positions(holdings: list):
         logger.info("포지션 동기화: 변경 없음 (%d종목 일치)", len(kis_tickers))
 
 
+def _reconcile_trades():
+    """오늘자 KIS 실제 체결 전체(자동매매 + MTS 등 수동 주문)를 조회해서
+    아직 거래내역(trader_trades.json)에 없는 체결만 order_no 기준 중복 없이 추가.
+    자동매매 각 잡이 개별적으로 log_trade()를 호출하지 않는 이유는, 여기서
+    KIS 체결 이력을 단일 진실 공급원으로 삼아 이중 기록을 방지하기 위함."""
+    try:
+        executions = kis_api.get_daily_executions()
+    except Exception as e:
+        logger.warning("일별체결조회 실패, 거래내역 반영 건너뜀: %s", e)
+        return
+
+    if not executions:
+        return
+
+    existing = gist_writer._read_trades()
+    known_order_nos = {t.get("order_no") for t in existing if t.get("order_no")}
+
+    new_count = 0
+    for ex in executions:
+        order_no = ex.get("order_no")
+        if not order_no or order_no in known_order_nos:
+            continue
+        gist_writer.log_trade(
+            ticker=ex["ticker"],
+            name=ex["name"],
+            trade_type="buy" if ex["side"] == "BUY" else "sell",
+            price=ex["price"],
+            qty=ex["qty"],
+            order_no=order_no,
+        )
+        new_count += 1
+
+    if new_count:
+        gist_writer.flush_trades()
+        logger.info("거래내역 Gist 반영: 신규 체결 %d건 (자동+수동 포함)", new_count)
+
+
 def main():
     logger.info("잔고 조회 시작")
     try:
@@ -100,6 +137,10 @@ def main():
             _sync_positions(bal["holdings"])
         except Exception as e:
             logger.warning("포지션 동기화 건너뜀 (Supabase 미설정): %s", e)
+        try:
+            _reconcile_trades()
+        except Exception as e:
+            logger.warning("거래내역 반영 건너뜀: %s", e)
     except Exception as e:
         logger.exception("잔고 조회 오류: %s", e)
         raise
