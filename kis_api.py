@@ -81,14 +81,15 @@ def _api_post(url: str, **kwargs) -> requests.Response:
 # 프리마켓: 08:00~08:50 / 애프터마켓: 15:30~20:00 KST
 # ─────────────────────────────────────────
 def _is_nxt_premarket() -> bool:
-    """NXT 프리마켓 (08:00~08:50 KST) — 전 종목 거래 가능"""
+    """NXT 프리마켓 (08:00~08:50 KST 공식 — 실제 주문접수는 08:05부터로 5분 버퍼.
+    08:01경 "장운영시간이 아닙니다" 거부, 08:47엔 정상 체결되는 것 실측 확인됨)."""
     t = datetime.now(_KST).time()
-    return dt_time(8, 0) <= t < dt_time(8, 50)
+    return dt_time(8, 5) <= t < dt_time(8, 50)
 
 def _is_nxt_aftermarket() -> bool:
-    """NXT 애프터마켓 (15:30~20:00 KST) — 종목별 거래 가능 여부 다름"""
+    """NXT 애프터마켓 (15:30~20:00 KST 공식 — 프리마켓과 동일하게 시작 5분 버퍼)."""
     t = datetime.now(_KST).time()
-    return dt_time(15, 30) <= t < dt_time(20, 0)
+    return dt_time(15, 35) <= t < dt_time(20, 0)
 
 def _is_nxt_time() -> bool:
     return _is_nxt_premarket() or _is_nxt_aftermarket()

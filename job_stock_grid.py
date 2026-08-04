@@ -149,7 +149,7 @@ def _fill_idle(grids, ticker, cur_price, krw_per_grid, bwc_fn):
             logger.error("  idle보충실패 %s원: %s", f"{level:,}", e)
 
 
-def process_grid(job: dict) -> bool:
+def process_grid(job: dict, cur_price: int = None) -> bool:
     ticker       = job["ticker"]
     grid_pct     = float(job.get("grid_pct", 1.5))
     krw_per_grid = float(job.get("krw_per_grid", 100000))
@@ -272,6 +272,15 @@ def process_grid(job: dict) -> bool:
                             grid.update(state="idle")
                             logger.error("재매수실패 %s원: %s", f"{level:,}", e)
 
+    # idle 격자 주기적 보충 — 만료재등록/재매수 실패로 idle에 빠진 격자가
+    # 다음 사이클에서도 방치되지 않도록 매 사이클 재시도 (NXT 프리마켓 초반
+    # 주문거부 등 일시적 실패 이후 자동 복구되게 함).
+    if market_open and cur_price:
+        before = {id(g): g.get("state") for g in grids}
+        _fill_idle(grids, ticker, cur_price, krw_per_grid, bwc)
+        if any(g.get("state") != before[id(g)] for g in grids):
+            changed = True
+
     return changed
 
 
@@ -376,6 +385,7 @@ def main():
             changed = True
 
         elif status == "active":
+            cur_price = None
             try:
                 info = kis_api.get_price(job["ticker"])
                 cur_price = int(info["stck_prpr"])
@@ -390,7 +400,7 @@ def main():
                 initialize_grid(job)
                 changed = True
             else:
-                if process_grid(job):
+                if process_grid(job, cur_price):
                     changed = True
 
     if changed:
