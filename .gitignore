@@ -2,6 +2,7 @@
 config.py
 .kakao_tokens.json
 .env.prod
+.env.production
 
 # 생성 파일
 output/
@@ -13,3 +14,4 @@ __pycache__/
 .vercel/cache
 .vercel/.env*
 .env*.local
+.vercel
