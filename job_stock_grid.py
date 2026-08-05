@@ -9,6 +9,16 @@
 상태: job.status = init -> active -> stopping -> stopped
       grid.state = idle | buy_waiting | sell_waiting
 
+동시활성 상한: job.max_active_orders (기본 DEFAULT_MAX_ACTIVE_ORDERS) —
+  buy_waiting + sell_waiting 합계 기준. 예수금이 그리드 하나에 과도하게
+  묶여 다른 매매에 못 쓰이는 것을 막기 위함.
+
+재초기화(reinit) 시 보유물량 이월: stop_grid()는 미체결 주문만 취소할 뿐
+  이미 매수 체결되어 보유 중인 주식은 계좌에 그대로 남는다. 재초기화 전
+  _extract_held_inventory()로 보유물량을 회수해 initialize_grid()의
+  carried 인자로 넘겨, 새 그리드에서도 매도 주문을 이어서 추적한다
+  (분실/고아물량 방지).
+
 설정 파일 (Gist): stock_grid_jobs.json
 """
 import logging
@@ -20,7 +30,7 @@ import gist_writer
 import notify
 
 KST = timezone(timedelta(hours=9))
-MAX_ACTIVE_BUYS = 8
+DEFAULT_MAX_ACTIVE_ORDERS = 6  # job.max_active_orders 미설정 시 기본값
 MIN_QTY = 1
 
 logger = logging.getLogger(__name__)
@@ -65,12 +75,45 @@ def _invalidate_pending():
     _pending_fetched_at = 0.0
 
 
-def initialize_grid(job: dict) -> bool:
+def _extract_held_inventory(job: dict) -> list:
+    """재초기화 전, 실제 보유 중인(매수 체결된) 물량을 회수한다.
+    stop_grid()는 미체결 주문만 취소하므로 보유 주식 자체는 계좌에 남는데,
+    grids 배열을 통째로 새로 만들면 그 물량이 추적에서 빠져 고아가 된다."""
+    pending = _get_pending_set()
+    grid_pct = float(job.get("grid_pct", 1.5))
+    held = []
+    for g in job.get("grids", []):
+        state    = g.get("state")
+        order_no = g.get("order_no", "")
+        qty      = g.get("qty", 0)
+        if qty <= 0:
+            continue
+        if state == "sell_waiting":
+            held.append({
+                "qty":        qty,
+                "buy_price":  g.get("last_buy_price", int(g["level"])),
+                "sell_price": g.get("last_sell_price") or kis_api.round_price(
+                    g.get("last_buy_price", int(g["level"])) * (1 + grid_pct / 100)),
+            })
+        elif state == "buy_waiting" and order_no and order_no not in pending:
+            # 감지되지 않은 매수 체결 — 다음 사이클을 기다리지 않고 바로 회수
+            level = int(g["level"])
+            held.append({
+                "qty":        qty,
+                "buy_price":  level,
+                "sell_price": kis_api.round_price(level * (1 + grid_pct / 100)),
+            })
+    return held
+
+
+def initialize_grid(job: dict, carried: list = None) -> bool:
     ticker       = job["ticker"]
     grid_pct     = float(job.get("grid_pct", 1.5))
     lower        = float(job.get("lower_price", 0))
     upper        = float(job.get("upper_price", 0))
     krw_per_grid = float(job.get("krw_per_grid", 100000))
+    max_active   = int(job.get("max_active_orders", DEFAULT_MAX_ACTIVE_ORDERS))
+    carried      = carried or []
 
     if lower <= 0 or upper <= 0 or upper <= lower:
         logger.error("가격 범위 오류: %s lower=%s upper=%s", ticker, lower, upper)
@@ -85,11 +128,31 @@ def initialize_grid(job: dict) -> bool:
 
     levels = build_levels(lower, upper, grid_pct)
     buy_candidates = [l for l in levels if l < cur_price]
-    active_buy_set = set(buy_candidates[-MAX_ACTIVE_BUYS:])
+    remaining_active = max(0, max_active - len(carried))
+    active_buy_set = set(buy_candidates[-remaining_active:]) if remaining_active else set()
 
-    logger.info("그리드 초기화 %s: 격자 %d개 현재가 %s원", ticker, len(levels), f"{cur_price:,}")
+    logger.info("그리드 초기화 %s: 격자 %d개 현재가 %s원 (이월물량 %d건, 활성상한 %d)",
+                ticker, len(levels), f"{cur_price:,}", len(carried), max_active)
 
     grids = []
+
+    # 이월 보유물량 — 매도 주문 재등록 (재초기화로 인한 고아물량 방지)
+    for h in carried:
+        qty, buy_price, sell_price = h["qty"], h["buy_price"], h["sell_price"]
+        grid = {"level": buy_price, "state": "sell_waiting", "order_no": "", "org_no": "",
+                "qty": qty, "last_buy_price": buy_price, "last_sell_price": sell_price,
+                "order_date": str(datetime.now(KST).date())}
+        try:
+            time.sleep(0.25)
+            r = kis_api.place_order(ticker, "SELL", qty, sell_price, "limit")
+            grid.update(order_no=r["order_no"], org_no=r.get("org_no", ""))
+            logger.info("  이월물량 매도재등록 %s원 %d주 %s", f"{sell_price:,}", qty, r["order_no"])
+        except Exception as e:
+            logger.error("  이월물량 매도등록실패 %s원 (다음 사이클 재시도): %s", f"{sell_price:,}", e)
+        grids.append(grid)
+    if carried:
+        _invalidate_pending()
+
     funds_exhausted = False
     for level in levels:
         grid = {"level": level, "state": "idle", "order_no": "", "org_no": "",
@@ -113,24 +176,27 @@ def initialize_grid(job: dict) -> bool:
         grids.append(grid)
 
     buy_cnt = sum(1 for g in grids if g["state"] == "buy_waiting")
+    sell_cnt = sum(1 for g in grids if g["state"] == "sell_waiting")
     job.update(grids=grids, init_price=cur_price, status="active", initialized_at=now_kst())
+    carried_note = f"  이월보유 {sell_cnt}건\n" if carried else ""
     notify.send(
         f"📊 <b>주식 그리드 초기화</b>  {job.get('name', ticker)}\n"
         f"  범위 {lower:,.0f}~{upper:,.0f}원  격자 {len(levels)}개  간격 {grid_pct}%\n"
-        f"  현재가 {cur_price:,}원  매수주문 {buy_cnt}개"
+        f"  현재가 {cur_price:,}원  매수주문 {buy_cnt}개  (활성상한 {max_active}건)\n"
+        f"{carried_note}"
     )
     return True
 
 
-def _fill_idle(grids, ticker, cur_price, krw_per_grid, bwc_fn):
-    if bwc_fn() >= MAX_ACTIVE_BUYS:
+def _fill_idle(grids, ticker, cur_price, krw_per_grid, bwc_fn, max_active):
+    if bwc_fn() >= max_active:
         return
     candidates = sorted(
         [g for g in grids if g.get("state") == "idle" and int(g["level"]) < cur_price],
         key=lambda g: -int(g["level"])
     )
     for grid in candidates:
-        if bwc_fn() >= MAX_ACTIVE_BUYS:
+        if bwc_fn() >= max_active:
             break
         level = int(grid["level"])
         qty = _buy_qty(krw_per_grid, level)
@@ -153,6 +219,7 @@ def process_grid(job: dict, cur_price: int = None) -> bool:
     ticker       = job["ticker"]
     grid_pct     = float(job.get("grid_pct", 1.5))
     krw_per_grid = float(job.get("krw_per_grid", 100000))
+    max_active   = int(job.get("max_active_orders", DEFAULT_MAX_ACTIVE_ORDERS))
     grids        = job.get("grids", [])
     changed      = False
     pending      = _get_pending_set()
@@ -166,7 +233,7 @@ def process_grid(job: dict, cur_price: int = None) -> bool:
     market_open = kis_api.is_any_market_open()
 
     def bwc():
-        return sum(1 for g in grids if g.get("state") == "buy_waiting")
+        return sum(1 for g in grids if g.get("state") in ("buy_waiting", "sell_waiting"))
 
     for i, grid in enumerate(grids):
         state    = grid.get("state", "idle")
@@ -212,7 +279,7 @@ def process_grid(job: dict, cur_price: int = None) -> bool:
                             _invalidate_pending()
                             logger.info("★매수체결 %s원 -> 매도등록 %s원 %d주",
                                         f"{avg:,}", f"{sell_price:,}", qty)
-                            _fill_idle(grids, ticker, avg, krw_per_grid, bwc)
+                            _fill_idle(grids, ticker, avg, krw_per_grid, bwc, max_active)
                         except Exception as e:
                             grid.update(state="idle")
                             logger.error("매도등록실패 %s원: %s", f"{level:,}", e)
@@ -273,12 +340,29 @@ def process_grid(job: dict, cur_price: int = None) -> bool:
                             grid.update(state="idle")
                             logger.error("재매수실패 %s원: %s", f"{level:,}", e)
 
+        elif state == "sell_waiting" and not order_no:
+            # 이월물량 매도등록 실패분 재시도 (재초기화 시 보유물량 이월 과정에서
+            # 최초 등록이 실패했을 경우의 자동 복구)
+            sell_price = int(grid.get("last_sell_price", 0))
+            qty        = grid.get("qty", 0)
+            if market_open and sell_price > 0 and qty > 0:
+                try:
+                    time.sleep(0.25)
+                    r = kis_api.place_order(ticker, "SELL", qty, sell_price, "limit")
+                    grid.update(order_no=r["order_no"], org_no=r.get("org_no", ""),
+                                order_date=today_str)
+                    changed = True
+                    _invalidate_pending()
+                    logger.info("↻이월물량 매도재시도등록 %s원 %d주", f"{sell_price:,}", qty)
+                except Exception as e:
+                    logger.error("이월물량 매도재시도실패 %s원: %s", f"{sell_price:,}", e)
+
     # idle 격자 주기적 보충 — 만료재등록/재매수 실패로 idle에 빠진 격자가
     # 다음 사이클에서도 방치되지 않도록 매 사이클 재시도 (NXT 프리마켓 초반
     # 주문거부 등 일시적 실패 이후 자동 복구되게 함).
     if market_open and cur_price:
         before = {id(g): g.get("state") for g in grids}
-        _fill_idle(grids, ticker, cur_price, krw_per_grid, bwc)
+        _fill_idle(grids, ticker, cur_price, krw_per_grid, bwc, max_active)
         if any(g.get("state") != before[id(g)] for g in grids):
             changed = True
 
@@ -375,9 +459,10 @@ def main():
 
         elif status == "reinit":
             logger.info("재초기화: %s", name)
+            carried = _extract_held_inventory(job)
             stop_grid(job)
             job["status"] = "init"
-            initialize_grid(job)
+            initialize_grid(job, carried=carried)
             changed = True
 
         elif status == "init" or (status == "active" and not job.get("grids")):
@@ -396,9 +481,10 @@ def main():
                 logger.warning("현재가조회실패 %s: %s", name, e)
 
             if job.get("status") == "reinit":
+                carried = _extract_held_inventory(job)
                 stop_grid(job)
                 job["status"] = "init"
-                initialize_grid(job)
+                initialize_grid(job, carried=carried)
                 changed = True
             else:
                 if process_grid(job, cur_price):
