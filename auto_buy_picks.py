@@ -1,19 +1,18 @@
 """
-매수 추천 → 자동매수 잡 등록 스케줄러 (Oracle VM 상시 실행)
+매수 추천 → 자동매수 잡 등록 (GitHub Actions에서 08:50/11:00/14:00 KST 크론 실행)
 
-08:50 / 11:00 / 14:00 KST에 KOSPI+KOSDAQ TOP5를 스캔해
-Gist profit_buy_jobs.json에 시장가 매수 잡으로 등록한다.
+KOSPI+KOSDAQ TOP5를 스캔해 Gist profit_buy_jobs.json에 시장가 매수 잡으로 등록한다.
 등록된 잡은 stock-trader VM 데몬(job_profit_buy_cloud.py, 30초 폴링)이
 읽어서 실제 매수를 실행한다 — 이 스크립트는 잡 등록까지만 담당한다.
+
+pykrx(KRX 데이터 조회)가 Oracle VM 아웃바운드 IP에서 차단되어(LOGOUT 응답)
+VM 상시 프로세스가 아닌 GitHub Actions 크론으로 실행한다.
 
 당일 이미 active/done 상태로 등록된 티커는 재등록하지 않는다
 (11:00/14:00 재스캔 시 이미 산 종목이 다시 추천되어도 중복매수 방지).
 """
 import logging
-import time
 from datetime import datetime
-
-import schedule
 
 import config  # noqa: F401  (모듈 임포트 시점에 환경변수 로드 확인용)
 from modules import buy_signal, us_market
@@ -94,46 +93,27 @@ def _scan_top5() -> list:
     )
 
 
-def run_0850():
+def main(tag: str):
     if datetime.now().weekday() >= 5:
+        log.info("주말 — 스캔 건너뜀")
         return
-    log.info("🎯 08:50 매수 추천 스캔 시작")
+    log.info("🎯 매수 추천 스캔 시작 [%s]", tag)
     try:
         picks = _scan_top5()
-        _register_buy_jobs(picks, "0850")
-    except Exception as e:
-        log.error("08:50 스캔 실패: %s", e, exc_info=True)
-
-
-def run_rescan(tag: str):
-    if datetime.now().weekday() >= 5:
-        return
-    log.info("🔄 %s 재스캔 시작", tag)
-    try:
-        picks = _scan_top5()
+        log.info("스캔 결과: %s", [(p.get("name"), p.get("ticker")) for p in picks])
         _register_buy_jobs(picks, tag)
     except Exception as e:
-        log.error("%s 재스캔 실패: %s", tag, e, exc_info=True)
-
-
-def run():
-    schedule.every().day.at("08:50").do(run_0850)
-    schedule.every().day.at("11:00").do(run_rescan, "1100")
-    schedule.every().day.at("14:00").do(run_rescan, "1400")
-
-    log.info("자동매수 스케줄러 시작 — 08:50 / 11:00 / 14:00, TOP%d, 종목당 %d원",
-              TOP_N, AUTO_BUY_AMOUNT)
-
-    while True:
-        schedule.run_pending()
-        time.sleep(30)
+        log.error("스캔 실패 [%s]: %s", tag, e, exc_info=True)
 
 
 if __name__ == "__main__":
-    if "--test" in __import__("sys").argv:
-        log.info("테스트 모드 — 즉시 1회 스캔+등록")
+    import sys
+    if "--test" in sys.argv:
+        log.info("테스트 모드 — 주말 체크 없이 즉시 1회 스캔+등록")
         picks = _scan_top5()
         log.info("스캔 결과: %s", [(p.get("name"), p.get("ticker")) for p in picks])
         _register_buy_jobs(picks, "test")
     else:
-        run()
+        # GitHub Actions에서 08:50/11:00/14:00 KST 크론으로 1회씩 실행됨
+        tag = datetime.now().strftime("%H%M")
+        main(tag)

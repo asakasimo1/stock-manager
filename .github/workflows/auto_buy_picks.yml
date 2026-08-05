@@ -1,0 +1,31 @@
+name: 매수 추천 자동매수 (08:50/11:00/14:00)
+permissions:
+  contents: read
+on:
+  schedule:
+    - cron: '50 23 * * 0-4'   # 08:50 KST (평일)
+    - cron: '0 2 * * 1-5'     # 11:00 KST (평일)
+    - cron: '0 5 * * 1-5'     # 14:00 KST (평일)
+  workflow_dispatch:
+
+env:
+  GIST_ID:            ${{ secrets.GIST_ID }}
+  GH_TOKEN:           ${{ secrets.GH_TOKEN }}
+  TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+  TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+
+jobs:
+  auto_buy_picks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: pip-
+      - run: pip install -r requirements.txt
+      - run: cp config.example.py config.py
+      - run: python auto_buy_picks.py
