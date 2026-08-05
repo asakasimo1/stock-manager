@@ -159,10 +159,11 @@ def process_grid(job: dict, cur_price: int = None) -> bool:
 
     _now_kst    = datetime.now(KST)
     today_str   = _now_kst.strftime("%Y-%m-%d")
-    # KRX 정규장(09:00~15:30) + NXT 프리마켓/애프터마켓(08:00~08:50, 15:30~20:00) 전부 포함.
-    # place_order()가 호출 시각 기준으로 NXT/KRX를 자동 판단해 라우팅하므로,
-    # 여기서는 "언제 체결을 감지/반응할지"만 넓히면 됨 — 주문 자체 로직은 그대로.
-    market_open = kis_api.is_any_market_open()
+    # KRX 정규장(09:00~15:30) + NXT 프리마켓(08:00~08:50)만 포함.
+    # NXT 애프터마켓(15:30~20:00)은 "장운영시간이 아닙니다(정규시장(112))" 에러가
+    # 원인 미상으로 반복 발생(2026-04월에도 조사했으나 미해결) — 무의미한 반복 실패를
+    # 막기 위해 일단 제외. 프리마켓은 place_order()의 자동 NXT 라우팅으로 정상 동작 확인됨.
+    market_open = kis_api.is_any_market_open() and not kis_api._is_nxt_aftermarket()
 
     def bwc():
         return sum(1 for g in grids if g.get("state") == "buy_waiting")
@@ -321,7 +322,7 @@ def _check_out_of_range(job: dict, cur_price: int) -> bool:
             elapsed = (datetime.now(KST) - since).total_seconds() / 60
         except (ValueError, TypeError):
             elapsed = 0
-        market_open = kis_api.is_any_market_open()
+        market_open = kis_api.is_any_market_open() and not kis_api._is_nxt_aftermarket()
         if elapsed >= auto_min and market_open:
             n_each = 5
             step = 1 + float(job.get("grid_pct", 1.5)) / 100
