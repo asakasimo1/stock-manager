@@ -22,6 +22,8 @@
 - 기관 순매수     : +10
 - 미국 시황 반영  : +10 (상승) / −10 (하락)
 """
+from __future__ import annotations
+
 import sys
 import os
 import time
