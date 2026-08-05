@@ -159,11 +159,11 @@ def process_grid(job: dict, cur_price: int = None) -> bool:
 
     _now_kst    = datetime.now(KST)
     today_str   = _now_kst.strftime("%Y-%m-%d")
-    # KRX 정규장(09:00~15:30) + NXT 프리마켓(08:00~08:50)만 포함.
-    # NXT 애프터마켓(15:30~20:00)은 "장운영시간이 아닙니다(정규시장(112))" 에러가
-    # 원인 미상으로 반복 발생(2026-04월에도 조사했으나 미해결) — 무의미한 반복 실패를
-    # 막기 위해 일단 제외. 프리마켓은 place_order()의 자동 NXT 라우팅으로 정상 동작 확인됨.
-    market_open = kis_api.is_any_market_open() and not kis_api._is_nxt_aftermarket()
+    # KRX 정규장 + NXT 프리마켓/애프터마켓 전부 포함.
+    # (과거 "정규시장(112) 시간 주문불가" 오류의 원인은 구버전 TR_ID(TTTC0802U/0801U)와
+    #  존재하지 않는 ORD_SVR_DVSN_CD 필드 사용 때문이었음 — place_order()/cancel_order()를
+    #  신TR_ID(TTTC0012U/0011U) + EXCG_ID_DVSN_CD로 수정하여 근본 해결, 실거래로 검증됨)
+    market_open = kis_api.is_any_market_open()
 
     def bwc():
         return sum(1 for g in grids if g.get("state") == "buy_waiting")
@@ -322,7 +322,7 @@ def _check_out_of_range(job: dict, cur_price: int) -> bool:
             elapsed = (datetime.now(KST) - since).total_seconds() / 60
         except (ValueError, TypeError):
             elapsed = 0
-        market_open = kis_api.is_any_market_open() and not kis_api._is_nxt_aftermarket()
+        market_open = kis_api.is_any_market_open()
         if elapsed >= auto_min and market_open:
             n_each = 5
             step = 1 + float(job.get("grid_pct", 1.5)) / 100

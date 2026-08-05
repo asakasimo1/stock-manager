@@ -400,12 +400,12 @@ def place_order(ticker: str, side: str, qty: int,
 
     nxt = (not PAPER) and _is_nxt_time()
 
-    if PAPER:
-        # 모의투자: NXT 미지원 → KRX TR_ID 사용
-        tr_id = "VTTC0802U" if side == "BUY" else "VTTC0801U"
+    # 2026-08 KIS 공식 문서 기준 신규 TR_ID (구 TTTC0802U/0801U는 사전고지 없이
+    # 막힐 수 있어 폐지 — 실전/모의 공통으로 신TR 사용)
+    if side == "BUY":
+        tr_id = "VTTC0012U" if PAPER else "TTTC0012U"
     else:
-        # 실계좌: KRX·NXT 동일 TR_ID, body의 ORD_SVR_DVSN_CD로 시장 구분
-        tr_id = "TTTC0802U" if side == "BUY" else "TTTC0801U"
+        tr_id = "VTTC0011U" if PAPER else "TTTC0011U"
 
     # NXT 시간대: 시장가 불가 → 지정가 자동 전환
     if nxt and order_type == "market":
@@ -427,7 +427,8 @@ def place_order(ticker: str, side: str, qty: int,
         "ORD_DVSN":         ord_dvsn,
         "ORD_QTY":          str(qty),
         "ORD_UNPR":         ord_unpr,
-        "ORD_SVR_DVSN_CD":  "N" if nxt else "0",  # N=NXT, 0=KRX
+        # 거래소 구분 — KIS 공식 문서: 미입력 시 KRX. 모의투자는 KRX만 지원.
+        "EXCG_ID_DVSN_CD":  "NXT" if nxt else "KRX",
     }
 
     resp = _api_post(
@@ -483,7 +484,8 @@ def get_pending_orders() -> list[dict]:
             "qty":      int(item.get("ord_qty", 0)),
             "filled":   int(item.get("tot_ccld_qty", 0)),
             "price":    int(item.get("ord_unpr", 0)),
-            "org_no":   item.get("krx_fwdg_ord_orgno", ""),
+            "org_no":   item.get("ord_gno_brno", ""),  # 필드명 오류 수정(구: krx_fwdg_ord_orgno — 실응답에 없어 항상 빈값이었음)
+            "excg_id":  item.get("excg_id_dvsn_cd", "KRX"),  # KRX/NXT — 취소 시 원주문과 동일하게 지정해야 함
         })
     return orders
 
@@ -557,15 +559,18 @@ def get_daily_executions(target_date: str = None) -> list[dict]:
 # ─────────────────────────────────────────
 # 5. 주문 취소
 # ─────────────────────────────────────────
-def cancel_order(order_no: str, org_no: str = "") -> bool:
-    """당일 미체결 지정가 주문 취소. 이미 체결/없으면 True 반환."""
-    if not org_no:
+def cancel_order(order_no: str, org_no: str = "", excg_id: str = "") -> bool:
+    """당일 미체결 지정가 주문 취소. 이미 체결/없으면 True 반환.
+    excg_id: 원주문이 체결 대기 중인 거래소(KRX/NXT). 원주문과 다르게 지정하면
+    "취소주문 불가합니다" 오류가 남 — 지정 안 하면 미체결 목록에서 자동 조회."""
+    if not org_no or not excg_id:
         pending = get_pending_orders()
         found = next((o for o in pending if o["order_no"] == order_no), None)
         if not found:
             logger.info("취소 대상 없음(이미 체결됨?): %s", order_no)
             return True
-        org_no = found.get("org_no", "")
+        org_no  = org_no or found.get("org_no", "")
+        excg_id = excg_id or found.get("excg_id", "KRX")
 
     cano, acnt = _account_parts()
     tr_id = "VTTC0803U" if PAPER else "TTTC0803U"
@@ -579,6 +584,7 @@ def cancel_order(order_no: str, org_no: str = "") -> bool:
         "ORD_QTY":             "0",
         "ORD_UNPR":            "0",
         "QTY_ALL_ORD_YN":      "Y",
+        "EXCG_ID_DVSN_CD":     excg_id or "KRX",
     }
     try:
         resp = _api_post(
