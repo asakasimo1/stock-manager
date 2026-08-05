@@ -1,9 +1,9 @@
-name: 매수 추천 자동매수 (08:50/11:00/14:00)
+name: 매수 추천 자동매수 (09:01/11:00/14:00)
 permissions:
   contents: read
 on:
   schedule:
-    - cron: '50 23 * * 0-4'   # 08:50 KST (평일)
+    - cron: '1 0 * * 1-5'     # 09:01 KST (평일) — NXT 프리마켓(08:00~08:50) 이후, 정규장 시작 직후
     - cron: '0 2 * * 1-5'     # 11:00 KST (평일)
     - cron: '0 5 * * 1-5'     # 14:00 KST (평일)
   workflow_dispatch:

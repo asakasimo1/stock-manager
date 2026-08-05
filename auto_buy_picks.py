@@ -1,12 +1,18 @@
 """
-매수 추천 → 자동매수 잡 등록 (GitHub Actions에서 08:50/11:00/14:00 KST 크론 실행)
+매수 추천 → 자동매수 잡 등록 (GitHub Actions에서 09:01/11:00/14:00 KST 크론 실행)
 
 KOSPI+KOSDAQ TOP5를 스캔해 Gist profit_buy_jobs.json에 시장가 매수 잡으로 등록한다.
 등록된 잡은 stock-trader VM 데몬(job_profit_buy_cloud.py, 30초 폴링)이
 읽어서 실제 매수를 실행한다 — 이 스크립트는 잡 등록까지만 담당한다.
 
-pykrx(KRX 데이터 조회)가 Oracle VM 아웃바운드 IP에서 차단되어(LOGOUT 응답)
-VM 상시 프로세스가 아닌 GitHub Actions 크론으로 실행한다.
+pykrx(KRX 데이터 조회)가 최근 KRX_ID/KRX_PW 로그인을 요구하도록 바뀌어
+(Gist writer/KIS 실행과 무관하게 GHA 러너에서도 동일하게 요구됨) config에
+해당 시크릿이 필요하다. VM에서 상시 프로세스로 돌리지 않고 GHA 크론으로
+실행하는 이유는 factor_engine.py와 동일한 패턴을 재사용하기 위함이다.
+
+09:01로 첫 실행을 잡은 이유: 08:50은 NXT 프리마켓(08:00~08:50) 종료 경계와
+겹쳐 NXT 미대상 종목이 "NXT 시장 거래 불가" 오류로 실패할 수 있음을 실측으로
+확인함 — 정규장이 확실히 열린 뒤로 옮김.
 
 당일 이미 active/done 상태로 등록된 티커는 재등록하지 않는다
 (11:00/14:00 재스캔 시 이미 산 종목이 다시 추천되어도 중복매수 방지).
