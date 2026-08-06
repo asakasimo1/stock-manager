@@ -27,7 +27,7 @@ import kis_api
 
 KST = timezone(timedelta(hours=9))
 POLL_INTERVAL  = 30   # 초
-BALANCE_EVERY  = 10   # N 사이클(=5분)마다 잔고 갱신
+BALANCE_EVERY  = 2    # N 사이클(=1분)마다 잔고 갱신
 
 logging.basicConfig(
     level=logging.INFO,
