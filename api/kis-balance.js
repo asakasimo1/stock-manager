@@ -130,14 +130,17 @@ export default async function handler(req, res) {
         bfdy_close_diff: Number(h.bfdy_cprs_icdc || 0),
       }));
 
-    // 당일손익 = 보유종목의 전일종가 대비 증감(원) × 수량 합계.
+    // 당일손익 = 현재 총자산평가금액 - 전일 총자산평가금액.
+    // 보유종목 평가변동뿐 아니라 오늘 매수해서 오늘 매도까지 끝난 실현손익도
+    // 자동 포함(매도차익은 예수금 증가로 반영되어 총자산에 이미 녹아있음).
     // evlu_pfls_smtl_amt(총평가손익)는 매수 시점부터의 누적치라 "당일"과 다름 — 착오 수정.
-    const dayPnl = holdings.reduce((sum, h) => sum + h.bfdy_close_diff * h.qty, 0);
+    const totalEval = Number(summary.tot_evlu_amt || 0);
     const bfdyTotalEval = Number(summary.bfdy_tot_asst_evlu_amt || 0);
+    const dayPnl = bfdyTotalEval ? totalEval - bfdyTotalEval : 0;
     const account_balance = {
       updated_at:  updatedAt,
       cash:        Number(summary.dnca_tot_amt || 0),
-      total_eval:  Number(summary.tot_evlu_amt || 0),
+      total_eval:  totalEval,
       day_pnl:     dayPnl,
       day_ret:     bfdyTotalEval ? Number((dayPnl / bfdyTotalEval * 100).toFixed(2)) : 0,
       holdings,
