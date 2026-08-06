@@ -1735,7 +1735,23 @@ function atCalcDayProfit(dateStr) {
       }));
   });
 
-  const items = [...sells, ...cycleSells, ...gridSells].sort((a, b) => a.time.localeCompare(b.time));
+  // 순수 매수 체결(아직 미매도) — profit_buy_jobs.json(자동매수 추천 등), 당일 매수만.
+  // 매도 짝이 없어 손익은 계산 불가(null) — "보유중"으로 표시.
+  const buys = (Array.isArray(_abJobs) ? _abJobs : []).filter(j =>
+    j.status === 'done' && (j.executed_at || '').startsWith(dateStr)
+  ).map(j => ({
+    name:      j.name || j.ticker,
+    ticker:    j.ticker,
+    qty:       j.buy_qty || j.qty || 0,
+    buyPrice:  j.buy_price || 0,
+    sellPrice: null,
+    profit:    null,
+    time:      (j.executed_at || '').slice(11, 16),
+    buyTime:   null,
+    source:    'buy',
+  }));
+
+  const items = [...sells, ...cycleSells, ...gridSells, ...buys].sort((a, b) => a.time.localeCompare(b.time));
   return {
     date:      dateStr,
     sells:     items,
@@ -1753,8 +1769,10 @@ function atRenderDailyCard(data, idx) {
   }
   const net    = data.netProfit;
   const netCls = net > 0 ? '#22c55e' : net < 0 ? '#ef4444' : 'var(--muted)';
-  const netStr = (net >= 0 ? '+' : '') + net.toLocaleString() + '원';
-  const cnt    = data.sells.length;
+  const netStr   = (net >= 0 ? '+' : '') + net.toLocaleString() + '원';
+  const sellCnt  = data.sells.filter(o => o.source !== 'buy').length;
+  const buyCnt   = data.sells.filter(o => o.source === 'buy').length;
+  const cntLabel = buyCnt ? `매도 ${sellCnt} · 매수 ${buyCnt}` : `${sellCnt}건`;
 
   card.innerHTML = `
     <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px">
@@ -1763,8 +1781,8 @@ function atRenderDailyCard(data, idx) {
         <div style="font-size:17px;font-weight:800;color:${netCls}">${netStr}</div>
       </div>
       <div style="text-align:center">
-        <div style="font-size:9px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">매도 체결</div>
-        <div style="font-size:17px;font-weight:800;color:var(--text)">${cnt}건</div>
+        <div style="font-size:9px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">거래 체결</div>
+        <div style="font-size:17px;font-weight:800;color:var(--text)">${cntLabel}</div>
       </div>
     </div>
     <div id="at-day-detail-${idx}" style="display:none;margin-top:10px">
@@ -1780,6 +1798,23 @@ function atRenderDailyCard(data, idx) {
           </tr></thead>
           <tbody>
             ${data.sells.map(o => {
+              const qty = typeof o.qty === 'number'
+                ? (Number.isInteger(o.qty) ? o.qty.toLocaleString() : o.qty.toLocaleString(undefined, {maximumFractionDigits:6}))
+                : o.qty;
+
+              // 매수만 되고 아직 매도 안 된 건(source==='buy') — 매도 행 없이 매수 1행만 표시
+              if (o.source === 'buy') {
+                const buyPriceStr = o.buyPrice ? `${o.buyPrice.toLocaleString()}원` : '—';
+                return `<tr style="border-top:1px solid var(--border)">
+                    <td style="padding:5px 8px;color:#2563eb;font-weight:700">매수</td>
+                    <td style="padding:5px 8px;color:var(--muted);font-variant-numeric:tabular-nums">${o.time || '—'}</td>
+                    <td style="padding:5px 8px;color:var(--text)">${o.name}</td>
+                    <td style="padding:5px 8px;text-align:right;color:var(--text);font-variant-numeric:tabular-nums">${qty}</td>
+                    <td style="padding:5px 8px;text-align:right;color:var(--text);font-variant-numeric:tabular-nums">${buyPriceStr}</td>
+                    <td style="padding:5px 8px;text-align:right;color:var(--muted);font-size:10px">보유중</td>
+                  </tr>`;
+              }
+
               const p = o.profit;
               const hasProfit = p !== null && p !== undefined;
               const pRounded  = hasProfit ? Math.round(p) : null;
@@ -1790,9 +1825,6 @@ function atRenderDailyCard(data, idx) {
               const sellLabel = isLoss ? '손절' : '매도';
               const sellColor = isLoss ? '#ef4444' : (isGrid ? '#3b82f6' : '#22c55e');
               const buyPriceStr = o.buyPrice ? `${o.buyPrice.toLocaleString()}원` : '—';
-              const qty = typeof o.qty === 'number'
-                ? (Number.isInteger(o.qty) ? o.qty.toLocaleString() : o.qty.toLocaleString(undefined, {maximumFractionDigits:6}))
-                : o.qty;
               return `<tr style="border-top:1px solid var(--border)">
                   <td style="padding:5px 8px;color:#f59e0b;font-weight:700">매수</td>
                   <td style="padding:5px 8px;color:var(--muted);font-variant-numeric:tabular-nums">${o.buyTime || '—'}</td>
