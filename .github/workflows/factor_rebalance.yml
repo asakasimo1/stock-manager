@@ -37,5 +37,12 @@ jobs:
           path: ~/.cache/pip
           key: pip-${{ hashFiles('requirements.txt') }}
           restore-keys: pip-
+      - name: KIS 토큰 캐시 복원 (문자 알림 최소화 — 유효기간 내면 재발급 안 함)
+        uses: actions/cache@v4
+        with:
+          path: .token_cache.json
+          key: kis-token-${{ github.run_id }}
+          restore-keys: |
+            kis-token-
       - run: pip install -r requirements.txt
       - run: python job_factor_rebalance.py
