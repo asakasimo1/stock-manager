@@ -382,6 +382,7 @@ def get_balance() -> dict:
     output2 = data.get("output2", [{}])[0]
     cash = int(output2.get("dnca_tot_amt", 0))          # 예수금
     total_eval = int(output2.get("tot_evlu_amt", 0))    # 총 평가금액
+    bfdy_total_eval = int(output2.get("bfdy_tot_asst_evlu_amt", 0))  # 전일 총자산평가금액
 
     holdings = []
     for item in data.get("output1", []):
@@ -389,15 +390,22 @@ def get_balance() -> dict:
         if qty <= 0:
             continue
         holdings.append({
-            "ticker":    item.get("pdno"),
-            "name":      item.get("prdt_name"),
-            "qty":       qty,
-            "avg_price": int(float(item.get("pchs_avg_pric", 0))),
-            "eval_price":int(item.get("prpr", 0)),
-            "pnl_pct":   float(item.get("evlu_pfls_rt", 0)),
+            "ticker":         item.get("pdno"),
+            "name":           item.get("prdt_name"),
+            "qty":            qty,
+            "avg_price":      int(float(item.get("pchs_avg_pric", 0))),
+            "eval_price":     int(item.get("prpr", 0)),
+            "pnl_pct":        float(item.get("evlu_pfls_rt", 0)),
+            # 전일대비 증감(원) — 당일손익 계산용 (누적손익인 pnl_pct와 다름)
+            "bfdy_close_diff": int(float(item.get("bfdy_cprs_icdc", 0))),
         })
 
-    return {"cash": cash, "total_eval": total_eval, "holdings": holdings}
+    return {
+        "cash": cash,
+        "total_eval": total_eval,
+        "bfdy_total_eval": bfdy_total_eval,
+        "holdings": holdings,
+    }
 
 
 # ─────────────────────────────────────────

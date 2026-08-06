@@ -95,15 +95,13 @@ def main():
     logger.info("잔고 조회 시작")
     try:
         bal = kis_api.get_balance()
-        try:
-            meta         = state_db.get_meta_multi(["daily_pnl", "initial_cash"], {"daily_pnl": 0})
-            daily_pnl    = meta["daily_pnl"] or 0
-            initial_cash = meta.get("initial_cash") or bal["total_eval"]
-        except Exception as e:
-            logger.warning("state_db 건너뜀 (Supabase 미설정): %s", e)
-            daily_pnl    = 0
-            initial_cash = bal["total_eval"]
-        day_ret = round((bal["total_eval"] - initial_cash) / initial_cash * 100, 2) if initial_cash else 0
+        # 당일손익 = 보유종목의 전일종가 대비 증감(원) × 수량 합계 — KIS 원본 필드
+        # (bfdy_cprs_icdc) 기반이라 Supabase 등 외부 상태 없이 항상 정확히 계산됨.
+        # 단, 오늘 매수해서 오늘 매도까지 끝난(현재 미보유) 종목의 실현손익은
+        # 포함하지 않음 — 현재 보유 중인 종목의 당일 평가변동만 반영.
+        daily_pnl = sum(h.get("bfdy_close_diff", 0) * h["qty"] for h in bal["holdings"])
+        bfdy_total_eval = bal.get("bfdy_total_eval", 0)
+        day_ret = round(daily_pnl / bfdy_total_eval * 100, 2) if bfdy_total_eval else 0
 
         now_kst = datetime.now(KST).strftime("%Y-%m-%d %H:%M")
         account_data = {
