@@ -127,16 +127,19 @@ export default async function handler(req, res) {
         pnl_pct:     Number(h.evlu_pfls_rt),
         eval_amt:    Number(h.evlu_amt),
         buy_amt:     Number(h.pchs_amt),
+        bfdy_close_diff: Number(h.bfdy_cprs_icdc || 0),
       }));
 
+    // 당일손익 = 보유종목의 전일종가 대비 증감(원) × 수량 합계.
+    // evlu_pfls_smtl_amt(총평가손익)는 매수 시점부터의 누적치라 "당일"과 다름 — 착오 수정.
+    const dayPnl = holdings.reduce((sum, h) => sum + h.bfdy_close_diff * h.qty, 0);
+    const bfdyTotalEval = Number(summary.bfdy_tot_asst_evlu_amt || 0);
     const account_balance = {
       updated_at:  updatedAt,
       cash:        Number(summary.dnca_tot_amt || 0),
       total_eval:  Number(summary.tot_evlu_amt || 0),
-      day_pnl:     Number(summary.evlu_pfls_smtl_amt || 0),
-      day_ret:     holdings.length > 0
-        ? Number(((Number(summary.evlu_pfls_smtl_amt || 0) / (Number(summary.tot_evlu_amt || 1) - Number(summary.dnca_tot_amt || 0))) * 100).toFixed(2))
-        : 0,
+      day_pnl:     dayPnl,
+      day_ret:     bfdyTotalEval ? Number((dayPnl / bfdyTotalEval * 100).toFixed(2)) : 0,
       holdings,
     };
 
