@@ -95,14 +95,26 @@ def main():
     logger.info("잔고 조회 시작")
     try:
         bal = kis_api.get_balance()
-        # 당일손익 = 현재 총자산평가금액 - 전일 총자산평가금액.
-        # 보유종목의 평가변동뿐 아니라 오늘 매수해서 오늘 매도까지 끝난 실현손익도
-        # 자동으로 포함됨(매도차익은 예수금 증가로 반영되므로 총자산에 이미 녹아있음).
-        # KIS가 직접 제공하는 bfdy_tot_asst_evlu_amt 기준이라 Supabase 등 외부
-        # 상태 없이 항상 정확히 계산됨. 단, 오늘 중 입출금이 있었다면 그 금액도
-        # 함께 섞여 계산되니 참고.
+        # 당일손익 = (보유종목의 전일종가 대비 평가변동) + (오늘 완료된 그리드
+        # 매매 실현손익). 총자산평가금액 단순 비교(전일 대비) 방식은 당일
+        # 입출금까지 손익으로 잡아버리는 문제가 있어(실측: 10만원 입금이
+        # 그대로 손익에 섞임) 폐기 — 아래 방식은 가격 변동/체결 기반이라
+        # 입출금과 무관하게 항상 정확함.
+        today_str = datetime.now(KST).strftime("%Y-%m-%d")
+        unrealized_day = sum(h.get("bfdy_close_diff", 0) * h["qty"] for h in bal["holdings"])
+
+        realized_today = 0
+        try:
+            grid_jobs = gist_writer._read_gist_file("stock_grid_jobs.json") or []
+            for gj in grid_jobs:
+                for t in gj.get("trade_history", []):
+                    if t.get("date") == today_str:
+                        realized_today += t.get("profit", 0)
+        except Exception as e:
+            logger.warning("그리드 당일 실현손익 집계 실패: %s", e)
+
+        daily_pnl = round(unrealized_day + realized_today, 0)
         bfdy_total_eval = bal.get("bfdy_total_eval", 0)
-        daily_pnl = bal["total_eval"] - bfdy_total_eval if bfdy_total_eval else 0
         day_ret = round(daily_pnl / bfdy_total_eval * 100, 2) if bfdy_total_eval else 0
 
         now_kst = datetime.now(KST).strftime("%Y-%m-%d %H:%M")
