@@ -83,7 +83,7 @@ def auto_sell_by_rule():
     if dt_time(9, 0) <= t < dt_time(11, 0):
         take_profit = 10.0   # 장 첫 2시간: 급등 익절
     else:
-        take_profit = 6.0    # 11:00 이후: 완만한 익절
+        take_profit = 3.0    # 11:00 이후: 완만한 익절
 
     if AUTO_LOSS_PCT is None:
         logger.info("손절 조건 비활성화 (FORCE_STOP_LOSS 미설정)")
