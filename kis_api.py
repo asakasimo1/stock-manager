@@ -515,7 +515,7 @@ def get_pending_orders() -> list[dict]:
 
 
 def get_daily_executions(target_date: str = None) -> list[dict]:
-    """지정일(기본: 오늘)의 실제 체결 내역 전체 조회 (KRX+NXT 통합, SOR 기준).
+    """지정일(기본: 오늘)의 실제 체결 내역 전체 조회 (KRX+NXT 통합).
     자동매매 잡뿐 아니라 MTS 앱 등에서 수동으로 낸 주문의 체결도 전부 포함된다
     (KIS 계좌 자체의 체결 이력이므로 주문 경로와 무관).
     target_date: YYYYMMDD 형식. 생략 시 오늘(KST)."""
@@ -524,57 +524,64 @@ def get_daily_executions(target_date: str = None) -> list[dict]:
     tr_id = "VTTC0081R" if PAPER else "TTTC0081R"
 
     executions: list[dict] = []
-    fk100, nk100 = "", ""
-    while True:
-        resp = _api_get(
-            f"{BASE_URL}/uapi/domestic-stock/v1/trading/inquire-daily-ccld",
-            headers=_headers(tr_id, {"tr_cont": "N" if fk100 else ""}),
-            params={
-                "CANO":             cano,
-                "ACNT_PRDT_CD":     acnt,
-                "INQR_STRT_DT":     d,
-                "INQR_END_DT":      d,
-                "SLL_BUY_DVSN_CD":  "00",   # 00=전체(매수+매도)
-                "PDNO":             "",
-                "ORD_GNO_BRNO":     "",
-                "ODNO":             "",
-                "CCLD_DVSN":        "01",   # 01=체결만
-                "INQR_DVSN":        "00",   # 00=역순
-                "INQR_DVSN_1":      "",
-                "INQR_DVSN_3":      "00",   # 00=전체
-                "EXCG_ID_DVSN_CD":  "SOR",  # SOR(통합) — KRX만 지정하면 NXT 체결이 누락됨(실측 확인됨)
-                "CTX_AREA_FK100":   fk100,
-                "CTX_AREA_NK100":   nk100,
-            },
-            timeout=10,
-        )
-        if not resp.ok:
-            logger.warning("일별체결조회 실패 상태코드=%s 응답=%s", resp.status_code, resp.text[:300])
-            resp.raise_for_status()
-        data = resp.json()
-        if data.get("rt_cd") != "0":
-            raise RuntimeError(f"일별체결조회 실패: {data.get('msg1')}")
+    seen_order_nos: set = set()
 
-        for item in data.get("output1", []):
-            qty = int(item.get("tot_ccld_qty", 0))
-            if qty <= 0:
-                continue
-            executions.append({
-                "order_no":  item.get("odno"),
-                "ticker":    item.get("pdno"),
-                "name":      item.get("prdt_name"),
-                "side":      "BUY" if item.get("sll_buy_dvsn_cd") == "02" else "SELL",
-                "qty":       qty,
-                "price":     int(float(item.get("avg_prvs") or 0)),
-                "time":      item.get("ord_tmd", ""),      # HHMMSS
-                "excg_cd":   item.get("excg_dvsn_cd", ""),  # 거래소구분코드 (참고용, 코드→명칭 매핑 미확인)
-            })
+    # EXCG_ID_DVSN_CD=SOR(통합)이 빈 결과를 반환하는 회귀가 발견되어
+    # (2026-08-06 실측), KRX/NXT 각각 조회 후 합치는 방식으로 변경.
+    for excg in ("KRX", "NXT"):
+        fk100, nk100 = "", ""
+        while True:
+            resp = _api_get(
+                f"{BASE_URL}/uapi/domestic-stock/v1/trading/inquire-daily-ccld",
+                headers=_headers(tr_id, {"tr_cont": "N" if fk100 else ""}),
+                params={
+                    "CANO":             cano,
+                    "ACNT_PRDT_CD":     acnt,
+                    "INQR_STRT_DT":     d,
+                    "INQR_END_DT":      d,
+                    "SLL_BUY_DVSN_CD":  "00",   # 00=전체(매수+매도)
+                    "PDNO":             "",
+                    "ORD_GNO_BRNO":     "",
+                    "ODNO":             "",
+                    "CCLD_DVSN":        "01",   # 01=체결만
+                    "INQR_DVSN":        "00",   # 00=역순
+                    "INQR_DVSN_1":      "",
+                    "INQR_DVSN_3":      "00",   # 00=전체
+                    "EXCG_ID_DVSN_CD":  excg,
+                    "CTX_AREA_FK100":   fk100,
+                    "CTX_AREA_NK100":   nk100,
+                },
+                timeout=10,
+            )
+            if not resp.ok:
+                logger.warning("일별체결조회 실패 상태코드=%s 응답=%s", resp.status_code, resp.text[:300])
+                resp.raise_for_status()
+            data = resp.json()
+            if data.get("rt_cd") != "0":
+                raise RuntimeError(f"일별체결조회 실패: {data.get('msg1')}")
 
-        tr_cont = resp.headers.get("tr_cont", "")
-        fk100 = data.get("ctx_area_fk100", "").strip()
-        nk100 = data.get("ctx_area_nk100", "").strip()
-        if tr_cont not in ("F", "M") or not fk100:
-            break
+            for item in data.get("output1", []):
+                qty = int(item.get("tot_ccld_qty", 0))
+                order_no = item.get("odno")
+                if qty <= 0 or not order_no or order_no in seen_order_nos:
+                    continue
+                seen_order_nos.add(order_no)
+                executions.append({
+                    "order_no":  order_no,
+                    "ticker":    item.get("pdno"),
+                    "name":      item.get("prdt_name"),
+                    "side":      "BUY" if item.get("sll_buy_dvsn_cd") == "02" else "SELL",
+                    "qty":       qty,
+                    "price":     int(float(item.get("avg_prvs") or 0)),
+                    "time":      item.get("ord_tmd", ""),      # HHMMSS
+                    "excg_cd":   item.get("excg_dvsn_cd", ""),  # 거래소구분코드 (참고용, 코드→명칭 매핑 미확인)
+                })
+
+            tr_cont = resp.headers.get("tr_cont", "")
+            fk100 = data.get("ctx_area_fk100", "").strip()
+            nk100 = data.get("ctx_area_nk100", "").strip()
+            if tr_cont not in ("F", "M") or not fk100:
+                break
 
     return executions
 

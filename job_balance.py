@@ -95,12 +95,14 @@ def main():
     logger.info("잔고 조회 시작")
     try:
         bal = kis_api.get_balance()
-        # 당일손익 = 보유종목의 전일종가 대비 증감(원) × 수량 합계 — KIS 원본 필드
-        # (bfdy_cprs_icdc) 기반이라 Supabase 등 외부 상태 없이 항상 정확히 계산됨.
-        # 단, 오늘 매수해서 오늘 매도까지 끝난(현재 미보유) 종목의 실현손익은
-        # 포함하지 않음 — 현재 보유 중인 종목의 당일 평가변동만 반영.
-        daily_pnl = sum(h.get("bfdy_close_diff", 0) * h["qty"] for h in bal["holdings"])
+        # 당일손익 = 현재 총자산평가금액 - 전일 총자산평가금액.
+        # 보유종목의 평가변동뿐 아니라 오늘 매수해서 오늘 매도까지 끝난 실현손익도
+        # 자동으로 포함됨(매도차익은 예수금 증가로 반영되므로 총자산에 이미 녹아있음).
+        # KIS가 직접 제공하는 bfdy_tot_asst_evlu_amt 기준이라 Supabase 등 외부
+        # 상태 없이 항상 정확히 계산됨. 단, 오늘 중 입출금이 있었다면 그 금액도
+        # 함께 섞여 계산되니 참고.
         bfdy_total_eval = bal.get("bfdy_total_eval", 0)
+        daily_pnl = bal["total_eval"] - bfdy_total_eval if bfdy_total_eval else 0
         day_ret = round(daily_pnl / bfdy_total_eval * 100, 2) if bfdy_total_eval else 0
 
         now_kst = datetime.now(KST).strftime("%Y-%m-%d %H:%M")
