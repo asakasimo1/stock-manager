@@ -19,6 +19,10 @@
   carried 인자로 넘겨, 새 그리드에서도 매도 주문을 이어서 추적한다
   (분실/고아물량 방지).
 
+KRX 정규장 동시호가(08:30~09:00 KST) 동안은 현재가가 예상체결가라
+실제 체결가와 다를 수 있어, 이 구간에는 범위이탈/재초기화/체결처리 등
+가격판단을 전부 보류한다 (kis_api._is_krx_call_auction() 참고).
+
 설정 파일 (Gist): stock_grid_jobs.json
 """
 import logging
@@ -458,37 +462,46 @@ def main():
             changed = True
 
         elif status == "reinit":
-            logger.info("재초기화: %s", name)
-            carried = _extract_held_inventory(job)
-            stop_grid(job)
-            job["status"] = "init"
-            initialize_grid(job, carried=carried)
-            changed = True
-
-        elif status == "init" or (status == "active" and not job.get("grids")):
-            logger.info("초기화: %s", name)
-            initialize_grid(job)
-            changed = True
-
-        elif status == "active":
-            cur_price = None
-            try:
-                info = kis_api.get_price(job["ticker"])
-                cur_price = int(info["stck_prpr"])
-                if _check_out_of_range(job, cur_price):
-                    changed = True
-            except Exception as e:
-                logger.warning("현재가조회실패 %s: %s", name, e)
-
-            if job.get("status") == "reinit":
+            if kis_api._is_krx_call_auction():
+                logger.info("동시호가(08:30~09:00) — 재초기화 보류: %s", name)
+            else:
+                logger.info("재초기화: %s", name)
                 carried = _extract_held_inventory(job)
                 stop_grid(job)
                 job["status"] = "init"
                 initialize_grid(job, carried=carried)
                 changed = True
+
+        elif status == "init" or (status == "active" and not job.get("grids")):
+            if kis_api._is_krx_call_auction():
+                logger.info("동시호가(08:30~09:00) — 초기화 보류: %s", name)
             else:
-                if process_grid(job, cur_price):
+                logger.info("초기화: %s", name)
+                initialize_grid(job)
+                changed = True
+
+        elif status == "active":
+            if kis_api._is_krx_call_auction():
+                logger.info("동시호가(08:30~09:00) — 매매판단 보류: %s", name)
+            else:
+                cur_price = None
+                try:
+                    info = kis_api.get_price(job["ticker"])
+                    cur_price = int(info["stck_prpr"])
+                    if _check_out_of_range(job, cur_price):
+                        changed = True
+                except Exception as e:
+                    logger.warning("현재가조회실패 %s: %s", name, e)
+
+                if job.get("status") == "reinit":
+                    carried = _extract_held_inventory(job)
+                    stop_grid(job)
+                    job["status"] = "init"
+                    initialize_grid(job, carried=carried)
                     changed = True
+                else:
+                    if process_grid(job, cur_price):
+                        changed = True
 
     if changed:
         gist_writer._write_gist({"stock_grid_jobs.json": jobs})
