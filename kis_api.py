@@ -400,6 +400,22 @@ def get_balance() -> dict:
             "bfdy_close_diff": int(float(item.get("bfdy_cprs_icdc", 0))),
         })
 
+    # NXT 시간대: inquire-balance API의 prpr은 전일종가 → get_price()로 실시간가 대체
+    if _is_nxt_time():
+        for h in holdings:
+            try:
+                price_info = get_price(h["ticker"])
+                nxt_price = int(price_info.get("stck_prpr", 0))
+                if nxt_price > 0:
+                    h["eval_price"] = nxt_price
+                    if h["avg_price"] > 0:
+                        h["pnl_pct"] = round(
+                            (nxt_price - h["avg_price"]) / h["avg_price"] * 100, 2
+                        )
+                    logger.debug("NXT 현재가 교체: %s %d원", h["ticker"], nxt_price)
+            except Exception as e:
+                logger.warning("NXT 현재가 조회 실패 %s: %s", h["ticker"], e)
+
     return {
         "cash": cash,
         "total_eval": total_eval,
