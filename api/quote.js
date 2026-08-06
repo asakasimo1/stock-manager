@@ -28,7 +28,7 @@ async function _kisToken(base, appKey, appSecret) {
   return d.access_token;
 }
 
-async function getKisPrice(ticker, appKey, appSecret) {
+async function getKisPrice(ticker, appKey, appSecret, market = 'J') {
   const now = Date.now();
   // 토큰 유효성 체크 또는 재발급 (실계좌 우선, 403 시 모의투자 폴백)
   if (!_kisTokenCache || _kisTokenCache.expires <= now + 60_000) {
@@ -47,7 +47,7 @@ async function getKisPrice(ticker, appKey, appSecret) {
     _kisTokenCache = { token, base, expires: now + 86_400_000 };
   }
   const { token, base } = _kisTokenCache;
-  const params = new URLSearchParams({ FID_COND_MRKT_DIV_CODE: 'J', FID_INPUT_ISCD: ticker });
+  const params = new URLSearchParams({ FID_COND_MRKT_DIV_CODE: market, FID_INPUT_ISCD: ticker });
   const r = await fetch(`${base}/uapi/domestic-stock/v1/quotations/inquire-price?${params}`, {
     headers: {
       'content-type': 'application/json; charset=utf-8',
@@ -70,6 +70,15 @@ async function getKisPrice(ticker, appKey, appSecret) {
     chgPct: Number(o.prdy_ctrt),
     name: o.hts_kor_isnm || '',
   };
+}
+
+// NXT 시간대 판단 (프리마켓 08:05~08:50, 애프터마켓 15:35~20:00 KST, 평일만)
+function isNxtTime() {
+  const kst = new Date(Date.now() + 9 * 3600 * 1000);
+  const day = kst.getUTCDay();
+  if (day === 0 || day === 6) return false;
+  const t = kst.getUTCHours() * 60 + kst.getUTCMinutes();
+  return (t >= 8 * 60 + 5 && t < 8 * 60 + 50) || (t >= 15 * 60 + 35 && t < 20 * 60);
 }
 
 /** 알려진 ETF 배당주기 (Naver API가 단일월만 반환할 때 fallback) */
@@ -261,12 +270,23 @@ export default async function handler(req, res) {
     if (!r.ok) throw new Error(`Naver API ${r.status}`);
     const d = await r.json();
 
-    const price  = Number(String(d.closePrice  ?? '0').replace(/,/g, ''));
-    const chg    = Number(String(d.compareToPreviousClosePrice ?? '0').replace(/,/g, ''));
-    const chgPct = Number(String(d.fluctuationsRatio ?? '0').replace(/,/g, ''));
+    let price  = Number(String(d.closePrice  ?? '0').replace(/,/g, ''));
+    let chg    = Number(String(d.compareToPreviousClosePrice ?? '0').replace(/,/g, ''));
+    let chgPct = Number(String(d.fluctuationsRatio ?? '0').replace(/,/g, ''));
     const name   = d.stockName ?? '';
 
     if (!price) throw new Error('가격 정보 없음');
+
+    // NXT 시간대: NXT 거래 종목이면 실시간가로 교체 (ETF는 대부분 해당 없음)
+    if (isNxtTime()) {
+      try {
+        const nxtKey = process.env.KIS_APP_KEY, nxtSec = process.env.KIS_APP_SECRET;
+        if (nxtKey && nxtSec) {
+          const nxt = await getKisPrice(ticker, nxtKey, nxtSec, 'NX');
+          if (nxt.price) { price = nxt.price; chg = nxt.chg; chgPct = nxt.chgPct; }
+        }
+      } catch (_) {}
+    }
 
     // ── 배당 정보 ──────────────────────────────────────────────────
     const monthsStr = d.dividendMonthsThisYear ?? '';   // 올해 지급된 월 "1,2,3"
