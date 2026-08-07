@@ -61,6 +61,14 @@ def test_should_exit_holds():
     print("OK: 조건 미달 시 보유 유지")
 
 
+def test_should_give_up_watching():
+    assert se.should_give_up_watching(discovered_at=1000, now=1000 + 299, timeout_sec=300) is False
+    assert se.should_give_up_watching(discovered_at=1000, now=1000 + 300, timeout_sec=300) is True
+    assert se.should_give_up_watching(discovered_at=0, now=5, timeout_sec=300) is False  # 아직 5초밖에 안 지남
+    assert se.should_give_up_watching(discovered_at=0, now=1, timeout_sec=0) is False    # timeout 비활성화
+    print("OK: watching 포기 타임아웃 판단")
+
+
 def test_select_auto_candidates_filters_and_caps():
     candidates = [
         {"ticker": "A", "chg_pct": 2.0, "liquidity": 1_000_000},   # 통과
@@ -91,6 +99,7 @@ if __name__ == "__main__":
     test_should_exit_stop_loss()
     test_should_exit_time_stop()
     test_should_exit_holds()
+    test_should_give_up_watching()
     test_select_auto_candidates_filters_and_caps()
     test_select_auto_candidates_skips_existing()
     print("\n전체 통과")

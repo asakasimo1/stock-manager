@@ -137,6 +137,8 @@ def _auto_discover(jobs: list, auto_cfg: dict, stock_enabled: bool, now_epoch: f
             "amount":             auto_cfg.get("amount", 0),
             "qty":                0,
             "max_daily_loss_krw": max_loss,
+            "watch_timeout_sec":  auto_cfg.get("watch_timeout_sec", 300),
+            "discovered_at":      now_epoch,
             "buy_price": 0, "buy_qty": 0, "entered_at": 0,
             "trades_today": 0, "realized_pnl_today": 0, "stats_date": today,
             "created_at": datetime.now(KST).strftime("%Y-%m-%d %H:%M"),
@@ -301,6 +303,15 @@ def main():
             continue
 
         # ── watching: 진입 판단 ─────────────────────────────────
+        if job.get("source") == "auto":
+            timeout = float(job.get("watch_timeout_sec", 300))
+            if scalp_engine.should_give_up_watching(job.get("discovered_at", 0), now_epoch, timeout):
+                job["status"] = "done"
+                job["stop_reason"] = f"{int(timeout)}초 내 진입 조건 미충족 — 포기"
+                changed = True
+                logger.info("⌛ %s(%s) 관찰 시간초과 — 포기, 슬롯 반환", name, ticker)
+                continue
+
         if holding_count >= MAX_CONCURRENT_POSITIONS:
             continue
 

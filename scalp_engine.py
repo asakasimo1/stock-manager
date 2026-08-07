@@ -108,6 +108,14 @@ def select_auto_candidates(
     return picked
 
 
+def should_give_up_watching(discovered_at: float, now: float, timeout_sec: float) -> bool:
+    """자동발굴 watching 잡이 timeout_sec 동안 진입 조건을 못 채우면 포기 판단.
+    discovered_at=0(구버전 잡 등 값 없음)이면 즉시 포기 — 슬롯이 무한정 묶이는 것을 방지."""
+    if timeout_sec <= 0:
+        return False
+    return (now - discovered_at) >= timeout_sec
+
+
 def prune_stale_auto_jobs(jobs: list, today: str) -> tuple:
     """전날 이전에 완료된 자동발굴 잡을 제거 (무한정 누적 방지). 오늘 완료된 건 UI 확인용으로 유지.
     반환: (정리된 jobs, 제거된 개수)"""
