@@ -118,7 +118,7 @@ function scRenderAutoConfig() {
         </div>
         <div>
           <div style="font-size:11px;color:var(--muted);margin-bottom:4px">① 급등 판단 상승률 (%)</div>
-          <input id="sac-min-discovery-momentum" type="number" min="0.1" step="0.1" value="${cfg.min_discovery_momentum_pct ?? 0.5}"
+          <input id="sac-min-discovery-momentum" type="number" min="0.1" step="0.1" value="${cfg.min_discovery_momentum_pct ?? 0.4}"
             style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
         </div>
         <div style="grid-column:1 / -1">
@@ -219,7 +219,7 @@ async function scSaveAutoConfig() {
     max_day_chg_pct: parseFloat(document.getElementById('sac-max-day-chg').value) || 5.0,
     watch_timeout_sec: parseInt(document.getElementById('sac-watch-timeout').value, 10) || 300,
     discovery_momentum_sec: parseInt(document.getElementById('sac-discovery-momentum-sec').value, 10) || 60,
-    min_discovery_momentum_pct: parseFloat(document.getElementById('sac-min-discovery-momentum').value) || 0.5,
+    min_discovery_momentum_pct: parseFloat(document.getElementById('sac-min-discovery-momentum').value) || 0.4,
     min_volume_surge_ratio: parseFloat(document.getElementById('sac-min-volume-surge').value) || 1.3,
     min_liquidity: parseFloat(document.getElementById('sac-min-liquidity').value) || 0,
     max_daily_loss_krw: -Math.abs(parseFloat(document.getElementById('sac-daily-loss').value) || 30000),

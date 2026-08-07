@@ -800,7 +800,7 @@ const SCALP_AUTO_DEFAULTS = {
   max_daily_loss_krw: -30000,
   watch_timeout_sec: 300,
   discovery_momentum_sec: 60,
-  min_discovery_momentum_pct: 0.5,
+  min_discovery_momentum_pct: 0.4,
   min_volume_surge_ratio: 1.3,
 };
 
