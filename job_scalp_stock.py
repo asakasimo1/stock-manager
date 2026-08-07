@@ -29,6 +29,17 @@ SELL_FEE = 0.00195
 
 MAX_CONCURRENT_POSITIONS = 3  # 주식 스캘핑 동시 보유 종목 상한 (하드 리밋)
 
+DISCOVERY_INTERVAL_SEC = 30  # 자동발굴 스캔 주기 하한 — 등락률 순위 조회·Gist 쓰기 빈도 제한
+_last_discover_at = 0.0
+
+
+def _should_run_discovery(now_epoch: float) -> bool:
+    global _last_discover_at
+    if now_epoch - _last_discover_at < DISCOVERY_INTERVAL_SEC:
+        return False
+    _last_discover_at = now_epoch
+    return True
+
 
 def _today_str() -> str:
     return datetime.now(KST).strftime("%Y-%m-%d")
@@ -71,6 +82,8 @@ def _auto_discover(jobs: list, auto_cfg: dict, stock_enabled: bool, now_epoch: f
     watching 잡을 자동 생성. 반환: jobs 리스트가 변경되었는지 여부"""
     if not auto_cfg.get("enabled") or not stock_enabled:
         return False
+    if not _should_run_discovery(now_epoch):
+        return False
 
     today = _today_str()
     max_loss = float(auto_cfg.get("max_daily_loss_krw", -30000))
@@ -97,7 +110,12 @@ def _auto_discover(jobs: list, auto_cfg: dict, stock_enabled: bool, now_epoch: f
         for r in ranking
     ]
 
-    existing_tickers = {j["ticker"] for j in jobs if j.get("status") not in ("done", "stopped")}
+    # 진행중인 티커 + 오늘 이미 한 번 시도한(성공/실패 무관) 자동발굴 티커는 재시도하지 않음
+    existing_tickers = {
+        j["ticker"] for j in jobs
+        if j.get("status") not in ("done", "stopped")
+        or (j.get("source") == "auto" and j.get("stats_date") == today)
+    }
     max_day_chg = float(auto_cfg.get("max_day_chg_pct", 5.0))
     min_liquidity = float(auto_cfg.get("min_liquidity", 100_000_000))
     picked = scalp_engine.select_auto_candidates(candidates, existing_tickers, max_day_chg, min_liquidity, slots)

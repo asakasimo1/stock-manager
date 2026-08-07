@@ -37,6 +37,18 @@ SELL_FEE = upbit_api.SELL_FEE
 
 MAX_CONCURRENT_POSITIONS = 3  # 코인 스캘핑 동시 보유 종목 상한 (하드 리밋)
 
+DISCOVERY_INTERVAL_SEC = 30  # 자동발굴 스캔 주기 하한 — 5초마다 전체 마켓 스캔·Gist 쓰기하면
+                              # GitHub Gist API 쓰기 레이트리밋(secondary rate limit)에 걸림
+_last_discover_at = 0.0
+
+
+def _should_run_discovery(now_epoch: float) -> bool:
+    global _last_discover_at
+    if now_epoch - _last_discover_at < DISCOVERY_INTERVAL_SEC:
+        return False
+    _last_discover_at = now_epoch
+    return True
+
 
 def _today_str() -> str:
     return datetime.now(KST).strftime("%Y-%m-%d")
@@ -105,7 +117,13 @@ def _auto_discover(jobs: list, auto_cfg: dict, price_cache: dict, coin_enabled: 
     ]
     candidates.sort(key=lambda c: c["chg_pct"], reverse=True)
 
-    existing_tickers = {j["ticker"] for j in jobs if j.get("status") not in ("done", "stopped")}
+    # 진행중인 티커 + 오늘 이미 한 번 시도한(성공/실패 무관) 자동발굴 티커는 재시도하지 않음
+    # (당일 재시도 없이 하루 1회 — 같은 코인에 반복 진입해 수수료만 깎아먹는 것 방지)
+    existing_tickers = {
+        j["ticker"] for j in jobs
+        if j.get("status") not in ("done", "stopped")
+        or (j.get("source") == "auto" and j.get("stats_date") == today)
+    }
     max_day_chg = float(auto_cfg.get("max_day_chg_pct", 5.0))
     min_liquidity = float(auto_cfg.get("min_liquidity", 50_000_000))
     picked = scalp_engine.select_auto_candidates(candidates, existing_tickers, max_day_chg, min_liquidity, slots)
@@ -176,8 +194,11 @@ def main():
     now_epoch = time.time()
     changed = False
 
-    # 자동발굴 활성화 시 전체 KRW 마켓을, 아니면 기존 잡 티커만 조회 대상으로 삼는다
-    if auto_cfg.get("enabled") and coin_enabled:
+    # 자동발굴은 30초 주기로만 스캔 (전체 마켓 조회 + Gist 쓰기를 5초마다 하면 GitHub 쓰기 레이트리밋에 걸림)
+    # 이미 watching/holding 중인 티커는 이 주기와 무관하게 매 사이클(5초) 그대로 처리됨
+    run_discovery = bool(auto_cfg.get("enabled")) and coin_enabled and _should_run_discovery(now_epoch)
+
+    if run_discovery:
         try:
             tickers = upbit_api.get_all_krw_markets()
         except Exception as e:
@@ -194,7 +215,7 @@ def main():
         logger.error("현재가 일괄 조회 실패: %s", e)
         return
 
-    if _auto_discover(jobs, auto_cfg, price_cache, coin_enabled, now_epoch):
+    if run_discovery and _auto_discover(jobs, auto_cfg, price_cache, coin_enabled, now_epoch):
         changed = True
 
     if not jobs:
