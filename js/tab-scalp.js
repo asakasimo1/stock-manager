@@ -4,11 +4,17 @@
 // ══════════════════════════════════════════════════════════
 
 let _scRefreshTimer = null;
+let _scPriceTimer = null;
 let _scAcTimer = null;
 let _scControl = { coin_enabled: true, stock_enabled: true };
 let _scJobs = { coin: [], stock: [] };
 let _scAutoConfig = { coin: {}, stock: {} };
 let _scAutoMarket = 'coin';
+let _scLivePrices = {};   // ticker -> { price, chgPct }
+
+function _scOnTab() {
+  return document.querySelector('.tab-btn.active')?.getAttribute('onclick')?.includes('scalp');
+}
 
 async function initScalp() {
   await scLoadControl();
@@ -16,12 +22,14 @@ async function initScalp() {
   await scLoadJobs();
   clearInterval(_scRefreshTimer);
   _scRefreshTimer = setInterval(() => {
-    if (document.querySelector('.tab-btn.active')?.getAttribute('onclick')?.includes('scalp')) {
-      scLoadJobs();
-    } else {
-      clearInterval(_scRefreshTimer);
-    }
+    if (_scOnTab()) scLoadJobs(); else clearInterval(_scRefreshTimer);
   }, 10000);
+
+  // 보유중 포지션의 현재가·평가손익은 더 짧은 주기로 갱신 (체결 즉시 확인 가능하도록)
+  clearInterval(_scPriceTimer);
+  _scPriceTimer = setInterval(() => {
+    if (_scOnTab()) scRefreshLivePrices(); else clearInterval(_scPriceTimer);
+  }, 5000);
 }
 
 // ── 전체 정지 킬스위치 ────────────────────────────────────
@@ -271,6 +279,44 @@ async function scLoadJobs() {
   } catch (_) {}
   scRenderJobs();
   scRenderSummary();
+  scRefreshLivePrices();
+}
+
+// ── 보유중 포지션 실시간 현재가·평가손익 ──────────────────
+async function scRefreshLivePrices() {
+  const holdingCoin  = (_scJobs.coin  || []).filter(j => j.phase === 'holding');
+  const holdingStock = (_scJobs.stock || []).filter(j => j.phase === 'holding');
+  if (!holdingCoin.length && !holdingStock.length) return;
+
+  const tasks = [];
+
+  if (holdingCoin.length) {
+    const markets = [...new Set(holdingCoin.map(j => j.ticker))].join(',');
+    tasks.push(
+      fetch(`/api/coin-price?markets=${encodeURIComponent(markets)}`)
+        .then(r => r.json())
+        .then(arr => {
+          (arr || []).forEach(d => {
+            _scLivePrices[d.market] = { price: d.trade_price, chgPct: (d.signed_change_rate || 0) * 100 };
+          });
+        })
+        .catch(() => {})
+    );
+  }
+
+  holdingStock.forEach(j => {
+    tasks.push(
+      fetch(`/api/quote?ticker=${encodeURIComponent(j.ticker)}`)
+        .then(r => r.json())
+        .then(d => {
+          if (d.price) _scLivePrices[j.ticker] = { price: d.price, chgPct: d.chgPct };
+        })
+        .catch(() => {})
+    );
+  });
+
+  await Promise.all(tasks);
+  scRenderJobs();
 }
 
 function scRenderSummary() {
@@ -279,10 +325,12 @@ function scRenderSummary() {
   const all = [...(_scJobs.coin || []), ...(_scJobs.stock || [])];
   const pnl = all.reduce((s, j) => s + (j.realized_pnl_today || 0), 0);
   const trades = all.reduce((s, j) => s + (j.trades_today || 0), 0);
+  const holding = all.filter(j => j.phase === 'holding').length;
   const color = pnl >= 0 ? '#16a34a' : '#dc2626';
   el.innerHTML = `<span style="font-size:12px;color:var(--muted)">오늘 실현손익</span>
     <span style="font-size:18px;font-weight:800;color:${color};margin-left:8px">${pnl >= 0 ? '+' : ''}${Math.round(pnl).toLocaleString()}원</span>
-    <span style="font-size:12px;color:var(--muted);margin-left:10px">거래 ${trades}회</span>`;
+    <span style="font-size:12px;color:var(--muted);margin-left:10px">거래 ${trades}회</span>
+    ${holding > 0 ? `<span style="font-size:12px;color:#16a34a;font-weight:700;margin-left:10px">● 현재 보유중 ${holding}건</span>` : ''}`;
 }
 
 function scRenderJobs() {
@@ -292,6 +340,9 @@ function scRenderJobs() {
     ...(_scJobs.coin  || []).map(j => ({ ...j, market: 'coin' })),
     ...(_scJobs.stock || []).map(j => ({ ...j, market: 'stock' })),
   ];
+  // 보유중 → 실행중 → 일시정지 → 완료/정지 순으로 정렬 (지금 매매 중인 것이 가장 먼저 보이도록)
+  const _rank = j => j.phase === 'holding' ? 0 : j.status === 'active' ? 1 : j.status === 'paused' ? 2 : 3;
+  all.sort((a, b) => _rank(a) - _rank(b));
   if (!all.length) {
     el.innerHTML = `<div style="color:var(--muted);font-size:13px;padding:20px;text-align:center">등록된 스캘핑 잡이 없습니다</div>`;
     return;
@@ -308,12 +359,29 @@ function scRenderJobs() {
     const enteredLabel = isHolding && j.entered_at
       ? new Date(j.entered_at * 1000).toLocaleTimeString('ko-KR') : '';
 
+    let holdingLine = '';
+    if (isHolding) {
+      const live = _scLivePrices[j.ticker];
+      const buyPrice = j.buy_price || 0;
+      if (live && buyPrice > 0) {
+        const upnlPct = (live.price - buyPrice) / buyPrice * 100;
+        const upnlColor = upnlPct >= 0 ? '#16a34a' : '#dc2626';
+        holdingLine = `<div style="font-size:12px;margin-bottom:6px">
+          진입가 ${Math.round(buyPrice).toLocaleString()}원 → 현재가 ${Math.round(live.price).toLocaleString()}원
+          <b style="color:${upnlColor}">(${upnlPct >= 0 ? '+' : ''}${upnlPct.toFixed(2)}%)</b>
+          <span style="color:var(--muted)"> · ${enteredLabel} 진입</span>
+        </div>`;
+      } else {
+        holdingLine = `<div style="font-size:12px;color:var(--muted);margin-bottom:6px">진입가 ${Math.round(buyPrice).toLocaleString()}원 · ${enteredLabel} 진입 · 현재가 조회 중...</div>`;
+      }
+    }
+
     return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
         <div><b style="font-size:13px">${j.name}</b> <span style="font-size:11px;color:var(--muted)">${marketBadge} · ${j.ticker}</span>${autoBadge}</div>
         <span style="font-size:11px;font-weight:700;color:${statusColor}">${statusLabel}${isHolding ? ' · 보유중' : ''}</span>
       </div>
-      ${isHolding ? `<div style="font-size:12px;color:var(--muted);margin-bottom:6px">진입가 ${Math.round(j.buy_price || 0).toLocaleString()}원 · ${enteredLabel} 진입</div>` : ''}
+      ${holdingLine}
       ${j.status === 'stopped' && j.stop_reason ? `<div style="font-size:11px;color:#dc2626;margin-bottom:6px">${j.stop_reason}</div>` : ''}
       <div style="display:flex;justify-content:space-between;align-items:center">
         <span style="font-size:12px;color:${pnlColor};font-weight:600">오늘 손익 ${pnl >= 0 ? '+' : ''}${Math.round(pnl).toLocaleString()}원 (${j.trades_today || 0}회)</span>
