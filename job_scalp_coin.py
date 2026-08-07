@@ -271,8 +271,8 @@ def _force_close(job: dict, cur_price: float, reason: str) -> None:
         gist_writer.log_trade(ticker, name, "sell", cur_price, qty, pnl=pnl,
                                pnl_pct=(pnl / (buy_price * qty) * 100) if buy_price > 0 else None,
                                reason=reason, order_no=result.get("uuid", ""))
-        logger.info("★ [%s] 강제청산 %s %.8f개 @ %s원  손익 %+,.0f원  UUID:%s",
-                    reason, ticker, qty, f"{cur_price:,.0f}", pnl, result.get("uuid", ""))
+        logger.info("★ [%s] 강제청산 %s %.8f개 @ %s원  손익 %s원  UUID:%s",
+                    reason, ticker, qty, f"{cur_price:,.0f}", f"{pnl:+,.0f}", result.get("uuid", ""))
     except Exception as e:
         logger.error("%s 강제청산 실패: %s", ticker, e)
 
@@ -382,8 +382,8 @@ def main():
                     changed = True
                     gist_writer.log_trade(ticker, name, "sell", cur_price, qty, pnl=pnl,
                                            pnl_pct=pnl_pct, reason=reason, order_no=result.get("uuid", ""))
-                    logger.info("★ [%s] %s %.8f개 @ %s원  손익 %+,.0f원(%.2f%%)  UUID:%s",
-                                reason, ticker, qty, f"{cur_price:,.0f}", pnl, pnl_pct, result.get("uuid", ""))
+                    logger.info("★ [%s] %s %.8f개 @ %s원  손익 %s원(%.2f%%)  UUID:%s",
+                                reason, ticker, qty, f"{cur_price:,.0f}", f"{pnl:+,.0f}", pnl_pct, result.get("uuid", ""))
                 except Exception as e:
                     logger.error("%s 청산 실패: %s", ticker, e)
             else:
