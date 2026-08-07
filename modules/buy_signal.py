@@ -299,6 +299,9 @@ def _analyze_ticker(
         # 장대양봉 비율: 양봉일 때만 체크 (음봉 허용 구간은 skip)
         if is_bullish and br < min_body_ratio:
             return None
+        # 당일 이미 급등한 종목 제외: 전일 종가 대비 5% 초과 상승 → 모멘텀 소진 가능성
+        if chg_pct > 5.0:
+            return None
 
     tech = technical.calculate(df)
     if not tech:
