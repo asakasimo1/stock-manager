@@ -2,12 +2,18 @@
 import job_scalp_coin
 import job_scalp_stock
 import kis_api
+import scalp_engine as se
+
+# 모멘텀/거래량증가 게이팅과 무관하게 기존 필터(과열/유동성/슬롯)만 검증하는 테스트에서는
+# min_discovery_momentum_pct=0, min_volume_surge_ratio=0 으로 새 조건을 꺼둔다.
+_NO_MOMENTUM_GATE = {"min_discovery_momentum_pct": 0, "min_volume_surge_ratio": 0}
 
 
 def test_coin_auto_discover_creates_job():
+    se.reset()
     jobs = []
     auto_cfg = {"enabled": True, "max_concurrent": 2, "max_day_chg_pct": 5.0,
-                "min_liquidity": 1000, "krw_amount": 10000, "max_daily_loss_krw": -20000}
+                "min_liquidity": 1000, "krw_amount": 10000, "max_daily_loss_krw": -20000, **_NO_MOMENTUM_GATE}
     price_cache = {
         "KRW-AAA": {"chg_pct": 2.0, "price": 1000, "volume": 100000},   # 통과
         "KRW-BBB": {"chg_pct": 9.0, "price": 1000, "volume": 100000},   # 과열 제외
@@ -16,15 +22,16 @@ def test_coin_auto_discover_creates_job():
     assert changed is True
     assert len(jobs) == 1 and jobs[0]["ticker"] == "KRW-AAA" and jobs[0]["source"] == "auto"
     assert jobs[0]["status"] == "active" and jobs[0]["phase"] == "watching"
-    print("OK: 코인 자동발굴 — 과열종목 제외 + watching 잡 생성")
+    print("OK: 코인 자동발굴 — 과열종목 제외 + watching 잡 생성 (모멘텀/거래량 게이트 비활성 시)")
 
 
 def test_coin_auto_discover_respects_slots():
+    se.reset()
     jobs = [
         {"ticker": "KRW-X", "source": "auto", "status": "active", "stats_date": "2099-01-01", "realized_pnl_today": 0},
         {"ticker": "KRW-Y", "source": "auto", "status": "active", "stats_date": "2099-01-01", "realized_pnl_today": 0},
     ]
-    auto_cfg = {"enabled": True, "max_concurrent": 2, "max_day_chg_pct": 5.0, "min_liquidity": 0}
+    auto_cfg = {"enabled": True, "max_concurrent": 2, "max_day_chg_pct": 5.0, "min_liquidity": 0, **_NO_MOMENTUM_GATE}
     price_cache = {"KRW-Z": {"chg_pct": 2.0, "price": 1000, "volume": 100000}}
     changed = job_scalp_coin._auto_discover(jobs, auto_cfg, price_cache, coin_enabled=True, now_epoch=1000.0)
     assert changed is False and len(jobs) == 2
@@ -32,16 +39,42 @@ def test_coin_auto_discover_respects_slots():
 
 
 def test_coin_auto_discover_disabled_noop():
+    se.reset()
     jobs = []
     changed = job_scalp_coin._auto_discover(jobs, {"enabled": False}, {"KRW-A": {"chg_pct": 2.0, "price": 1, "volume": 1}}, True, 0)
     assert changed is False and jobs == []
     print("OK: 코인 자동발굴 — enabled=False 시 아무 것도 안 함")
 
 
+def test_coin_auto_discover_requires_momentum_and_volume_surge():
+    """모멘텀/거래량증가 게이트가 켜져 있으면(기본값) 이력이 충분히 쌓이기 전엔 후보를 못 찾고,
+    실제로 급등+거래량증가 패턴이 나타나야만 후보로 선정됨을 검증 (엔진 단위테스트가 아니라
+    job_scalp_coin._auto_discover를 통해 실제로 연결되어 있는지 확인하는 배선 테스트)"""
+    se.reset()
+    jobs = []
+    auto_cfg = {"enabled": True, "max_concurrent": 2, "max_day_chg_pct": 5.0, "min_liquidity": 0,
+                "krw_amount": 10000, "max_daily_loss_krw": -20000,
+                "discovery_momentum_sec": 60, "min_discovery_momentum_pct": 0.5, "min_volume_surge_ratio": 1.5}
+
+    # 0~120초: 가격/거래량 모두 평온 (모멘텀도 거래량도 안 늘어남)
+    for t in range(0, 121, 30):
+        price_cache = {"KRW-CALM": {"chg_pct": 1.0, "price": 1000, "volume": 100000 + t * 10}}
+        changed = job_scalp_coin._auto_discover(jobs, auto_cfg, price_cache, coin_enabled=True, now_epoch=float(t))
+        assert changed is False and jobs == [], f"t={t}: 평온한데 후보가 선정됨"
+    print("OK: 평온한 흐름에서는 이력이 쌓여도 후보 선정 안 함")
+
+    # 150초 시점: 가격이 갑자기 튀고(60초간 +1.0%) 거래량도 급증
+    price_cache = {"KRW-CALM": {"chg_pct": 2.0, "price": 1010, "volume": 100000 + 120 * 10 + 50000}}
+    changed = job_scalp_coin._auto_discover(jobs, auto_cfg, price_cache, coin_enabled=True, now_epoch=150.0)
+    assert changed is True and len(jobs) == 1 and jobs[0]["ticker"] == "KRW-CALM", jobs
+    print("OK: 갑자기 급등+거래량증가 시에만 후보로 선정 (job_scalp_coin 배선 확인)")
+
+
 def test_stock_auto_discover_creates_job(monkeypatch):
+    se.reset()
     jobs = []
     auto_cfg = {"enabled": True, "max_concurrent": 2, "max_day_chg_pct": 5.0,
-                "min_liquidity": 1000, "amount": 500000, "max_daily_loss_krw": -30000}
+                "min_liquidity": 1000, "amount": 500000, "max_daily_loss_krw": -30000, **_NO_MOMENTUM_GATE}
     monkeypatch.setattr(kis_api, "get_fluctuation_ranking", lambda top_n=30: [
         {"ticker": "005930", "name": "삼성전자", "price": 70000, "chg_pct": 2.5, "acml_vol": 1000000},
         {"ticker": "000660", "name": "SK하이닉스", "price": 150000, "chg_pct": 12.0, "acml_vol": 1000000},
@@ -49,7 +82,7 @@ def test_stock_auto_discover_creates_job(monkeypatch):
     changed = job_scalp_stock._auto_discover(jobs, auto_cfg, stock_enabled=True, now_epoch=1000.0)
     assert changed is True
     assert len(jobs) == 1 and jobs[0]["ticker"] == "005930" and jobs[0]["source"] == "auto"
-    print("OK: 주식 자동발굴 — 등락률 순위에서 과열종목 제외 + watching 잡 생성")
+    print("OK: 주식 자동발굴 — 등락률 순위에서 과열종목 제외 + watching 잡 생성 (모멘텀/거래량 게이트 비활성 시)")
 
 
 def test_stock_close_stale_auto_watching():
@@ -81,6 +114,7 @@ if __name__ == "__main__":
     test_coin_auto_discover_creates_job()
     test_coin_auto_discover_respects_slots()
     test_coin_auto_discover_disabled_noop()
+    test_coin_auto_discover_requires_momentum_and_volume_surge()
     mp = _FakeMonkeypatch()
     test_stock_auto_discover_creates_job(mp)
     mp.undo()

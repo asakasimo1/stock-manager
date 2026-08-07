@@ -4,6 +4,9 @@ Gist scalp_coin_jobs.json 에서 잡 읽기 → 모멘텀 진입/청산 판단 �
 Gist scalp_control.json 의 coin_enabled=false 이면 신규 진입 중단 + 보유 포지션 즉시 청산 (전체 정지 킬스위치)
 Gist scalp_auto_config.json 의 coin.enabled=true 이면 전체 KRW 마켓을 스캔해 급등 후보를 watching 잡으로 자동 생성
   (source="auto" 잡은 1회 진입/청산 후 status=done 으로 종료 — 슬롯을 비우고 다음 사이클에 새 후보 재탐색)
+  후보 선정 조건: ①최근 discovery_momentum_sec(기본 60초)간 momentum_pct ≥ min_discovery_momentum_pct(기본 0.5%)
+                ②최근 거래량 ÷ 평소 거래량(volume_surge_ratio) ≥ min_volume_surge_ratio(기본 1.3배)
+  전체 유니버스 가격/거래량을 매 스캔마다 기록해서 아직 잡이 아닌 코인도 모멘텀·거래량증가를 계산함
 
 잡 스키마 (scalp_coin_jobs.json, 리스트):
   status  : active | paused | stopped
@@ -106,16 +109,30 @@ def _auto_discover(jobs: list, auto_cfg: dict, price_cache: dict, coin_enabled: 
     if slots <= 0:
         return False
 
+    # 전체 유니버스 가격·거래량 이력 기록 — 아직 잡으로 등록 안 된 코인도 모멘텀/거래량증가를
+    # 계산할 수 있어야 "갑자기 급등 + 거래량 증가" 조건으로 후보를 뽑을 수 있음.
+    # (record_price/record_volume는 이미 관찰중인 잡 티커에 대해서도 메인 루프에서 매 사이클
+    #  호출되므로 여기서 다시 불러도 중복 문제 없음 — 같은 시각 값이면 그대로 갱신될 뿐)
+    for ticker, info in price_cache.items():
+        scalp_engine.record_price(ticker, info.get("price", 0), now=now_epoch)
+        scalp_engine.record_volume(ticker, info.get("volume", 0), now=now_epoch)
+
+    discovery_lookback = float(auto_cfg.get("discovery_momentum_sec", 60))
+    min_momentum = float(auto_cfg.get("min_discovery_momentum_pct", 0.5))
+    min_vol_surge = float(auto_cfg.get("min_volume_surge_ratio", 1.3))
+
     candidates = [
         {
             "ticker": ticker,
             "name": upbit_api.COIN_NAMES.get(ticker, ticker),
             "chg_pct": info.get("chg_pct", 0),
             "liquidity": info.get("volume", 0) * info.get("price", 0),
+            "momentum": scalp_engine.momentum_pct(ticker, discovery_lookback, now=now_epoch),
+            "volume_surge": scalp_engine.volume_surge_ratio(ticker, now=now_epoch),
         }
         for ticker, info in price_cache.items()
     ]
-    candidates.sort(key=lambda c: c["chg_pct"], reverse=True)
+    candidates.sort(key=lambda c: c["momentum"] if c["momentum"] is not None else -999, reverse=True)
 
     # 진행중인 티커 + 오늘 이미 한 번 시도한(성공/실패 무관) 자동발굴 티커는 재시도하지 않음
     # (당일 재시도 없이 하루 1회 — 같은 코인에 반복 진입해 수수료만 깎아먹는 것 방지)
@@ -126,7 +143,10 @@ def _auto_discover(jobs: list, auto_cfg: dict, price_cache: dict, coin_enabled: 
     }
     max_day_chg = float(auto_cfg.get("max_day_chg_pct", 5.0))
     min_liquidity = float(auto_cfg.get("min_liquidity", 50_000_000))
-    picked = scalp_engine.select_auto_candidates(candidates, existing_tickers, max_day_chg, min_liquidity, slots)
+    picked = scalp_engine.select_auto_candidates(
+        candidates, existing_tickers, max_day_chg, min_liquidity, slots,
+        min_momentum_pct=min_momentum, min_volume_surge=min_vol_surge,
+    )
 
     for c in picked:
         jobs.append({
@@ -146,12 +166,15 @@ def _auto_discover(jobs: list, auto_cfg: dict, price_cache: dict, coin_enabled: 
             "krw_amount":         auto_cfg.get("krw_amount", 0),
             "max_daily_loss_krw": max_loss,
             "watch_timeout_sec":  auto_cfg.get("watch_timeout_sec", 300),
+            "min_volume_surge_ratio": min_vol_surge,
             "discovered_at":      now_epoch,
             "buy_price": 0, "buy_qty": 0, "entered_at": 0, "buy_uuid": "",
             "trades_today": 0, "realized_pnl_today": 0, "stats_date": today,
             "created_at": datetime.now(KST).strftime("%Y-%m-%d %H:%M"),
         })
-        logger.info("🔍 [자동포착] %s(%s) 등락률 %+.2f%% — watching 잡 생성", c["name"], c["ticker"], c["chg_pct"])
+        logger.info("🔍 [자동포착] %s(%s) 최근%.0f초 모멘텀 %s%% · 거래량 %s배 (당일 %+.2f%%) — watching 잡 생성",
+                    c["name"], c["ticker"], discovery_lookback,
+                    scalp_engine.fmt_opt(c["momentum"]), scalp_engine.fmt_opt(c["volume_surge"], "{:.2f}"), c["chg_pct"])
 
     return bool(picked)
 
@@ -261,6 +284,7 @@ def main():
             changed = True
 
         scalp_engine.record_price(ticker, cur_price, now=now_epoch)
+        scalp_engine.record_volume(ticker, info.get("volume", 0), now=now_epoch)
 
         # ── 전체 정지 킬스위치: 신규진입 중단 + 보유 포지션 즉시 청산 ──
         if not coin_enabled:
@@ -333,7 +357,8 @@ def main():
 
         lookback = float(job.get("lookback_sec", 30))
         momentum = scalp_engine.momentum_pct(ticker, lookback, now=now_epoch)
-        should, reason = scalp_engine.should_enter(momentum, today_chg, job)
+        vol_surge = scalp_engine.volume_surge_ratio(ticker, now=now_epoch)
+        should, reason = scalp_engine.should_enter(momentum, today_chg, job, volume_surge=vol_surge)
         if not should:
             logger.info("  %s(%s) 대기 — %s", name, ticker, reason)
             continue

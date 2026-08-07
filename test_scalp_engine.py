@@ -77,6 +77,72 @@ def test_should_exit_holds():
     print("OK: 조건 미달 시 보유 유지")
 
 
+def test_volume_surge_insufficient_history():
+    se.reset()
+    se.record_volume("A", 1000, now=0)
+    se.record_volume("A", 1100, now=60)
+    # baseline_sec(120) 만큼 관측이 안 됨 — 아직 판단 불가
+    assert se.volume_surge_ratio("A", recent_sec=20, baseline_sec=120, now=60) is None
+    print("OK: 거래량 관측기간 부족 시 None")
+
+
+def test_volume_surge_detects_acceleration():
+    se.reset()
+    now = 0
+    # 0~100초: 초당 1씩 완만하게 증가 (평소 속도)
+    for t in range(0, 101, 10):
+        se.record_volume("A", 1000 + t * 1, now=t)
+    # 최근 20초(100~120초)에 갑자기 초당 10씩 급증 (거래량 폭증)
+    se.record_volume("A", 1000 + 100 + 10 * 20, now=120)
+    ratio = se.volume_surge_ratio("A", recent_sec=20, baseline_sec=120, now=120)
+    assert ratio is not None and ratio > 1.5, ratio
+    print(f"OK: 최근 거래량 급증 감지 — {ratio:.2f}배")
+
+
+def test_volume_surge_flat_stays_near_one():
+    se.reset()
+    for t in range(0, 121, 10):
+        se.record_volume("A", 1000 + t * 2, now=t)  # 일정한 속도(초당 2)
+    ratio = se.volume_surge_ratio("A", recent_sec=20, baseline_sec=120, now=120)
+    assert ratio is not None and 0.8 < ratio < 1.2, ratio
+    print(f"OK: 거래량 속도 일정하면 배수 ~1.0 근처 — {ratio:.2f}배")
+
+
+def test_should_enter_requires_volume_surge_when_configured():
+    ok, reason = se.should_enter(momentum=1.0, today_chg_pct=1.0,
+                                  params={"entry_momentum_pct": 0.4, "min_volume_surge_ratio": 1.5},
+                                  volume_surge=1.1)
+    assert ok is False and "거래량" in reason, reason
+    print(f"OK: 거래량증가 조건 미달 시 진입 차단 — {reason}")
+
+    ok, reason = se.should_enter(momentum=1.0, today_chg_pct=1.0,
+                                  params={"entry_momentum_pct": 0.4, "min_volume_surge_ratio": 1.5},
+                                  volume_surge=2.0)
+    assert ok is True, reason
+    print(f"OK: 거래량증가 조건 충족 시 진입 — {reason}")
+
+
+def test_should_enter_skips_volume_check_when_not_configured():
+    # min_volume_surge_ratio 미설정(수동 잡 기본값) — volume_surge 없어도 기존처럼 통과
+    ok, reason = se.should_enter(momentum=1.0, today_chg_pct=1.0, params={"entry_momentum_pct": 0.4})
+    assert ok is True, reason
+    print("OK: 거래량증가 조건 미설정 시 기존 동작(모멘텀만) 유지")
+
+
+def test_select_auto_candidates_requires_momentum_and_volume():
+    candidates = [
+        {"ticker": "A", "chg_pct": 2.0, "liquidity": 1_000_000, "momentum": None, "volume_surge": 2.0},   # 모멘텀 데이터 없음 제외
+        {"ticker": "B", "chg_pct": 2.0, "liquidity": 1_000_000, "momentum": 0.3, "volume_surge": 2.0},    # 모멘텀 부족 제외
+        {"ticker": "C", "chg_pct": 2.0, "liquidity": 1_000_000, "momentum": 1.0, "volume_surge": 1.1},    # 거래량 부족 제외
+        {"ticker": "D", "chg_pct": 2.0, "liquidity": 1_000_000, "momentum": 1.0, "volume_surge": 2.0},    # 통과
+    ]
+    picked = se.select_auto_candidates(candidates, existing_tickers=set(), max_day_chg_pct=5.0,
+                                        min_liquidity=1000, slots=5,
+                                        min_momentum_pct=0.5, min_volume_surge=1.5)
+    assert [c["ticker"] for c in picked] == ["D"], picked
+    print(f"OK: 모멘텀+거래량증가 조건 동시 적용 — {picked}")
+
+
 def test_should_give_up_watching():
     assert se.should_give_up_watching(discovered_at=1000, now=1000 + 299, timeout_sec=300) is False
     assert se.should_give_up_watching(discovered_at=1000, now=1000 + 300, timeout_sec=300) is True
@@ -116,6 +182,12 @@ if __name__ == "__main__":
     test_should_exit_time_stop_closes_when_loss_exceeds_threshold()
     test_should_exit_time_stop_holds_when_flat_or_profit()
     test_should_exit_holds()
+    test_volume_surge_insufficient_history()
+    test_volume_surge_detects_acceleration()
+    test_volume_surge_flat_stays_near_one()
+    test_should_enter_requires_volume_surge_when_configured()
+    test_should_enter_skips_volume_check_when_not_configured()
+    test_select_auto_candidates_requires_momentum_and_volume()
     test_should_give_up_watching()
     test_select_auto_candidates_filters_and_caps()
     test_select_auto_candidates_skips_existing()

@@ -105,10 +105,29 @@ def _auto_discover(jobs: list, auto_cfg: dict, stock_enabled: bool, now_epoch: f
         logger.error("등락률 순위 조회 실패: %s", e)
         return False
 
+    # 순위에 나온 종목들의 가격·거래량 이력 기록 — 아직 잡이 아닌 종목도 모멘텀/거래량증가
+    # 계산이 가능해야 "갑자기 급등 + 거래량 증가" 조건으로 후보를 뽑을 수 있음.
+    # (KIS는 코인처럼 전체 종목을 한 번에 못 받아오므로 순위 상위 30종목 범위 안에서만 추적됨)
+    for r in ranking:
+        scalp_engine.record_price(r["ticker"], r["price"], now=now_epoch)
+        scalp_engine.record_volume(r["ticker"], r["acml_vol"], now=now_epoch)
+
+    discovery_lookback = float(auto_cfg.get("discovery_momentum_sec", 60))
+    min_momentum = float(auto_cfg.get("min_discovery_momentum_pct", 0.5))
+    min_vol_surge = float(auto_cfg.get("min_volume_surge_ratio", 1.3))
+
     candidates = [
-        {"ticker": r["ticker"], "name": r["name"], "chg_pct": r["chg_pct"], "liquidity": r["acml_vol"] * r["price"]}
+        {
+            "ticker": r["ticker"],
+            "name": r["name"],
+            "chg_pct": r["chg_pct"],
+            "liquidity": r["acml_vol"] * r["price"],
+            "momentum": scalp_engine.momentum_pct(r["ticker"], discovery_lookback, now=now_epoch),
+            "volume_surge": scalp_engine.volume_surge_ratio(r["ticker"], now=now_epoch),
+        }
         for r in ranking
     ]
+    candidates.sort(key=lambda c: c["momentum"] if c["momentum"] is not None else -999, reverse=True)
 
     # 진행중인 티커 + 오늘 이미 한 번 시도한(성공/실패 무관) 자동발굴 티커는 재시도하지 않음
     existing_tickers = {
@@ -118,7 +137,10 @@ def _auto_discover(jobs: list, auto_cfg: dict, stock_enabled: bool, now_epoch: f
     }
     max_day_chg = float(auto_cfg.get("max_day_chg_pct", 5.0))
     min_liquidity = float(auto_cfg.get("min_liquidity", 100_000_000))
-    picked = scalp_engine.select_auto_candidates(candidates, existing_tickers, max_day_chg, min_liquidity, slots)
+    picked = scalp_engine.select_auto_candidates(
+        candidates, existing_tickers, max_day_chg, min_liquidity, slots,
+        min_momentum_pct=min_momentum, min_volume_surge=min_vol_surge,
+    )
 
     for c in picked:
         jobs.append({
@@ -139,12 +161,15 @@ def _auto_discover(jobs: list, auto_cfg: dict, stock_enabled: bool, now_epoch: f
             "qty":                0,
             "max_daily_loss_krw": max_loss,
             "watch_timeout_sec":  auto_cfg.get("watch_timeout_sec", 300),
+            "min_volume_surge_ratio": min_vol_surge,
             "discovered_at":      now_epoch,
             "buy_price": 0, "buy_qty": 0, "entered_at": 0,
             "trades_today": 0, "realized_pnl_today": 0, "stats_date": today,
             "created_at": datetime.now(KST).strftime("%Y-%m-%d %H:%M"),
         })
-        logger.info("🔍 [자동포착] %s(%s) 등락률 %+.2f%% — watching 잡 생성", c["name"], c["ticker"], c["chg_pct"])
+        logger.info("🔍 [자동포착] %s(%s) 최근%.0f초 모멘텀 %s%% · 거래량 %s배 (당일 %+.2f%%) — watching 잡 생성",
+                    c["name"], c["ticker"], discovery_lookback,
+                    scalp_engine.fmt_opt(c["momentum"]), scalp_engine.fmt_opt(c["volume_surge"], "{:.2f}"), c["chg_pct"])
 
     return bool(picked)
 
@@ -252,6 +277,7 @@ def main():
             changed = True
 
         scalp_engine.record_price(ticker, cur_price, now=now_epoch)
+        scalp_engine.record_volume(ticker, int(info.get("acml_vol", 0)), now=now_epoch)
 
         if not stock_enabled:
             if job.get("phase") == "holding":
@@ -318,7 +344,8 @@ def main():
 
         lookback = float(job.get("lookback_sec", 30))
         momentum = scalp_engine.momentum_pct(ticker, lookback, now=now_epoch)
-        should, reason = scalp_engine.should_enter(momentum, today_chg, job)
+        vol_surge = scalp_engine.volume_surge_ratio(ticker, now=now_epoch)
+        should, reason = scalp_engine.should_enter(momentum, today_chg, job, volume_surge=vol_surge)
         if not should:
             logger.info("  %s(%s) 대기 — %s", name, ticker, reason)
             continue
