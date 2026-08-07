@@ -7,6 +7,8 @@
    - 단계별 손절 래칫: 보유 중 도달한 최고 수익률(peak)에 따라 손절 하한을 올려
      "올랐다가 손절"을 방지 (+2%→0%, +4%→+1.5%, +6%→+3.5% 아래로 못 내려가면 청산)
    - 환경변수 FORCE_STOP_LOSS 로 손절 기준 조정 (빈 값이면 손절 비활성). 익절은 시간대별 고정.
+3) 그리드 연동: 손절/익절 대상 종목이 그리드 잡에서 관리 중이면
+   매도 전 그리드 미체결 주문을 모두 취소하고 잡을 중단시켜 재매수 오작동 방지.
 """
 from __future__ import annotations
 import logging
@@ -53,6 +55,27 @@ _peak_pnl: dict[str, float] = {}
 # (peak 도달 기준 %, 그 시점 손절 하한 %) — peak이 낮은 순서로 정렬
 # +2% 한 번이라도 찍으면 최악의 경우도 본전, +6% 찍으면 +3.5%는 지키고 나온다
 _RATCHET_STEPS = [(2.0, 0.0), (4.0, 1.5), (6.0, 3.5)]
+
+
+def _cancel_grid_if_managed(ticker: str) -> None:
+    """손절/익절 전 그리드 미체결 주문 취소 + 잡 중단.
+    auto_sell_by_rule()이 시장가 전량 매도 후 그리드 사이클이 sell_waiting 주문을
+    "체결됨"으로 오판해 재매수 주문을 내는 것을 막는다.
+    """
+    try:
+        import job_stock_grid
+        jobs = gist_writer._read_gist_file("stock_grid_jobs.json") or []
+        changed = False
+        for j in jobs:
+            if j.get("ticker") == ticker and j.get("status") not in ("stopped", "stopping"):
+                cancelled = job_stock_grid.stop_grid(j)
+                logger.info("그리드 잡 강제 중단 (매도 연동) %s: 미체결 %d건 취소", ticker, cancelled)
+                changed = True
+        if changed:
+            gist_writer._write_gist({"stock_grid_jobs.json": jobs})
+    except Exception as e:
+        logger.warning("그리드 잡 중단 실패 %s: %s", ticker, e)
+
 
 
 def calc_target_price(buy_price: int, qty: int,
@@ -139,6 +162,7 @@ def auto_sell_by_rule():
 
         logger.info("★ 자동매도 [%s] — %s(%s) 수익률 %.2f%% (peak %.2f%%)",
                     reason, name, ticker, pnl_pct, peak)
+        _cancel_grid_if_managed(ticker)  # 그리드 관리 종목이면 먼저 주문 취소
         try:
             result = kis_api.place_order(ticker, "SELL", qty, order_type="market")
             pnl = (cur_price - h["avg_price"]) * qty
