@@ -113,7 +113,7 @@ def _auto_discover(jobs: list, auto_cfg: dict, stock_enabled: bool, now_epoch: f
         scalp_engine.record_volume(r["ticker"], r["acml_vol"], now=now_epoch)
 
     discovery_lookback = float(auto_cfg.get("discovery_momentum_sec", 60))
-    min_momentum = float(auto_cfg.get("min_discovery_momentum_pct", 0.5))
+    min_momentum = float(auto_cfg.get("min_discovery_momentum_pct", 0.4))
     min_vol_surge = float(auto_cfg.get("min_volume_surge_ratio", 1.3))
 
     candidates = [

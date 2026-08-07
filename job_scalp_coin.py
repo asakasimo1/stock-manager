@@ -4,7 +4,7 @@ Gist scalp_coin_jobs.json 에서 잡 읽기 → 모멘텀 진입/청산 판단 �
 Gist scalp_control.json 의 coin_enabled=false 이면 신규 진입 중단 + 보유 포지션 즉시 청산 (전체 정지 킬스위치)
 Gist scalp_auto_config.json 의 coin.enabled=true 이면 전체 KRW 마켓을 스캔해 급등 후보를 watching 잡으로 자동 생성
   (source="auto" 잡은 1회 진입/청산 후 status=done 으로 종료 — 슬롯을 비우고 다음 사이클에 새 후보 재탐색)
-  후보 선정 조건: ①최근 discovery_momentum_sec(기본 60초)간 momentum_pct ≥ min_discovery_momentum_pct(기본 0.5%)
+  후보 선정 조건: ①최근 discovery_momentum_sec(기본 60초)간 momentum_pct ≥ min_discovery_momentum_pct(기본 0.4%)
                 ②최근 거래량 ÷ 평소 거래량(volume_surge_ratio) ≥ min_volume_surge_ratio(기본 1.3배)
   전체 유니버스 가격/거래량을 매 스캔마다 기록해서 아직 잡이 아닌 코인도 모멘텀·거래량증가를 계산함
 
@@ -118,7 +118,7 @@ def _auto_discover(jobs: list, auto_cfg: dict, price_cache: dict, coin_enabled: 
         scalp_engine.record_volume(ticker, info.get("volume", 0), now=now_epoch)
 
     discovery_lookback = float(auto_cfg.get("discovery_momentum_sec", 60))
-    min_momentum = float(auto_cfg.get("min_discovery_momentum_pct", 0.5))
+    min_momentum = float(auto_cfg.get("min_discovery_momentum_pct", 0.4))
     min_vol_surge = float(auto_cfg.get("min_volume_surge_ratio", 1.3))
 
     candidates = [
