@@ -548,8 +548,7 @@ async function atSellNow(ticker, name, qty) {
 
 // ── 잡 목록 렌더링 ───────────────────────────────────────
 function atRenderJobs() {
-  const active  = _atJobs.filter(j => j.status === 'active' || j.status === 'submitted');
-  const history = _atJobs.filter(j => j.status !== 'active' && j.status !== 'submitted');
+  const active = _atJobs.filter(j => j.status === 'active' || j.status === 'submitted');
 
   const elActive = document.getElementById('at-active-list');
   if (elActive) {
@@ -637,30 +636,7 @@ function atRenderJobs() {
       atRefreshPrices();
     }
   }
-
-  const elHistory = document.getElementById('at-history-list');
-  if (elHistory) {
-    if (!history.length) {
-      elHistory.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:12px 0">내역 없음</div>';
-    } else {
-      elHistory.innerHTML = history.slice(0, 20).map(j => {
-        const isDone = j.status === 'done';
-        const badge  = isDone
-          ? '<span style="background:#1a7a3a22;color:var(--green);border-radius:5px;padding:2px 7px;font-size:11px">완료</span>'
-          : '<span style="background:#7a1a1a22;color:var(--red);border-radius:5px;padding:2px 7px;font-size:11px">취소</span>';
-        const detail = isDone
-          ? `매도 ${(j.sell_price||0).toLocaleString()}원 · ${j.executed_at || ''}`
-          : `취소일 ${j.cancelled_at || ''}`;
-        return `
-          <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 14px;margin-bottom:6px;display:flex;align-items:center;gap:10px">
-            <div style="flex:1">
-              <div style="font-size:13px;font-weight:600;color:var(--text)">${j.name} <span style="font-size:11px;color:var(--muted)">${j.ticker}</span> ${badge}</div>
-              <div style="font-size:11px;color:var(--muted);margin-top:2px">${detail}</div>
-            </div>
-          </div>`;
-      }).join('');
-    }
-  }
+  // 완료/취소 내역은 abRenderHistory()가 매수+매도 통합해서 렌더링 (at-history-list 공용)
 }
 
 
@@ -928,14 +904,17 @@ function abRenderHistory() {
   const all = [
     ...buyHistory.map(j => ({ ...j, _side: 'buy' })),
     ...sellHistory.map(j => ({ ...j, _side: 'sell' })),
-  ].sort((a, b) => (b.executed_at || b.cancelled_at || b.created_at || '').localeCompare(
-                    a.executed_at || a.cancelled_at || a.created_at || ''));
+  ]
+    .filter(j => withinLastDays(j.executed_at || j.cancelled_at || j.created_at))
+    .sort((a, b) => (b.executed_at || b.cancelled_at || b.created_at || '').localeCompare(
+                     a.executed_at || a.cancelled_at || a.created_at || ''));
 
   const el = document.getElementById('at-history-list');
   if (!el) return;
-  if (!all.length) { el.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:12px 0">내역 없음</div>'; return; }
+  setHistoryCount('at', all.length);
+  if (!all.length) { el.innerHTML = `<div style="color:var(--muted);font-size:13px;padding:12px 0">최근 ${HISTORY_DAYS}일 내 내역이 없습니다</div>`; return; }
 
-  el.innerHTML = all.slice(0, 30).map(j => {
+  el.innerHTML = all.map(j => {
     const isDone = j.status === 'done';
     const isBuy  = j._side === 'buy';
     const sideLabel = isBuy
@@ -1735,23 +1714,7 @@ function atCalcDayProfit(dateStr) {
       }));
   });
 
-  // 순수 매수 체결(아직 미매도) — profit_buy_jobs.json(자동매수 추천 등), 당일 매수만.
-  // 매도 짝이 없어 손익은 계산 불가(null) — "보유중"으로 표시.
-  const buys = (Array.isArray(_abJobs) ? _abJobs : []).filter(j =>
-    j.status === 'done' && (j.executed_at || '').startsWith(dateStr)
-  ).map(j => ({
-    name:      j.name || j.ticker,
-    ticker:    j.ticker,
-    qty:       j.buy_qty || j.qty || 0,
-    buyPrice:  j.buy_price || 0,
-    sellPrice: null,
-    profit:    null,
-    time:      (j.executed_at || '').slice(11, 16),
-    buyTime:   null,
-    source:    'buy',
-  }));
-
-  const items = [...sells, ...cycleSells, ...gridSells, ...buys].sort((a, b) => a.time.localeCompare(b.time));
+  const items = [...sells, ...cycleSells, ...gridSells].sort((a, b) => a.time.localeCompare(b.time));
   return {
     date:      dateStr,
     sells:     items,
@@ -1769,10 +1732,8 @@ function atRenderDailyCard(data, idx) {
   }
   const net    = data.netProfit;
   const netCls = net > 0 ? '#22c55e' : net < 0 ? '#ef4444' : 'var(--muted)';
-  const netStr   = (net >= 0 ? '+' : '') + net.toLocaleString() + '원';
-  const sellCnt  = data.sells.filter(o => o.source !== 'buy').length;
-  const buyCnt   = data.sells.filter(o => o.source === 'buy').length;
-  const cntLabel = buyCnt ? `매도 ${sellCnt} · 매수 ${buyCnt}` : `${sellCnt}건`;
+  const netStr = (net >= 0 ? '+' : '') + net.toLocaleString() + '원';
+  const cnt    = data.sells.length;
 
   card.innerHTML = `
     <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px">
@@ -1781,8 +1742,8 @@ function atRenderDailyCard(data, idx) {
         <div style="font-size:17px;font-weight:800;color:${netCls}">${netStr}</div>
       </div>
       <div style="text-align:center">
-        <div style="font-size:9px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">거래 체결</div>
-        <div style="font-size:17px;font-weight:800;color:var(--text)">${cntLabel}</div>
+        <div style="font-size:9px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">매도 체결</div>
+        <div style="font-size:17px;font-weight:800;color:var(--text)">${cnt}건</div>
       </div>
     </div>
     <div id="at-day-detail-${idx}" style="display:none;margin-top:10px">
@@ -1798,23 +1759,6 @@ function atRenderDailyCard(data, idx) {
           </tr></thead>
           <tbody>
             ${data.sells.map(o => {
-              const qty = typeof o.qty === 'number'
-                ? (Number.isInteger(o.qty) ? o.qty.toLocaleString() : o.qty.toLocaleString(undefined, {maximumFractionDigits:6}))
-                : o.qty;
-
-              // 매수만 되고 아직 매도 안 된 건(source==='buy') — 매도 행 없이 매수 1행만 표시
-              if (o.source === 'buy') {
-                const buyPriceStr = o.buyPrice ? `${o.buyPrice.toLocaleString()}원` : '—';
-                return `<tr style="border-top:1px solid var(--border)">
-                    <td style="padding:5px 8px;color:#2563eb;font-weight:700">매수</td>
-                    <td style="padding:5px 8px;color:var(--muted);font-variant-numeric:tabular-nums">${o.time || '—'}</td>
-                    <td style="padding:5px 8px;color:var(--text)">${o.name}</td>
-                    <td style="padding:5px 8px;text-align:right;color:var(--text);font-variant-numeric:tabular-nums">${qty}</td>
-                    <td style="padding:5px 8px;text-align:right;color:var(--text);font-variant-numeric:tabular-nums">${buyPriceStr}</td>
-                    <td style="padding:5px 8px;text-align:right;color:var(--muted);font-size:10px">보유중</td>
-                  </tr>`;
-              }
-
               const p = o.profit;
               const hasProfit = p !== null && p !== undefined;
               const pRounded  = hasProfit ? Math.round(p) : null;
@@ -1825,6 +1769,9 @@ function atRenderDailyCard(data, idx) {
               const sellLabel = isLoss ? '손절' : '매도';
               const sellColor = isLoss ? '#ef4444' : (isGrid ? '#3b82f6' : '#22c55e');
               const buyPriceStr = o.buyPrice ? `${o.buyPrice.toLocaleString()}원` : '—';
+              const qty = typeof o.qty === 'number'
+                ? (Number.isInteger(o.qty) ? o.qty.toLocaleString() : o.qty.toLocaleString(undefined, {maximumFractionDigits:6}))
+                : o.qty;
               return `<tr style="border-top:1px solid var(--border)">
                   <td style="padding:5px 8px;color:#f59e0b;font-weight:700">매수</td>
                   <td style="padding:5px 8px;color:var(--muted);font-variant-numeric:tabular-nums">${o.buyTime || '—'}</td>

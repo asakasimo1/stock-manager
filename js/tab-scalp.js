@@ -334,21 +334,35 @@ function scRenderSummary() {
 }
 
 function scRenderJobs() {
-  const el = document.getElementById('sc-job-list');
-  if (!el) return;
+  const elActive  = document.getElementById('sc-active-list');
+  const elHistory = document.getElementById('sc-history-list');
+  if (!elActive || !elHistory) return;
+
   const all = [
     ...(_scJobs.coin  || []).map(j => ({ ...j, market: 'coin' })),
     ...(_scJobs.stock || []).map(j => ({ ...j, market: 'stock' })),
   ];
-  // 보유중 → 실행중 → 일시정지 → 완료/정지 순으로 정렬 (지금 매매 중인 것이 가장 먼저 보이도록)
-  const _rank = j => j.phase === 'holding' ? 0 : j.status === 'active' ? 1 : j.status === 'paused' ? 2 : 3;
-  all.sort((a, b) => _rank(a) - _rank(b));
-  if (!all.length) {
-    el.innerHTML = `<div style="color:var(--muted);font-size:13px;padding:20px;text-align:center">등록된 스캘핑 잡이 없습니다</div>`;
-    return;
-  }
 
-  el.innerHTML = all.map(j => {
+  const active  = all.filter(j => j.status === 'active' || j.status === 'paused');
+  const history = all.filter(j => j.status === 'done' || j.status === 'stopped')
+    .filter(j => withinLastDays(j.created_at))
+    .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+
+  // 보유중 → 실행중 → 일시정지 순 (지금 매매 중인 것이 가장 먼저 보이도록)
+  active.sort((a, b) => (a.phase === 'holding' ? 0 : a.status === 'active' ? 1 : 2)
+                      - (b.phase === 'holding' ? 0 : b.status === 'active' ? 1 : 2));
+
+  elActive.innerHTML = active.length
+    ? active.map(_scJobCardHtml).join('')
+    : `<div style="color:var(--muted);font-size:13px;padding:20px;text-align:center">진행중인 스캘핑 잡이 없습니다</div>`;
+
+  elHistory.innerHTML = history.length
+    ? history.map(_scJobCardHtml).join('')
+    : `<div style="color:var(--muted);font-size:13px;padding:12px 0;text-align:center">최근 ${HISTORY_DAYS}일 내 완료/정지 내역이 없습니다</div>`;
+  setHistoryCount('sc', history.length);
+}
+
+function _scJobCardHtml(j) {
     const isHolding    = j.phase === 'holding';
     const statusColor  = j.status === 'active' ? '#16a34a' : j.status === 'stopped' ? '#dc2626' : j.status === 'done' ? 'var(--muted)' : '#f59e0b';
     const statusLabel  = j.status === 'active' ? '실행중' : j.status === 'stopped' ? '정지됨' : j.status === 'done' ? '완료(1회성)' : '일시정지';
@@ -394,7 +408,6 @@ function scRenderJobs() {
         </div>
       </div>
     </div>`;
-  }).join('');
 }
 
 async function scToggleJob(market, id, status) {

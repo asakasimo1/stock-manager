@@ -150,6 +150,39 @@ function saveSettingsPw() {
 _loadSettings();
 
 // ══════════════════════════════════════════════════════════
+// 완료/취소 내역 리스트 공용 유틸 — 접기/펼치기 + 최근 N일 필터
+// (자동매매/자동코인매매/초단타 탭의 내역 섹션이 공유)
+// ══════════════════════════════════════════════════════════
+const HISTORY_DAYS = 3;
+const _histCollapsed = {};   // key -> bool, 명시적으로 펼치기 전엔 기본 접힘
+
+function withinLastDays(dateStr, days = HISTORY_DAYS) {
+  if (!dateStr) return true;   // 날짜 정보 없으면 걸러내지 않음 (구버전 데이터 호환)
+  const d = new Date(String(dateStr).replace(' ', 'T'));
+  if (isNaN(d.getTime())) return true;
+  return (Date.now() - d.getTime()) <= days * 86400000;
+}
+
+function applyHistoryCollapse(key) {
+  const collapsed = _histCollapsed[key] !== false;  // 기본값: 접힘
+  const body = document.getElementById(`hist-body-${key}`);
+  const icon = document.getElementById(`hist-icon-${key}`);
+  if (body) body.style.display = collapsed ? 'none' : 'block';
+  if (icon) icon.textContent = collapsed ? '▶' : '▼';
+}
+
+function toggleHistoryCollapse(key) {
+  _histCollapsed[key] = _histCollapsed[key] === false;  // 토글
+  applyHistoryCollapse(key);
+}
+
+function setHistoryCount(key, count) {
+  const el = document.getElementById(`hist-count-${key}`);
+  if (el) el.textContent = `${count}건 · 최근 ${HISTORY_DAYS}일`;
+  applyHistoryCollapse(key);
+}
+
+// ══════════════════════════════════════════════════════════
 // 탭 전환
 // ══════════════════════════════════════════════════════════
 const TAB_ORDER = ['dashboard', 'portfolio', 'market', 'etf', 'stocks', 'autotrade', 'cointrade', 'scalp'];

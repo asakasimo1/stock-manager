@@ -1048,8 +1048,13 @@
   <div style="border-top:1px solid var(--border);margin:8px 0 20px"></div>
 
   <!-- 완료/취소 내역 (매수+매도 통합) -->
-  <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:8px">📋 완료 / 취소 내역</div>
-  <div id="at-history-list"><div style="color:var(--muted);font-size:13px;padding:12px 0">없음</div></div>
+  <div onclick="toggleHistoryCollapse('at')" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;padding:8px 2px;user-select:none">
+    <span style="font-size:13px;font-weight:700;color:var(--text)">📋 완료 / 취소 내역 (<span id="hist-count-at">0건</span>)</span>
+    <span id="hist-icon-at" style="font-size:11px;color:var(--muted)">▶</span>
+  </div>
+  <div id="hist-body-at" style="display:none">
+    <div id="at-history-list"><div style="color:var(--muted);font-size:13px;padding:12px 0">없음</div></div>
+  </div>
 
   <!-- 구분선 -->
   <div style="border-top:1px solid var(--border);margin:8px 0 20px"></div>
@@ -1435,8 +1440,13 @@
   <div style="border-top:1px solid var(--border);margin:8px 0 20px"></div>
 
   <!-- 완료/취소 내역 -->
-  <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:8px">📋 완료 / 취소 내역</div>
-  <div id="ct-history-list"><div style="color:var(--muted);font-size:13px;padding:12px 0">없음</div></div>
+  <div onclick="toggleHistoryCollapse('ct')" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;padding:8px 2px;user-select:none">
+    <span style="font-size:13px;font-weight:700;color:var(--text)">📋 완료 / 취소 내역 (<span id="hist-count-ct">0건</span>)</span>
+    <span id="hist-icon-ct" style="font-size:11px;color:var(--muted)">▶</span>
+  </div>
+  <div id="hist-body-ct" style="display:none">
+    <div id="ct-history-list"><div style="color:var(--muted);font-size:13px;padding:12px 0">없음</div></div>
+  </div>
 
   <!-- 구분선 -->
   <div style="border-top:1px solid var(--border);margin:8px 0 20px"></div>
@@ -1594,8 +1604,18 @@
   </div>
 
   <!-- ── 잡 목록 ─────────────────────────────────── -->
-  <div style="font-size:12px;font-weight:700;color:var(--text);margin-bottom:10px">📋 등록된 잡</div>
-  <div id="sc-job-list"></div>
+  <div style="font-size:12px;font-weight:700;color:var(--text);margin-bottom:10px">📋 진행중인 잡</div>
+  <div id="sc-active-list"></div>
+
+  <div style="margin-top:14px">
+    <div onclick="toggleHistoryCollapse('sc')" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;padding:8px 2px;user-select:none;border-top:1px solid var(--border)">
+      <span style="font-size:12px;font-weight:700;color:var(--muted)">완료·정지 내역 (<span id="hist-count-sc">0건</span>)</span>
+      <span id="hist-icon-sc" style="font-size:11px;color:var(--muted)">▶</span>
+    </div>
+    <div id="hist-body-sc" style="display:none">
+      <div id="sc-history-list"></div>
+    </div>
+  </div>
 
 </div>
 </div><!-- /tab-scalp -->

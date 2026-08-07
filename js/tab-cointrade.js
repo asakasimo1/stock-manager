@@ -984,11 +984,14 @@ function ctRenderHistory() {
     ..._ctBuyJobs.filter(j => ['done','cancelled'].includes(j.status)),
     ..._ctSellJobs.filter(j => ['done','cancelled'].includes(j.status)),
     ..._ctCycleJobs.filter(j => ['done','cancelled','stopped'].includes(j.status)),
-  ].sort((a, b) => (b.executed_at || b.cancelled_at || b.created_at || '').localeCompare(
-                   a.executed_at || a.cancelled_at || a.created_at || ''));
+  ]
+    .filter(j => withinLastDays(j.executed_at || j.cancelled_at || j.created_at))
+    .sort((a, b) => (b.executed_at || b.cancelled_at || b.created_at || '').localeCompare(
+                     a.executed_at || a.cancelled_at || a.created_at || ''));
 
-  if (!done.length) { el.innerHTML = `<div style="color:var(--muted);font-size:13px;padding:12px 0">없음</div>`; return; }
-  el.innerHTML = done.slice(0, 5).map(j => {
+  setHistoryCount('ct', done.length);
+  if (!done.length) { el.innerHTML = `<div style="color:var(--muted);font-size:13px;padding:12px 0">최근 ${HISTORY_DAYS}일 내 내역이 없습니다</div>`; return; }
+  el.innerHTML = done.map(j => {
     const isCancelled = j.status === 'cancelled' || j.status === 'stopped';
     const statusColor = isCancelled ? 'var(--muted)' : 'var(--green)';
     const statusLabel = isCancelled ? '취소' : '완료';
