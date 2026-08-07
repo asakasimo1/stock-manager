@@ -153,6 +153,24 @@ def _auto_discover(jobs: list, auto_cfg: dict, price_cache: dict, coin_enabled: 
     return bool(picked)
 
 
+def _poll_executed_volume(order_uuid: str, fallback: float, tries: int = 6, delay: float = 0.5) -> float:
+    """시장가 매수 직후 실제 체결수량을 조회. 추정치(fallback)와 실제 체결량이 달라 매도 시
+    잔량(dust)이 남는 문제를 막기 위함 — 반드시 Upbit이 확정한 executed_volume을 사용."""
+    if not order_uuid:
+        return fallback
+    for _ in range(tries):
+        try:
+            order = upbit_api.get_order(order_uuid)
+            if order["state"] == "done" and order["executed_volume"] > 0:
+                return order["executed_volume"]
+        except Exception as e:
+            logger.warning("주문 체결 조회 실패 %s: %s", order_uuid, e)
+            break
+        time.sleep(delay)
+    logger.warning("주문 %s 체결수량 확인 실패 — 추정치(%.8f) 사용", order_uuid, fallback)
+    return fallback
+
+
 def _force_close(job: dict, cur_price: float, reason: str) -> None:
     ticker = job["ticker"]
     name   = job.get("name", ticker)
@@ -314,7 +332,8 @@ def main():
         logger.info("★ [진입] %s(%s) @ %s원 — %s", name, ticker, f"{cur_price:,.0f}", reason)
         try:
             result = upbit_api.place_order(market=ticker, side="bid", ord_type="price", price=krw_amount)
-            coin_qty = math.floor(krw_amount / cur_price * (1 - BUY_FEE) * 1e8) / 1e8
+            estimated_qty = math.floor(krw_amount / cur_price * (1 - BUY_FEE) * 1e8) / 1e8
+            coin_qty = _poll_executed_volume(result.get("uuid", ""), fallback=estimated_qty)
             job["phase"]      = "holding"
             job["buy_price"]  = cur_price
             job["buy_qty"]    = coin_qty
