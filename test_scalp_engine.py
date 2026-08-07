@@ -49,10 +49,26 @@ def test_should_exit_stop_loss():
     print(f"OK: 손절 트리거 — {reason}")
 
 
-def test_should_exit_time_stop():
-    ok, reason = se.should_exit(entry_price=100, cur_price=100.1, entered_at=0, now=200, params={"time_stop_sec": 180, "take_profit_pct": 0.6, "stop_loss_pct": 0.4})
+def test_should_exit_time_stop_closes_when_loss_exceeds_threshold():
+    # 손절선(-0.4%)도, time_stop_loss_pct(-0.5%)도 아직 안 넘은 -0.3% — 계속 보유
+    ok, reason = se.should_exit(entry_price=100, cur_price=99.7, entered_at=0, now=200,
+                                 params={"time_stop_sec": 180, "take_profit_pct": 0.6, "stop_loss_pct": 0.4, "time_stop_loss_pct": 0.5})
+    assert ok is False, reason
+    print("OK: 시간초과지만 손실이 time_stop_loss_pct 이내면 계속 보유")
+
+    # -0.5%를 넘긴 경우엔 시간초과 손절
+    ok, reason = se.should_exit(entry_price=100, cur_price=99.4, entered_at=0, now=200,
+                                 params={"time_stop_sec": 180, "take_profit_pct": 0.6, "stop_loss_pct": 100, "time_stop_loss_pct": 0.5})
     assert ok is True and "시간초과" in reason, reason
-    print(f"OK: 시간초과 강제청산 — {reason}")
+    print(f"OK: 시간초과 + 손실 -0.5% 초과 시 청산 — {reason}")
+
+
+def test_should_exit_time_stop_holds_when_flat_or_profit():
+    # 3분 지나도 소폭 플러스면 무조건 청산하지 않고 계속 관찰 (기존 "시간초과=무조건 청산" 완화)
+    ok, reason = se.should_exit(entry_price=100, cur_price=100.1, entered_at=0, now=200,
+                                 params={"time_stop_sec": 180, "take_profit_pct": 0.6, "stop_loss_pct": 0.4, "time_stop_loss_pct": 0.5})
+    assert ok is False, reason
+    print("OK: 시간초과 시점에 플러스/보합이면 무조건 청산하지 않음")
 
 
 def test_should_exit_holds():
@@ -97,7 +113,8 @@ if __name__ == "__main__":
     test_should_enter_passes()
     test_should_exit_take_profit()
     test_should_exit_stop_loss()
-    test_should_exit_time_stop()
+    test_should_exit_time_stop_closes_when_loss_exceeds_threshold()
+    test_should_exit_time_stop_holds_when_flat_or_profit()
     test_should_exit_holds()
     test_should_give_up_watching()
     test_select_auto_candidates_filters_and_caps()

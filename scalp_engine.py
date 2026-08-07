@@ -61,10 +61,10 @@ def reset(ticker: str = None) -> None:
 def should_enter(momentum: float | None, today_chg_pct: float | None, params: dict) -> tuple[bool, str]:
     """
     params:
-      entry_momentum_pct — 진입 모멘텀 임계 (기본 0.4%)
+      entry_momentum_pct — 진입 모멘텀 임계 (기본 0.8% — 노이즈성 진입을 줄이기 위해 0.4%에서 상향)
       max_day_chg_pct    — 당일 이미 이 이상 오른 종목은 추격 제외 (기본 5.0%)
     """
-    entry_th = float(params.get("entry_momentum_pct", 0.4))
+    entry_th = float(params.get("entry_momentum_pct", 0.8))
     max_day  = float(params.get("max_day_chg_pct", 5.0))
 
     if momentum is None:
@@ -135,14 +135,19 @@ def should_exit(
 ) -> tuple[bool, str]:
     """
     params:
-      take_profit_pct — 익절 기준 (기본 0.6%)
-      stop_loss_pct   — 손절 기준 (기본 0.4%, 양수로 입력)
-      time_stop_sec   — 시간초과 강제 청산 (기본 180초) — 방치 후 손절 재발 방지 핵심 장치
+      take_profit_pct   — 익절 기준 (기본 0.6%)
+      stop_loss_pct     — 손절 기준 (기본 0.4%, 양수로 입력) — 시간과 무관하게 항상 적용
+      time_stop_sec     — 시간초과 판단 시점 (기본 180초)
+      time_stop_loss_pct — 시간초과 시점에 이 손실률(양수 입력)을 넘겼을 때만 청산 (기본 0.5%)
+                           그 안이면(수익이거나 손실이 -0.5% 이내면) 무조건 청산하지 않고 계속 보유
+                           — "3분 지났다고 무조건 손절"하던 것을 완화, 시간초과=거의 항상 수수료손실
+                             패턴(승률 저하 요인)을 줄이기 위함
     entry_price/cur_price는 이미 수수료를 반영한 값을 넘기는 것을 권장 (job 쪽에서 계산).
     """
-    take_pct  = float(params.get("take_profit_pct", 0.6))
-    stop_pct  = float(params.get("stop_loss_pct", 0.4))
-    time_stop = float(params.get("time_stop_sec", 180))
+    take_pct           = float(params.get("take_profit_pct", 0.6))
+    stop_pct           = float(params.get("stop_loss_pct", 0.4))
+    time_stop          = float(params.get("time_stop_sec", 180))
+    time_stop_loss_pct = float(params.get("time_stop_loss_pct", 0.5))
 
     if entry_price <= 0:
         return False, ""
@@ -154,5 +159,7 @@ def should_exit(
     if chg_pct <= -stop_pct:
         return True, f"손절 ({chg_pct:.2f}%)"
     if now - entered_at >= time_stop:
-        return True, f"시간초과 청산 ({int(now - entered_at)}초 경과, {chg_pct:+.2f}%)"
+        if chg_pct <= -time_stop_loss_pct:
+            return True, f"시간초과 손절 ({int(now - entered_at)}초 경과, {chg_pct:+.2f}%)"
+        return False, ""  # 시간은 지났지만 손실이 크지 않음 — 청산하지 않고 계속 관찰
     return False, ""
