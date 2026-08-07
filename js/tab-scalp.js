@@ -108,6 +108,28 @@ function scRenderAutoConfig() {
       <span style="font-size:13px;font-weight:600">자동 포착 활성화 — 켜면 데몬이 직접 급등 종목을 스캔해서 진입합니다</span>
     </label>
 
+    <div style="background:#7c3aed0d;border:1px solid #7c3aed33;border-radius:10px;padding:12px;margin-bottom:14px">
+      <div style="font-size:12px;font-weight:700;color:#7c3aed;margin-bottom:8px">🔍 후보 포착 조건 — 아래 두 조건을 동시에 만족해야 후보로 인정</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">① 급등 판단 구간 (초)</div>
+          <input id="sac-discovery-momentum-sec" type="number" min="10" step="10" value="${cfg.discovery_momentum_sec ?? 60}"
+            style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">① 급등 판단 상승률 (%)</div>
+          <input id="sac-min-discovery-momentum" type="number" min="0.1" step="0.1" value="${cfg.min_discovery_momentum_pct ?? 0.5}"
+            style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
+        </div>
+        <div style="grid-column:1 / -1">
+          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">② 거래량 증가 배수 (평소 대비 배)</div>
+          <input id="sac-min-volume-surge" type="number" min="1" step="0.1" value="${cfg.min_volume_surge_ratio ?? 1.3}"
+            style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
+        </div>
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-top:8px">① 최근 N초간 이만큼 올랐는지 · ② 최근 거래량이 평소(최근 2분 평균)보다 몇 배 늘었는지 — 두 조건을 모두 만족하는 종목만 후보로 잡습니다</div>
+    </div>
+
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
       <div>
         <div style="font-size:11px;color:var(--muted);margin-bottom:4px">${sizeLabel}</div>
@@ -196,6 +218,9 @@ async function scSaveAutoConfig() {
     time_stop_loss_pct: parseFloat(document.getElementById('sac-time-stop-loss').value) || 0.5,
     max_day_chg_pct: parseFloat(document.getElementById('sac-max-day-chg').value) || 5.0,
     watch_timeout_sec: parseInt(document.getElementById('sac-watch-timeout').value, 10) || 300,
+    discovery_momentum_sec: parseInt(document.getElementById('sac-discovery-momentum-sec').value, 10) || 60,
+    min_discovery_momentum_pct: parseFloat(document.getElementById('sac-min-discovery-momentum').value) || 0.5,
+    min_volume_surge_ratio: parseFloat(document.getElementById('sac-min-volume-surge').value) || 1.3,
     min_liquidity: parseFloat(document.getElementById('sac-min-liquidity').value) || 0,
     max_daily_loss_krw: -Math.abs(parseFloat(document.getElementById('sac-daily-loss').value) || 30000),
   };

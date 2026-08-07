@@ -799,6 +799,9 @@ const SCALP_AUTO_DEFAULTS = {
   max_concurrent: 2,
   max_daily_loss_krw: -30000,
   watch_timeout_sec: 300,
+  discovery_momentum_sec: 60,
+  min_discovery_momentum_pct: 0.5,
+  min_volume_surge_ratio: 1.3,
 };
 
 async function handleScalpAutoConfig(req, res, gistId, ghToken) {
