@@ -109,7 +109,10 @@ function scRenderAutoConfig() {
     </label>
 
     <div style="background:#7c3aed0d;border:1px solid #7c3aed33;border-radius:10px;padding:12px;margin-bottom:14px">
-      <div style="font-size:12px;font-weight:700;color:#7c3aed;margin-bottom:8px">🔍 후보 포착 조건 — 아래 두 조건을 동시에 만족해야 후보로 인정</div>
+      <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;cursor:pointer">
+        <input id="sac-surge-enabled" type="checkbox" ${(cfg.surge_enabled ?? true) ? 'checked' : ''} style="width:15px;height:15px" />
+        <span style="font-size:12px;font-weight:700;color:#7c3aed">🔍 급등 포착 — 아래 두 조건을 동시에 만족해야 후보로 인정</span>
+      </label>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
         <div>
           <div style="font-size:11px;color:var(--muted);margin-bottom:4px">① 급등 판단 구간 (초)</div>
@@ -128,6 +131,36 @@ function scRenderAutoConfig() {
         </div>
       </div>
       <div style="font-size:11px;color:var(--muted);margin-top:8px">① 최근 N초간 이만큼 올랐는지 · ② 최근 거래량이 평소(최근 2분 평균)보다 몇 배 늘었는지 — 두 조건을 모두 만족하는 종목만 후보로 잡습니다</div>
+    </div>
+
+    <div style="background:#f59e0b0d;border:1px solid #f59e0b33;border-radius:10px;padding:12px;margin-bottom:14px">
+      <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;cursor:pointer">
+        <input id="sac-reversal-enabled" type="checkbox" ${cfg.reversal_enabled ? 'checked' : ''} style="width:15px;height:15px" />
+        <span style="font-size:12px;font-weight:700;color:#f59e0b">📉 급락후반등 포착 — 빠르게 급락하다가 급 양전하는 대상</span>
+      </label>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">① 하락 판단 구간 (초)</div>
+          <input id="sac-decline-lookback" type="number" min="30" step="30" value="${cfg.decline_lookback_sec ?? 300}"
+            style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">① 하락 판단 하락폭 (%)</div>
+          <input id="sac-min-decline" type="number" min="0.1" step="0.1" value="${cfg.min_decline_pct ?? 2.0}"
+            style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">② 반등 판단 구간 (초)</div>
+          <input id="sac-rebound-lookback" type="number" min="10" step="10" value="${cfg.rebound_lookback_sec ?? 30}"
+            style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">② 반등 판단 상승률 (%)</div>
+          <input id="sac-min-rebound" type="number" min="0.1" step="0.1" value="${cfg.min_rebound_pct ?? 0.4}"
+            style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
+        </div>
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-top:8px">① 최근 N초간 이만큼 하락했는지 · ② 그 이후 최근 M초간 이만큼 반등했는지 — 둘 다 만족하는 종목만 후보로 잡습니다 (급등 포착과 별개로 독립 작동)</div>
     </div>
 
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
@@ -218,9 +251,15 @@ async function scSaveAutoConfig() {
     time_stop_loss_pct: parseFloat(document.getElementById('sac-time-stop-loss').value) || 0.5,
     max_day_chg_pct: parseFloat(document.getElementById('sac-max-day-chg').value) || 5.0,
     watch_timeout_sec: parseInt(document.getElementById('sac-watch-timeout').value, 10) || 300,
+    surge_enabled: document.getElementById('sac-surge-enabled').checked,
     discovery_momentum_sec: parseInt(document.getElementById('sac-discovery-momentum-sec').value, 10) || 60,
     min_discovery_momentum_pct: parseFloat(document.getElementById('sac-min-discovery-momentum').value) || 0.4,
     min_volume_surge_ratio: parseFloat(document.getElementById('sac-min-volume-surge').value) || 1.3,
+    reversal_enabled: document.getElementById('sac-reversal-enabled').checked,
+    decline_lookback_sec: parseInt(document.getElementById('sac-decline-lookback').value, 10) || 300,
+    min_decline_pct: parseFloat(document.getElementById('sac-min-decline').value) || 2.0,
+    rebound_lookback_sec: parseInt(document.getElementById('sac-rebound-lookback').value, 10) || 30,
+    min_rebound_pct: parseFloat(document.getElementById('sac-min-rebound').value) || 0.4,
     min_liquidity: parseFloat(document.getElementById('sac-min-liquidity').value) || 0,
     max_daily_loss_krw: -Math.abs(parseFloat(document.getElementById('sac-daily-loss').value) || 30000),
   };
@@ -409,7 +448,11 @@ function _scJobCardHtml(j) {
     const pnl          = j.realized_pnl_today || 0;
     const pnlColor     = pnl >= 0 ? '#16a34a' : '#dc2626';
     const marketBadge  = j.market === 'coin' ? '🪙 코인' : '📈 주식';
-    const autoBadge    = j.source === 'auto' ? ' <span style="color:#7c3aed;font-weight:700">🔍 자동포착</span>' : '';
+    const autoBadge    = j.source === 'auto'
+      ? (j.discovery_mode === 'reversal'
+          ? ' <span style="color:#f59e0b;font-weight:700">📉 급락반등포착</span>'
+          : ' <span style="color:#7c3aed;font-weight:700">🔍 급등포착</span>')
+      : '';
     const enteredLabel = isHolding && j.entered_at
       ? new Date(j.entered_at * 1000).toLocaleTimeString('ko-KR') : '';
 

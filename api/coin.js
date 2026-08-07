@@ -802,6 +802,12 @@ const SCALP_AUTO_DEFAULTS = {
   discovery_momentum_sec: 60,
   min_discovery_momentum_pct: 0.4,
   min_volume_surge_ratio: 1.3,
+  surge_enabled: true,
+  reversal_enabled: false,
+  decline_lookback_sec: 300,
+  min_decline_pct: 2.0,
+  rebound_lookback_sec: 30,
+  min_rebound_pct: 0.4,
 };
 
 async function handleScalpAutoConfig(req, res, gistId, ghToken) {
