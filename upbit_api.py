@@ -308,6 +308,22 @@ def get_balance() -> dict:
     return {"krw": krw, "krw_avail": krw_avail, "holdings": holdings, "updated_at": updated_at}
 
 
+def get_currency_balance(currency: str) -> float:
+    """단일 코인의 주문 가능(locked 제외) 잔고. 매도 직전 실제 보유량으로 주문 수량을
+    한 번 더 클램프하기 위한 용도 — 체결수량 추정치가 실제와 어긋나 insufficient_funds_ask로
+    매도가 영구히 막히는 사고를 방지한다."""
+    t0 = time.monotonic()
+    r = _session.get(f"{BASE_URL}/accounts", headers=_auth_header(), timeout=10)
+    ms = (time.monotonic() - t0) * 1000
+    logger.info("⏱  GET  accounts(%s) %5.0fms  HTTP%s", currency, ms, r.status_code)
+    if not r.ok:
+        raise RuntimeError(f"잔고 조회 실패: HTTP {r.status_code} {r.text[:200]}")
+    for acc in r.json():
+        if acc["currency"] == currency:
+            return float(acc["balance"])
+    return 0.0
+
+
 # ─────────────────────────────────────────
 # 주문 실행
 # ─────────────────────────────────────────

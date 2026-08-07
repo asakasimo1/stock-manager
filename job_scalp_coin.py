@@ -232,6 +232,21 @@ def _poll_executed_volume(order_uuid: str, fallback: float, tries: int = 6, dela
     return fallback
 
 
+def _sellable_qty(ticker: str, recorded_qty: float) -> float:
+    """실제 매도 직전 계좌 잔고로 한 번 더 클램프. 체결수량 추정이 실제 잔고보다 커서
+    insufficient_funds_ask로 매도가 영구히 막히는 사고(저유동성 코인에서 슬리피지로 인해
+    실제 체결량이 추정치보다 적을 때 발생)를 방지한다."""
+    try:
+        actual = upbit_api.get_currency_balance(ticker.split("-", 1)[1])
+    except Exception as e:
+        logger.warning("%s 잔고 조회 실패 — 기록된 수량 그대로 사용: %s", ticker, e)
+        return recorded_qty
+    if actual < recorded_qty:
+        logger.warning("%s 기록수량(%.8f) > 실제잔고(%.8f) — 실제잔고로 매도", ticker, recorded_qty, actual)
+        return actual
+    return recorded_qty
+
+
 def _force_close(job: dict, cur_price: float, reason: str) -> None:
     ticker = job["ticker"]
     name   = job.get("name", ticker)
@@ -239,6 +254,7 @@ def _force_close(job: dict, cur_price: float, reason: str) -> None:
     if qty <= 0:
         job["phase"] = "watching"
         return
+    qty = _sellable_qty(ticker, qty)
     try:
         result = upbit_api.place_order(market=ticker, side="ask", ord_type="market", volume=qty)
         buy_price = float(job.get("buy_price", 0))
@@ -349,7 +365,7 @@ def main():
             net_cur    = _net_sell_value(cur_price)
             should, reason = scalp_engine.should_exit(net_entry, net_cur, entered_at, now_epoch, job)
             if should:
-                qty = float(job.get("buy_qty", 0))
+                qty = _sellable_qty(ticker, float(job.get("buy_qty", 0)))
                 try:
                     result = upbit_api.place_order(market=ticker, side="ask", ord_type="market", volume=qty)
                     pnl = (net_cur - net_entry) * qty
