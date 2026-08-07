@@ -2,6 +2,8 @@
 국내주식 초단타(스캘핑) 잡 — daemon_scalp.py 에서 10초 주기(장중에만)로 실행
 Gist scalp_stock_jobs.json 에서 잡 읽기 → 모멘텀 진입/청산 판단 → KIS 시장가 주문 → 상태 갱신
 Gist scalp_control.json 의 stock_enabled=false 이면 신규 진입 중단 + 보유 포지션 즉시 청산
+Gist scalp_auto_config.json 의 stock.enabled=true 이면 KIS 등락률 순위에서 급등 후보를 watching 잡으로 자동 생성
+  (source="auto" 잡은 1회 진입/청산 후 status=done 으로 종료)
 
 잡 스키마는 job_scalp_coin.py의 scalp_coin_jobs.json 과 동일 구조 (qty는 정수 주 단위).
 """
@@ -57,6 +59,75 @@ def _is_stock_enabled() -> bool:
     return ctrl.get("stock_enabled", True)
 
 
+def _load_auto_config() -> dict:
+    cfg = gist_writer._read_gist_file("scalp_auto_config.json")
+    if not isinstance(cfg, dict):
+        return {}
+    return cfg.get("stock") or {}
+
+
+def _auto_discover(jobs: list, auto_cfg: dict, stock_enabled: bool, now_epoch: float) -> bool:
+    """scalp_auto_config.json의 stock 설정에 따라 KIS 등락률 순위에서 급등 후보를 찾아
+    watching 잡을 자동 생성. 반환: jobs 리스트가 변경되었는지 여부"""
+    if not auto_cfg.get("enabled") or not stock_enabled:
+        return False
+
+    today = _today_str()
+    max_loss = float(auto_cfg.get("max_daily_loss_krw", -30000))
+    auto_pnl_today = sum(
+        j.get("realized_pnl_today", 0) for j in jobs
+        if j.get("source") == "auto" and j.get("stats_date") == today
+    )
+    if auto_pnl_today <= max_loss:
+        return False
+
+    active_auto = [j for j in jobs if j.get("source") == "auto" and j.get("status") not in ("done", "stopped")]
+    slots = int(auto_cfg.get("max_concurrent", 2)) - len(active_auto)
+    if slots <= 0:
+        return False
+
+    try:
+        ranking = kis_api.get_fluctuation_ranking(top_n=30)
+    except Exception as e:
+        logger.error("등락률 순위 조회 실패: %s", e)
+        return False
+
+    candidates = [
+        {"ticker": r["ticker"], "name": r["name"], "chg_pct": r["chg_pct"], "liquidity": r["acml_vol"] * r["price"]}
+        for r in ranking
+    ]
+
+    existing_tickers = {j["ticker"] for j in jobs if j.get("status") not in ("done", "stopped")}
+    max_day_chg = float(auto_cfg.get("max_day_chg_pct", 5.0))
+    min_liquidity = float(auto_cfg.get("min_liquidity", 100_000_000))
+    picked = scalp_engine.select_auto_candidates(candidates, existing_tickers, max_day_chg, min_liquidity, slots)
+
+    for c in picked:
+        jobs.append({
+            "id":                 f"auto-{c['ticker']}-{int(now_epoch)}",
+            "ticker":             c["ticker"],
+            "name":               c["name"],
+            "status":             "active",
+            "phase":              "watching",
+            "source":             "auto",
+            "entry_momentum_pct": auto_cfg.get("entry_momentum_pct", 0.4),
+            "lookback_sec":       auto_cfg.get("lookback_sec", 30),
+            "max_day_chg_pct":    max_day_chg,
+            "take_profit_pct":    auto_cfg.get("take_profit_pct", 0.6),
+            "stop_loss_pct":      auto_cfg.get("stop_loss_pct", 0.4),
+            "time_stop_sec":      auto_cfg.get("time_stop_sec", 180),
+            "amount":             auto_cfg.get("amount", 0),
+            "qty":                0,
+            "max_daily_loss_krw": max_loss,
+            "buy_price": 0, "buy_qty": 0, "entered_at": 0,
+            "trades_today": 0, "realized_pnl_today": 0, "stats_date": today,
+            "created_at": datetime.now(KST).strftime("%Y-%m-%d %H:%M"),
+        })
+        logger.info("🔍 [자동포착] %s(%s) 등락률 %+.2f%% — watching 잡 생성", c["name"], c["ticker"], c["chg_pct"])
+
+    return bool(picked)
+
+
 def _fetch_prices(tickers: list) -> dict:
     result = {}
 
@@ -91,6 +162,8 @@ def _force_close(job: dict, cur_price: int, reason: str) -> None:
         job["buy_price"] = 0
         job["buy_qty"] = 0
         job["entered_at"] = 0
+        if job.get("source") == "auto":
+            job["status"] = "done"  # 자동발굴 잡은 1회성 — 청산 후 슬롯 반환
         gist_writer.log_trade(ticker, name, "sell", cur_price, qty, pnl=pnl,
                                pnl_pct=(pnl / (buy_price * qty) * 100) if buy_price > 0 else None,
                                reason=reason, order_no=result.get("order_no", ""))
@@ -108,15 +181,19 @@ def main():
         logger.error("scalp_stock_jobs.json Gist 읽기 실패")
         return
     jobs = jobs if isinstance(jobs, list) else []
-    if not jobs:
-        return
 
     stock_enabled = _is_stock_enabled()
+    auto_cfg = _load_auto_config()
     now_epoch = time.time()
     changed = False
 
-    tickers = list({j["ticker"] for j in jobs if j.get("status") != "stopped"})
+    if _auto_discover(jobs, auto_cfg, stock_enabled, now_epoch):
+        changed = True
+
+    tickers = list({j["ticker"] for j in jobs if j.get("status") not in ("stopped", "done")})
     if not tickers:
+        if changed:
+            gist_writer._write_gist({"scalp_stock_jobs.json": jobs})
         return
     price_cache = _fetch_prices(tickers)
 
@@ -176,6 +253,8 @@ def main():
                     job["buy_price"] = 0
                     job["buy_qty"] = 0
                     job["entered_at"] = 0
+                    if job.get("source") == "auto":
+                        job["status"] = "done"  # 자동발굴 잡은 1회성 — 청산 후 슬롯 반환
                     changed = True
                     gist_writer.log_trade(ticker, name, "sell", cur_price, qty, pnl=pnl,
                                            pnl_pct=pnl_pct, reason=reason, order_no=result.get("order_no", ""))
@@ -219,6 +298,11 @@ def main():
             logger.info("매수 체결 %s %d주 @ %d원", ticker, qty, cur_price)
         except Exception as e:
             logger.error("%s 진입 실패: %s", ticker, e)
+
+    jobs, pruned = scalp_engine.prune_stale_auto_jobs(jobs, _today_str())
+    if pruned:
+        changed = True
+        logger.info("지난 완료 자동발굴 잡 %d건 정리", pruned)
 
     if changed:
         gist_writer._write_gist({"scalp_stock_jobs.json": jobs})

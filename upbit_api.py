@@ -140,6 +140,31 @@ def _auth_header(query_params: dict = None) -> dict:
 
 
 # ─────────────────────────────────────────
+# 전체 마켓 목록 (초단타 자동 종목 발굴용)
+# ─────────────────────────────────────────
+_all_krw_markets_cache: dict = {"markets": [], "at": 0.0}
+_ALL_MARKETS_TTL = 6 * 3600  # 상장 목록은 자주 안 바뀜 — 6시간 캐시
+
+
+def get_all_krw_markets() -> list:
+    """업비트 KRW 마켓 전체 티커 목록 (예: ['KRW-BTC', 'KRW-ETH', ...])"""
+    now = time.time()
+    if _all_krw_markets_cache["markets"] and now - _all_krw_markets_cache["at"] < _ALL_MARKETS_TTL:
+        return _all_krw_markets_cache["markets"]
+
+    r = _session.get(f"{BASE_URL}/market/all", params={"isDetails": "false"}, timeout=10)
+    if not r.ok:
+        logger.error("전체 마켓 조회 실패: HTTP %s", r.status_code)
+        return _all_krw_markets_cache["markets"]  # 실패 시 이전 캐시라도 반환
+
+    markets = [d["market"] for d in r.json() if d.get("market", "").startswith("KRW-")]
+    _all_krw_markets_cache["markets"] = markets
+    _all_krw_markets_cache["at"] = now
+    logger.info("전체 KRW 마켓 %d개 조회", len(markets))
+    return markets
+
+
+# ─────────────────────────────────────────
 # 현재가 조회 (공개 API)
 # ─────────────────────────────────────────
 def get_price(market: str) -> dict:

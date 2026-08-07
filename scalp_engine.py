@@ -76,6 +76,48 @@ def should_enter(momentum: float | None, today_chg_pct: float | None, params: di
     return True, f"모멘텀 진입 {momentum:+.2f}%"
 
 
+def select_auto_candidates(
+    candidates: list,
+    existing_tickers: set,
+    max_day_chg_pct: float,
+    min_liquidity: float,
+    slots: int,
+) -> list:
+    """
+    자동 종목 발굴 — 후보 목록에서 빈 슬롯 수만큼 선정 (거래소 무관 공용).
+    candidates: [{"ticker", "name", "price", "chg_pct", "liquidity", ...}], 정렬 순서 그대로 우선순위로 사용
+    existing_tickers: 이미 진행 중(watching/holding)인 티커 — 중복 진입 방지
+    max_day_chg_pct: 이 값을 넘게 오른 종목은 이미 과열된 것으로 보고 제외 (should_enter와 동일 철학)
+    min_liquidity: 이 값 미만인 종목은 슬리피지 우려로 제외 (코인: 24h 거래대금, 주식: 누적거래대금 근사치)
+    slots: 이번에 새로 열 수 있는 최대 개수
+    """
+    if slots <= 0:
+        return []
+    picked = []
+    for c in candidates:
+        if len(picked) >= slots:
+            break
+        if c["ticker"] in existing_tickers:
+            continue
+        chg = c.get("chg_pct", 0)
+        if chg <= 0 or chg > max_day_chg_pct:
+            continue
+        if c.get("liquidity", 0) < min_liquidity:
+            continue
+        picked.append(c)
+    return picked
+
+
+def prune_stale_auto_jobs(jobs: list, today: str) -> tuple:
+    """전날 이전에 완료된 자동발굴 잡을 제거 (무한정 누적 방지). 오늘 완료된 건 UI 확인용으로 유지.
+    반환: (정리된 jobs, 제거된 개수)"""
+    kept = [
+        j for j in jobs
+        if not (j.get("source") == "auto" and j.get("status") == "done" and j.get("stats_date") != today)
+    ]
+    return kept, len(jobs) - len(kept)
+
+
 def should_exit(
     entry_price: float,
     cur_price: float,

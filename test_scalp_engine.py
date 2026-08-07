@@ -61,6 +61,26 @@ def test_should_exit_holds():
     print("OK: 조건 미달 시 보유 유지")
 
 
+def test_select_auto_candidates_filters_and_caps():
+    candidates = [
+        {"ticker": "A", "chg_pct": 2.0, "liquidity": 1_000_000},   # 통과
+        {"ticker": "B", "chg_pct": 8.0, "liquidity": 1_000_000},   # 과열 제외
+        {"ticker": "C", "chg_pct": 1.0, "liquidity": 100},          # 유동성 부족 제외
+        {"ticker": "D", "chg_pct": -1.0, "liquidity": 1_000_000},  # 하락 제외
+        {"ticker": "E", "chg_pct": 3.0, "liquidity": 1_000_000},   # 통과 (슬롯 부족으로 잘림)
+    ]
+    picked = se.select_auto_candidates(candidates, existing_tickers=set(), max_day_chg_pct=5.0, min_liquidity=1000, slots=1)
+    assert [c["ticker"] for c in picked] == ["A"], picked
+    print(f"OK: 과열/유동성/하락 필터링 + 슬롯 제한 — {picked}")
+
+
+def test_select_auto_candidates_skips_existing():
+    candidates = [{"ticker": "A", "chg_pct": 2.0, "liquidity": 1_000_000}]
+    picked = se.select_auto_candidates(candidates, existing_tickers={"A"}, max_day_chg_pct=5.0, min_liquidity=1000, slots=2)
+    assert picked == [], picked
+    print("OK: 이미 진행중인 티커 중복 제외")
+
+
 if __name__ == "__main__":
     test_momentum_insufficient_data()
     test_momentum_calc()
@@ -71,4 +91,6 @@ if __name__ == "__main__":
     test_should_exit_stop_loss()
     test_should_exit_time_stop()
     test_should_exit_holds()
+    test_select_auto_candidates_filters_and_caps()
+    test_select_auto_candidates_skips_existing()
     print("\n전체 통과")
