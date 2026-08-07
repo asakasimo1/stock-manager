@@ -3,7 +3,7 @@
 Gist scalp_stock_jobs.json 에서 잡 읽기 → 모멘텀 진입/청산 판단 → KIS 시장가 주문 → 상태 갱신
 Gist scalp_control.json 의 stock_enabled=false 이면 신규 진입 중단 + 보유 포지션 즉시 청산
 Gist scalp_auto_config.json 의 stock.enabled=true 이면 KIS 등락률 순위에서 급등 후보를 watching 잡으로 자동 생성
-  (source="auto" 잡은 1회 진입/청산 후 status=done 으로 종료)
+  (source="auto" 잡은 1회 진입/청산 후 status=done 으로 종료 — 장마감까지 미체결이면 그날로 종료 처리)
 
 잡 스키마는 job_scalp_coin.py의 scalp_coin_jobs.json 과 동일 구조 (qty는 정수 주 단위).
 """
@@ -172,15 +172,31 @@ def _force_close(job: dict, cur_price: int, reason: str) -> None:
         logger.error("%s 강제청산 실패: %s", ticker, e)
 
 
-def main():
-    if not kis_api.is_any_market_open():
-        return
+def _close_stale_auto_watching(jobs: list) -> bool:
+    """장마감 시 그날 미체결로 끝난 자동발굴 watching 잡을 종료 처리.
+    (당일 급등 후보였을 뿐이라 다음날까지 들고 있을 이유가 없고, 방치하면
+    'watching=active'가 '실행중'으로 표시돼 이미 끝난 매매처럼 보이는 혼란을 줌)
+    반환: jobs가 변경되었는지 여부"""
+    changed = False
+    for job in jobs:
+        if job.get("source") == "auto" and job.get("phase") == "watching" and job.get("status") == "active":
+            job["status"] = "done"
+            job["stop_reason"] = "장마감 — 미체결 종료"
+            changed = True
+    return changed
 
+
+def main():
     jobs = gist_writer._read_gist_file("scalp_stock_jobs.json")
     if jobs is None:
         logger.error("scalp_stock_jobs.json Gist 읽기 실패")
         return
     jobs = jobs if isinstance(jobs, list) else []
+
+    if not kis_api.is_any_market_open():
+        if _close_stale_auto_watching(jobs):
+            gist_writer._write_gist({"scalp_stock_jobs.json": jobs})
+        return
 
     stock_enabled = _is_stock_enabled()
     auto_cfg = _load_auto_config()

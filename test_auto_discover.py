@@ -52,6 +52,21 @@ def test_stock_auto_discover_creates_job(monkeypatch):
     print("OK: 주식 자동발굴 — 등락률 순위에서 과열종목 제외 + watching 잡 생성")
 
 
+def test_stock_close_stale_auto_watching():
+    jobs = [
+        {"ticker": "A", "source": "auto", "phase": "watching", "status": "active"},   # 종료 대상
+        {"ticker": "B", "source": "auto", "phase": "holding", "status": "active"},    # 보유중 — 건드리면 안 됨
+        {"ticker": "C", "source": "manual", "phase": "watching", "status": "active"}, # 수동 등록 — 건드리면 안 됨
+        {"ticker": "D", "source": "auto", "phase": "watching", "status": "done"},     # 이미 종료 — 그대로
+    ]
+    changed = job_scalp_stock._close_stale_auto_watching(jobs)
+    assert changed is True
+    assert jobs[0]["status"] == "done" and "stop_reason" in jobs[0]
+    assert jobs[1]["status"] == "active"  # holding은 그대로
+    assert jobs[2]["status"] == "active"  # manual은 그대로
+    print("OK: 장마감 시 미체결 자동발굴 watching 잡만 종료 처리")
+
+
 class _FakeMonkeypatch:
     def setattr(self, obj, name, value):
         self._orig = (obj, name, getattr(obj, name))
@@ -69,4 +84,5 @@ if __name__ == "__main__":
     mp = _FakeMonkeypatch()
     test_stock_auto_discover_creates_job(mp)
     mp.undo()
+    test_stock_close_stale_auto_watching()
     print("\n전체 통과")
