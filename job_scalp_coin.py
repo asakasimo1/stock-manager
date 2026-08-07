@@ -136,7 +136,7 @@ def _auto_discover(jobs: list, auto_cfg: dict, price_cache: dict, coin_enabled: 
             "status":             "active",
             "phase":              "watching",
             "source":             "auto",
-            "entry_momentum_pct": auto_cfg.get("entry_momentum_pct", 0.8),
+            "entry_momentum_pct": auto_cfg.get("entry_momentum_pct", 0.4),
             "lookback_sec":       auto_cfg.get("lookback_sec", 30),
             "max_day_chg_pct":    max_day_chg,
             "take_profit_pct":    auto_cfg.get("take_profit_pct", 0.6),

@@ -61,10 +61,10 @@ def reset(ticker: str = None) -> None:
 def should_enter(momentum: float | None, today_chg_pct: float | None, params: dict) -> tuple[bool, str]:
     """
     params:
-      entry_momentum_pct — 진입 모멘텀 임계 (기본 0.8% — 노이즈성 진입을 줄이기 위해 0.4%에서 상향)
+      entry_momentum_pct — 진입 모멘텀 임계 (기본 0.4%)
       max_day_chg_pct    — 당일 이미 이 이상 오른 종목은 추격 제외 (기본 5.0%)
     """
-    entry_th = float(params.get("entry_momentum_pct", 0.8))
+    entry_th = float(params.get("entry_momentum_pct", 0.4))
     max_day  = float(params.get("max_day_chg_pct", 5.0))
 
     if momentum is None:
