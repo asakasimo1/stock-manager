@@ -418,7 +418,15 @@ def main():
             gist_writer.log_trade(ticker, name, "buy", cur_price, coin_qty, order_no=result.get("uuid", ""))
             logger.info("매수 체결 %s %.8f개 @ %s원", ticker, coin_qty, f"{cur_price:,.0f}")
         except Exception as e:
-            logger.error("%s 진입 실패: %s", ticker, e)
+            err = str(e)
+            if "not_supported_ord_type" in err:
+                # 거래소가 해당 코인의 시장가 매수 자체를 거부(투자유의 등) — 재시도해도 계속 실패하므로 즉시 포기
+                job["status"] = "done"
+                job["stop_reason"] = "이 코인은 시장가 매수 미지원 (거래소 제한)"
+                changed = True
+                logger.warning("⛔ %s(%s) 시장가 매수 미지원 — 포기, 재시도 안 함", name, ticker)
+            else:
+                logger.error("%s 진입 실패: %s", ticker, e)
 
     jobs, pruned = scalp_engine.prune_stale_auto_jobs(jobs, _today_str())
     if pruned:
