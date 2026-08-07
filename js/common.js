@@ -5,7 +5,7 @@
 const SETTINGS_KEY = 'app-settings-v1';
 const TAB_LABELS = {
   dashboard:'📊 대시보드', portfolio:'📈 포트폴리오', market:'📊 시장현황',
-  etf:'💹 ETF', stocks:'📊 개별주', autotrade:'🤖 자동매매', cointrade:'🪙 자동코인매매',
+  etf:'💹 ETF', stocks:'📊 개별주', autotrade:'🤖 자동매매', cointrade:'🪙 자동코인매매', scalp:'⚡ 초단타',
 };
 let _settings = { hiddenTabs:[], darkMode:false, defaultTab:'dashboard', autoRefreshSec:0 };
 let _autoRefreshTimer = null;
@@ -152,7 +152,7 @@ _loadSettings();
 // ══════════════════════════════════════════════════════════
 // 탭 전환
 // ══════════════════════════════════════════════════════════
-const TAB_ORDER = ['dashboard', 'portfolio', 'market', 'etf', 'stocks', 'autotrade', 'cointrade'];
+const TAB_ORDER = ['dashboard', 'portfolio', 'market', 'etf', 'stocks', 'autotrade', 'cointrade', 'scalp'];
 
 function switchTab(name) {
   document.querySelectorAll('.tab-page').forEach(el => el.classList.remove('active'));
@@ -171,6 +171,7 @@ function switchTab(name) {
   if (name === 'stocks') loadStockRecords();
   if (name === 'autotrade') initAutoTrade();
   if (name === 'cointrade') initCoinTrade();
+  if (name === 'scalp') initScalp();
 }
 
 // ── 탭 스와이프 (모바일) ──────────────────────────────────

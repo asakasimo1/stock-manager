@@ -71,6 +71,7 @@
             <option value="stocks">개별주</option>
             <option value="autotrade">자동매매</option>
             <option value="cointrade">자동코인매매</option>
+            <option value="scalp">초단타</option>
           </select>
         </div>
         <div class="settings-row">
@@ -110,6 +111,7 @@
   <button class="tab-btn" onclick="switchTab('stocks')">📊 개별주</button>
   <button class="tab-btn" onclick="switchTab('autotrade')">🤖 자동 주식매매</button>
   <button class="tab-btn" onclick="switchTab('cointrade')">🪙 자동코인매매</button>
+  <button class="tab-btn" onclick="switchTab('scalp')">⚡ 초단타</button>
 </nav>
 
 
@@ -1481,6 +1483,114 @@
 </div>
 </div><!-- /tab-cointrade -->
 
+<div id="tab-scalp" class="tab-page">
+<div class="etf-wrap" style="max-width:800px">
+
+  <!-- 전체 정지 킬스위치 -->
+  <div id="sc-control" style="margin-bottom:16px"></div>
+
+  <!-- 오늘 실현손익 요약 -->
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:16px">
+    <div id="sc-summary"></div>
+  </div>
+
+  <!-- ── 잡 등록 섹션 ─────────────────────────────── -->
+  <div style="background:var(--surface);border:2px solid #7c3aed;border-radius:14px;overflow:hidden;margin-bottom:16px">
+    <div style="padding:14px 18px;background:#7c3aed18">
+      <span style="font-size:14px;font-weight:700;color:#7c3aed">⚡ 초단타 잡 등록</span>
+      <span style="font-size:11px;color:var(--muted);margin-left:8px">모멘텀 진입 → 익절/손절/시간초과 자동청산</span>
+    </div>
+    <div style="padding:18px 20px;display:flex;flex-direction:column;gap:12px">
+
+      <div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:6px">시장</div>
+        <div style="display:flex;gap:14px">
+          <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:13px">
+            <input type="radio" name="sc-market" value="coin" checked onchange="scMarketChange()" /> 🪙 코인
+          </label>
+          <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:13px">
+            <input type="radio" name="sc-market" value="stock" onchange="scMarketChange()" /> 📈 국내주식
+          </label>
+        </div>
+      </div>
+
+      <div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px">종목 검색 *</div>
+        <div style="position:relative">
+          <input id="sc-name" type="text" placeholder="종목명 검색" autocomplete="off"
+            oninput="onScNameInput(this.value)" onblur="hideScAc()"
+            style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
+          <div id="sc-ac-list" style="display:none;position:absolute;top:calc(100% + 3px);left:0;right:0;z-index:400;
+            background:var(--surface);border:1.5px solid #7c3aed;border-radius:8px;overflow:hidden;
+            box-shadow:0 4px 16px rgba(0,0,0,.15)"></div>
+        </div>
+        <input id="sc-ticker" type="hidden" />
+      </div>
+
+      <div id="sc-coin-fields">
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px">1회 매수 금액 (원)</div>
+        <input id="sc-krw-amount" type="number" min="5000" step="1000" placeholder="예: 50000"
+          style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
+      </div>
+      <div id="sc-stock-fields" style="display:none">
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px">1회 매수 금액 (원)</div>
+        <input id="sc-stock-amount" type="number" min="1000" step="1000" placeholder="예: 500000"
+          style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">진입 모멘텀 (%)</div>
+          <input id="sc-entry-momentum" type="number" min="0.1" step="0.1" value="0.4"
+            style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">관측 구간 (초)</div>
+          <input id="sc-lookback" type="number" min="10" step="5" value="30"
+            style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">익절 기준 (%)</div>
+          <input id="sc-take-profit" type="number" min="0.1" step="0.1" value="0.6"
+            style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">손절 기준 (%)</div>
+          <input id="sc-stop-loss" type="number" min="0.1" step="0.1" value="0.4"
+            style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">시간초과 청산 (초)</div>
+          <input id="sc-time-stop" type="number" min="30" step="10" value="180"
+            style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">당일 과열 컷 (%)</div>
+          <input id="sc-max-day-chg" type="number" min="1" step="0.5" value="5.0"
+            style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
+        </div>
+      </div>
+
+      <div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px">일일 손실 한도 (원, 이 잡의 당일 실현손실이 이 값에 도달하면 자동 정지)</div>
+        <input id="sc-daily-loss" type="number" min="0" step="1000" value="20000"
+          style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
+      </div>
+
+      <button onclick="scRegister()"
+        style="background:#7c3aed;color:#fff;border:none;border-radius:10px;padding:12px;font-size:14px;font-weight:700;cursor:pointer">
+        잡 등록 (일시정지 상태로 생성 — 목록에서 직접 시작해야 실거래 시작)
+      </button>
+    </div>
+  </div>
+
+  <!-- ── 잡 목록 ─────────────────────────────────── -->
+  <div style="font-size:12px;font-weight:700;color:var(--text);margin-bottom:10px">📋 등록된 잡</div>
+  <div id="sc-job-list"></div>
+
+</div>
+</div><!-- /tab-scalp -->
+
 <!-- ── 종목 상세 모달 ─────────────────────────────── -->
 <div id="stock-detail-overlay" onclick="if(event.target===this)closeStockDetail()">
   <div id="stock-detail-modal">
@@ -1842,6 +1952,7 @@
 <script defer src="js/tab-market.js"></script>
 <script defer src="js/tab-autotrade.js"></script>
 <script defer src="js/tab-cointrade.js"></script>
+<script defer src="js/tab-scalp.js"></script>
 <script defer src="js/tab-watchlist.js"></script>
 </body>
 </html>

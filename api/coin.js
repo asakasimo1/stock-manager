@@ -15,6 +15,11 @@
  * ── 코인 실행 엔진 (Vercel 고정 IP → Upbit API 직접 호출) ──
  * GET /api/coin-runner?mode=all|buy|sell|balance
  *
+ * ── 초단타(스캘핑) 잡 CRUD (daemon_scalp.py가 실행 주체) ──
+ * GET/POST/PATCH/DELETE /api/scalp-coin   → scalp_coin_jobs.json
+ * GET/POST/PATCH/DELETE /api/scalp-stock  → scalp_stock_jobs.json
+ * GET/POST(PATCH)       /api/scalp-control → scalp_control.json (전체 정지 킬스위치)
+ *
  * ── Vercel 아웃바운드 IP 확인 ──
  * GET /api/coin-ip
  */
@@ -678,6 +683,105 @@ async function handleCoinGrid(req, res, gistId, ghToken) {
 }
 
 // ══════════════════════════════════════════════════════════
+// 초단타(스캘핑) 잡 CRUD — 코인/주식 공용
+// 안전 기본값: 신규 잡은 항상 status='paused'로 생성 (사용자가 명시적으로 켜야 실거래 시작)
+// ══════════════════════════════════════════════════════════
+async function handleScalpJobs(req, res, url, gistId, ghToken) {
+  const FILENAME = url.includes('scalp-coin') ? 'scalp_coin_jobs.json' : 'scalp_stock_jobs.json';
+  res.setHeader('Cache-Control', 'no-store');
+
+  if (req.method === 'GET') {
+    return res.status(200).json(await readGistFile(gistId, ghToken, FILENAME));
+  }
+
+  if (req.method === 'POST') {
+    const b = req.body || {};
+    if (!b.ticker) return res.status(400).json({ error: 'ticker 필수' });
+
+    const jobs = await readGistFile(gistId, ghToken, FILENAME);
+    const list = Array.isArray(jobs) ? jobs : [];
+    const today = new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10);
+    const newJob = {
+      id:                  Date.now().toString(36),
+      ticker:              b.ticker,
+      name:                b.name || b.ticker,
+      status:              'paused',   // 항상 일시정지로 생성 — 사용자가 직접 시작해야 함
+      phase:               'watching',
+      entry_momentum_pct:  +b.entry_momentum_pct || 0.4,
+      lookback_sec:        +b.lookback_sec       || 30,
+      max_day_chg_pct:     +b.max_day_chg_pct    || 5.0,
+      take_profit_pct:     +b.take_profit_pct    || 0.6,
+      stop_loss_pct:       +b.stop_loss_pct      || 0.4,
+      time_stop_sec:       +b.time_stop_sec      || 180,
+      krw_amount:          +b.krw_amount         || 0,   // 코인용
+      qty:                 +b.qty                || 0,   // 주식용 (수량 지정)
+      amount:              +b.amount             || 0,   // 주식용 (금액 지정)
+      max_daily_loss_krw:  b.max_daily_loss_krw !== undefined ? +b.max_daily_loss_krw : -20000,
+      buy_price: 0, buy_qty: 0, entered_at: 0, buy_uuid: '',
+      trades_today: 0, realized_pnl_today: 0, stats_date: today,
+      created_at: nowKst(),
+    };
+    list.unshift(newJob);
+    const ok = await writeGistFile(gistId, ghToken, FILENAME, list);
+    return res.status(ok ? 200 : 500).json(ok ? newJob : { error: '저장 실패' });
+  }
+
+  if (req.method === 'PATCH') {
+    const { id } = req.query;
+    if (!id) return res.status(400).json({ error: 'id 필수' });
+    const jobs = await readGistFile(gistId, ghToken, FILENAME);
+    const list = Array.isArray(jobs) ? jobs : [];
+    const idx  = list.findIndex(j => j.id === id);
+    if (idx < 0) return res.status(404).json({ error: '잡 없음' });
+    list[idx] = { ...list[idx], ...req.body };
+    const ok = await writeGistFile(gistId, ghToken, FILENAME, list);
+    return res.status(ok ? 200 : 500).json(ok ? list[idx] : { error: '저장 실패' });
+  }
+
+  if (req.method === 'DELETE') {
+    const { id } = req.query;
+    if (!id) return res.status(400).json({ error: 'id 필수' });
+    const jobs = await readGistFile(gistId, ghToken, FILENAME);
+    const list = Array.isArray(jobs) ? jobs : [];
+    const idx  = list.findIndex(j => j.id === id);
+    if (idx < 0) return res.status(404).json({ error: '잡 없음' });
+    if (list[idx].phase === 'holding') {
+      return res.status(409).json({ error: '보유 중인 포지션이 있습니다 — 전체정지 킬스위치로 청산 후 삭제하세요' });
+    }
+    list.splice(idx, 1);
+    const ok = await writeGistFile(gistId, ghToken, FILENAME, list);
+    return res.status(ok ? 200 : 500).json(ok ? { ok: true } : { error: '삭제 실패' });
+  }
+
+  return res.status(405).json({ error: 'Method not allowed' });
+}
+
+// ══════════════════════════════════════════════════════════
+// 초단타 전체 정지 킬스위치 — coin_enabled/stock_enabled=false 시
+// daemon_scalp.py가 신규 진입을 멈추고 보유 포지션을 즉시 시장가 청산
+// ══════════════════════════════════════════════════════════
+async function handleScalpControl(req, res, gistId, ghToken) {
+  const FILENAME = 'scalp_control.json';
+  res.setHeader('Cache-Control', 'no-store');
+
+  if (req.method === 'GET') {
+    const ctrl = await readGistFile(gistId, ghToken, FILENAME);
+    const base = (ctrl && typeof ctrl === 'object' && !Array.isArray(ctrl)) ? ctrl : {};
+    return res.status(200).json({ coin_enabled: true, stock_enabled: true, ...base });
+  }
+
+  if (req.method === 'POST' || req.method === 'PATCH') {
+    const ctrl = await readGistFile(gistId, ghToken, FILENAME);
+    const base = (ctrl && typeof ctrl === 'object' && !Array.isArray(ctrl)) ? ctrl : {};
+    const merged = { coin_enabled: true, stock_enabled: true, ...base, ...(req.body || {}) };
+    const ok = await writeGistFile(gistId, ghToken, FILENAME, merged);
+    return res.status(ok ? 200 : 500).json(ok ? merged : { error: '저장 실패' });
+  }
+
+  return res.status(405).json({ error: 'Method not allowed' });
+}
+
+// ══════════════════════════════════════════════════════════
 // 일별 코인 거래 수익 집계
 // GET /api/coin-today         → 오늘(KST) 거래 집계
 // GET /api/coin-date?date=    → 특정 날짜(YYYY-MM-DD) 거래 집계
@@ -845,6 +949,8 @@ export default async function handler(req, res) {
   if (url.includes('coin-grid'))   return handleCoinGrid(req, res, gistId, ghToken);
   if (url.includes('coin-today') || url.includes('coin-date')) return handleCoinDate(req, res, gistId, ghToken);
   if (url.includes('coin-'))       return handleCoinJobs(req, res, url, gistId, ghToken);
+  if (url.includes('scalp-control')) return handleScalpControl(req, res, gistId, ghToken);
+  if (url.includes('scalp-coin') || url.includes('scalp-stock')) return handleScalpJobs(req, res, url, gistId, ghToken);
   if (url.includes('profit-'))     return handleStockJobs(req, res, url, gistId, ghToken);
   if (url.includes('stock-grid'))  return handleStockGridJobs(req, res, gistId, ghToken);
 
