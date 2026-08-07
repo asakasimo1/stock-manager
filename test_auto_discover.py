@@ -72,17 +72,60 @@ def test_coin_auto_discover_requires_momentum_and_volume_surge():
 
 def test_stock_auto_discover_creates_job(monkeypatch):
     se.reset()
+    job_scalp_stock._last_discover_at = -9999.0  # 다른 테스트와 스캔 주기 스로틀 공유 방지
     jobs = []
     auto_cfg = {"enabled": True, "max_concurrent": 2, "max_day_chg_pct": 5.0,
                 "min_liquidity": 1000, "amount": 500000, "max_daily_loss_krw": -30000, **_NO_MOMENTUM_GATE}
-    monkeypatch.setattr(kis_api, "get_fluctuation_ranking", lambda top_n=30: [
+    monkeypatch.setattr(kis_api, "get_fluctuation_ranking", lambda top_n=30, sort="gainers": [
         {"ticker": "005930", "name": "삼성전자", "price": 70000, "chg_pct": 2.5, "acml_vol": 1000000},
         {"ticker": "000660", "name": "SK하이닉스", "price": 150000, "chg_pct": 12.0, "acml_vol": 1000000},
-    ])
+    ] if sort == "gainers" else [])
     changed = job_scalp_stock._auto_discover(jobs, auto_cfg, stock_enabled=True, now_epoch=1000.0)
     assert changed is True
     assert len(jobs) == 1 and jobs[0]["ticker"] == "005930" and jobs[0]["source"] == "auto"
+    assert jobs[0]["discovery_mode"] == "surge"
     print("OK: 주식 자동발굴 — 등락률 순위에서 과열종목 제외 + watching 잡 생성 (모멘텀/거래량 게이트 비활성 시)")
+
+
+def test_stock_auto_discover_reversal_mode(monkeypatch):
+    se.reset()
+    job_scalp_stock._last_discover_at = -9999.0  # 다른 테스트와 스캔 주기 스로틀 공유 방지
+    jobs = []
+    auto_cfg = {"enabled": True, "max_concurrent": 2, "max_day_chg_pct": 5.0, "min_liquidity": 0,
+                "amount": 500000, "max_daily_loss_krw": -30000, "reversal_enabled": True,
+                "decline_lookback_sec": 300, "min_decline_pct": 2.0,
+                "rebound_lookback_sec": 30, "min_rebound_pct": 0.4,
+                "surge_enabled": False}
+
+    def fake_ranking(top_n=30, sort="gainers"):
+        if sort != "losers":
+            return []
+        return [{"ticker": "900001", "name": "급락주", "price": 1000, "chg_pct": -5.0, "acml_vol": 1_000_000}]
+
+    monkeypatch.setattr(kis_api, "get_fluctuation_ranking", fake_ranking)
+
+    # 0~120초: 완만하게 하락 (아직 급락 판단 기준 -2%까지는 안 옴 + 반등도 없음)
+    for t in range(0, 121, 30):
+        price = 1000 - t * 0.5
+        monkeypatch.setattr(kis_api, "get_fluctuation_ranking",
+                             lambda top_n=30, sort="gainers", _p=price: (
+                                 [] if sort != "losers" else
+                                 [{"ticker": "900001", "name": "급락주", "price": _p, "chg_pct": -5.0, "acml_vol": 1_000_000}]
+                             ))
+        changed = job_scalp_stock._auto_discover(jobs, auto_cfg, stock_enabled=True, now_epoch=float(t))
+        assert changed is False and jobs == [], f"t={t}: 아직 반등 안 했는데 후보 선정됨"
+    print("OK: 완만한 하락 흐름에서는 후보 선정 안 함 (반등 신호 없음)")
+
+    # 150초: 급하게 반등 (30초 전보다 +2% 반등, 300초 누적으로는 여전히 하락)
+    monkeypatch.setattr(kis_api, "get_fluctuation_ranking",
+                         lambda top_n=30, sort="gainers": (
+                             [] if sort != "losers" else
+                             [{"ticker": "900001", "name": "급락주", "price": 960, "chg_pct": -4.0, "acml_vol": 1_500_000}]
+                         ))
+    changed = job_scalp_stock._auto_discover(jobs, auto_cfg, stock_enabled=True, now_epoch=150.0)
+    assert changed is True and len(jobs) == 1 and jobs[0]["ticker"] == "900001", jobs
+    assert jobs[0]["discovery_mode"] == "reversal"
+    print("OK: 급락 후 반등 시에만 후보로 선정 (job_scalp_stock 배선 확인)")
 
 
 def test_stock_close_stale_auto_watching():
@@ -117,6 +160,9 @@ if __name__ == "__main__":
     test_coin_auto_discover_requires_momentum_and_volume_surge()
     mp = _FakeMonkeypatch()
     test_stock_auto_discover_creates_job(mp)
+    mp.undo()
+    mp = _FakeMonkeypatch()
+    test_stock_auto_discover_reversal_mode(mp)
     mp.undo()
     test_stock_close_stale_auto_watching()
     print("\n전체 통과")

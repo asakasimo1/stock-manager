@@ -232,10 +232,12 @@ def _account_parts():
 # 등락률 순위 조회 (초단타 자동 종목 발굴용)
 # VM 실계좌로 직접 호출 검증 완료 (2026-08-07)
 # ─────────────────────────────────────────
-def get_fluctuation_ranking(top_n: int = 30) -> list[dict]:
+def get_fluctuation_ranking(top_n: int = 30, sort: str = "gainers") -> list[dict]:
     """
-    국내주식 등락률 순위(상승률순) 조회 — 한 번 호출로 상위 N종목 반환.
-    반환: [{ticker, name, price, chg_pct, acml_vol}, ...] (상승률 높은 순)
+    국내주식 등락률 순위 조회 — 한 번 호출로 상위 N종목 반환.
+    sort: "gainers"(상승률순, 급등 후보 발굴용) | "losers"(하락률순, 급락후반등 후보 발굴용)
+    반환: [{ticker, name, price, chg_pct, acml_vol}, ...]
+    VM 실계좌로 두 모드 모두 직접 호출 검증 완료 (2026-08-07)
     """
     tr_id = "FHPST01700000"
     params = {
@@ -243,7 +245,7 @@ def get_fluctuation_ranking(top_n: int = 30) -> list[dict]:
         "fid_cond_mrkt_div_code": "J",
         "fid_cond_scr_div_code":  "20170",
         "fid_input_iscd":         "0000",   # 전체
-        "fid_rank_sort_cls_code": "0",      # 0=상승률순
+        "fid_rank_sort_cls_code": "1" if sort == "losers" else "0",  # 0=상승률순, 1=하락률순
         "fid_input_cnt_1":        "0",
         "fid_prc_cls_code":       "0",
         "fid_input_price_1":      "",

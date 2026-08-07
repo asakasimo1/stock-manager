@@ -192,6 +192,48 @@ def select_auto_candidates(
     return picked
 
 
+def select_reversal_candidates(
+    candidates: list,
+    existing_tickers: set,
+    min_liquidity: float,
+    slots: int,
+    min_decline_pct: float,
+    min_rebound_pct: float,
+) -> list:
+    """
+    급락 후 반등 후보 선정 — "빠르게 급락하다가 급 양전"하는 대상을 잡기 위한
+    select_auto_candidates의 반대 방향 버전.
+    candidates: [{"ticker", "name", "liquidity", "decline", "rebound", ...}]
+      decline: decline_lookback_sec 동안의 가격변화율(%) — 하락 중이면 음수
+      rebound: rebound_lookback_sec 동안의 가격변화율(%) — 반등 중이면 양수
+    min_decline_pct/min_rebound_pct: 둘 다 양수로 입력 (부호는 내부에서 처리)
+      예: min_decline_pct=2.0 → decline이 -2.0% 이하(더 많이 하락)여야 통과
+          min_rebound_pct=0.4 → rebound이 +0.4% 이상이어야 통과
+    당일 등락률 상한(max_day_chg_pct) 필터는 적용하지 않음 — 반등 후보는 보통
+    당일 기준으로도 마이너스이거나 미미해서 "추격 과열" 개념 자체가 해당 없음.
+    """
+    if slots <= 0:
+        return []
+    picked = []
+    for c in candidates:
+        if len(picked) >= slots:
+            break
+        if c["ticker"] in existing_tickers:
+            continue
+        if c.get("liquidity", 0) < min_liquidity:
+            continue
+        decline = c.get("decline")
+        rebound = c.get("rebound")
+        if decline is None or rebound is None:
+            continue
+        if decline > -min_decline_pct:
+            continue
+        if rebound < min_rebound_pct:
+            continue
+        picked.append(c)
+    return picked
+
+
 def should_give_up_watching(discovered_at: float, now: float, timeout_sec: float) -> bool:
     """자동발굴 watching 잡이 timeout_sec 동안 진입 조건을 못 채우면 포기 판단.
     discovered_at=0(구버전 잡 등 값 없음)이면 즉시 포기 — 슬롯이 무한정 묶이는 것을 방지."""

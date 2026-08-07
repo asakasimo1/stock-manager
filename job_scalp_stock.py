@@ -2,8 +2,12 @@
 국내주식 초단타(스캘핑) 잡 — daemon_scalp.py 에서 10초 주기(장중에만)로 실행
 Gist scalp_stock_jobs.json 에서 잡 읽기 → 모멘텀 진입/청산 판단 → KIS 시장가 주문 → 상태 갱신
 Gist scalp_control.json 의 stock_enabled=false 이면 신규 진입 중단 + 보유 포지션 즉시 청산
-Gist scalp_auto_config.json 의 stock.enabled=true 이면 KIS 등락률 순위에서 급등 후보를 watching 잡으로 자동 생성
+Gist scalp_auto_config.json 의 stock.enabled=true 이면 KIS 등락률 순위에서 후보를 watching 잡으로 자동 생성
   (source="auto" 잡은 1회 진입/청산 후 status=done 으로 종료 — 장마감까지 미체결이면 그날로 종료 처리)
+  두 가지 발굴 모드(둘 다 독립적으로 켜고 끌 수 있음, discovery_mode 로 잡에 기록됨):
+    surge(기본 켜짐)   : 상승률순위에서 최근 모멘텀+거래량증가 조건 만족 시
+    reversal(기본 꺼짐): 하락률순위도 함께 조회해서 "급락 후 반등" 조건(decline+rebound) 만족 시
+                        — 상승률순위만 보면 이미 급락한 종목은 후보 풀에 아예 안 잡히기 때문
 
 잡 스키마는 job_scalp_coin.py의 scalp_coin_jobs.json 과 동일 구조 (qty는 정수 주 단위).
 """
@@ -99,23 +103,39 @@ def _auto_discover(jobs: list, auto_cfg: dict, stock_enabled: bool, now_epoch: f
     if slots <= 0:
         return False
 
+    surge_enabled = auto_cfg.get("surge_enabled", True)
+    reversal_enabled = auto_cfg.get("reversal_enabled", False)
+
     try:
-        ranking = kis_api.get_fluctuation_ranking(top_n=30)
+        ranking = kis_api.get_fluctuation_ranking(top_n=30, sort="gainers")
+        if reversal_enabled:
+            ranking = ranking + kis_api.get_fluctuation_ranking(top_n=30, sort="losers")
     except Exception as e:
         logger.error("등락률 순위 조회 실패: %s", e)
         return False
 
     # 순위에 나온 종목들의 가격·거래량 이력 기록 — 아직 잡이 아닌 종목도 모멘텀/거래량증가
     # 계산이 가능해야 "갑자기 급등 + 거래량 증가" 조건으로 후보를 뽑을 수 있음.
-    # (KIS는 코인처럼 전체 종목을 한 번에 못 받아오므로 순위 상위 30종목 범위 안에서만 추적됨)
+    # (KIS는 코인처럼 전체 종목을 한 번에 못 받아오므로 순위 상위 종목 범위 안에서만 추적됨.
+    #  reversal 모드는 하락률순위도 함께 조회해야 "급락 후 반등" 후보가 나올 수 있음 —
+    #  상승률순위만 보면 이미 급락한 종목은 아예 안 보임)
+    seen_tickers = set()
     for r in ranking:
+        if r["ticker"] in seen_tickers:
+            continue
+        seen_tickers.add(r["ticker"])
         scalp_engine.record_price(r["ticker"], r["price"], now=now_epoch)
         scalp_engine.record_volume(r["ticker"], r["acml_vol"], now=now_epoch)
 
     discovery_lookback = float(auto_cfg.get("discovery_momentum_sec", 60))
     min_momentum = float(auto_cfg.get("min_discovery_momentum_pct", 0.4))
     min_vol_surge = float(auto_cfg.get("min_volume_surge_ratio", 1.3))
+    decline_lookback = float(auto_cfg.get("decline_lookback_sec", 300))
+    min_decline = float(auto_cfg.get("min_decline_pct", 2.0))
+    rebound_lookback = float(auto_cfg.get("rebound_lookback_sec", 30))
+    min_rebound = float(auto_cfg.get("min_rebound_pct", 0.4))
 
+    ranking_by_ticker = {r["ticker"]: r for r in ranking}  # 중복 시 뒤(losers)가 유지돼도 무방 (동일 종목 기본정보)
     candidates = [
         {
             "ticker": r["ticker"],
@@ -124,8 +144,10 @@ def _auto_discover(jobs: list, auto_cfg: dict, stock_enabled: bool, now_epoch: f
             "liquidity": r["acml_vol"] * r["price"],
             "momentum": scalp_engine.momentum_pct(r["ticker"], discovery_lookback, now=now_epoch),
             "volume_surge": scalp_engine.volume_surge_ratio(r["ticker"], now=now_epoch),
+            "decline": scalp_engine.momentum_pct(r["ticker"], decline_lookback, now=now_epoch),
+            "rebound": scalp_engine.momentum_pct(r["ticker"], rebound_lookback, now=now_epoch),
         }
-        for r in ranking
+        for r in ranking_by_ticker.values()
     ]
     candidates.sort(key=lambda c: c["momentum"] if c["momentum"] is not None else -999, reverse=True)
 
@@ -137,10 +159,27 @@ def _auto_discover(jobs: list, auto_cfg: dict, stock_enabled: bool, now_epoch: f
     }
     max_day_chg = float(auto_cfg.get("max_day_chg_pct", 5.0))
     min_liquidity = float(auto_cfg.get("min_liquidity", 100_000_000))
-    picked = scalp_engine.select_auto_candidates(
-        candidates, existing_tickers, max_day_chg, min_liquidity, slots,
-        min_momentum_pct=min_momentum, min_volume_surge=min_vol_surge,
-    )
+
+    picked_surge = []
+    if surge_enabled:
+        picked_surge = scalp_engine.select_auto_candidates(
+            candidates, existing_tickers, max_day_chg, min_liquidity, slots,
+            min_momentum_pct=min_momentum, min_volume_surge=min_vol_surge,
+        )
+        for c in picked_surge:
+            c["_mode"] = "surge"
+
+    picked_reversal = []
+    remaining = slots - len(picked_surge)
+    if reversal_enabled and remaining > 0:
+        picked_reversal = scalp_engine.select_reversal_candidates(
+            candidates, existing_tickers | {c["ticker"] for c in picked_surge}, min_liquidity, remaining,
+            min_decline_pct=min_decline, min_rebound_pct=min_rebound,
+        )
+        for c in picked_reversal:
+            c["_mode"] = "reversal"
+
+    picked = picked_surge + picked_reversal
 
     for c in picked:
         jobs.append({
@@ -150,6 +189,7 @@ def _auto_discover(jobs: list, auto_cfg: dict, stock_enabled: bool, now_epoch: f
             "status":             "active",
             "phase":              "watching",
             "source":             "auto",
+            "discovery_mode":     c["_mode"],
             "entry_momentum_pct": auto_cfg.get("entry_momentum_pct", 0.4),
             "lookback_sec":       auto_cfg.get("lookback_sec", 30),
             "max_day_chg_pct":    max_day_chg,
@@ -161,15 +201,20 @@ def _auto_discover(jobs: list, auto_cfg: dict, stock_enabled: bool, now_epoch: f
             "qty":                0,
             "max_daily_loss_krw": max_loss,
             "watch_timeout_sec":  auto_cfg.get("watch_timeout_sec", 300),
-            "min_volume_surge_ratio": min_vol_surge,
+            "min_volume_surge_ratio": min_vol_surge if c["_mode"] == "surge" else 0,
             "discovered_at":      now_epoch,
             "buy_price": 0, "buy_qty": 0, "entered_at": 0,
             "trades_today": 0, "realized_pnl_today": 0, "stats_date": today,
             "created_at": datetime.now(KST).strftime("%Y-%m-%d %H:%M"),
         })
-        logger.info("🔍 [자동포착] %s(%s) 최근%.0f초 모멘텀 %s%% · 거래량 %s배 (당일 %+.2f%%) — watching 잡 생성",
-                    c["name"], c["ticker"], discovery_lookback,
-                    scalp_engine.fmt_opt(c["momentum"]), scalp_engine.fmt_opt(c["volume_surge"], "{:.2f}"), c["chg_pct"])
+        if c["_mode"] == "surge":
+            logger.info("🔍 [자동포착·급등] %s(%s) 최근%.0f초 모멘텀 %s%% · 거래량 %s배 (당일 %+.2f%%) — watching 잡 생성",
+                        c["name"], c["ticker"], discovery_lookback,
+                        scalp_engine.fmt_opt(c["momentum"]), scalp_engine.fmt_opt(c["volume_surge"], "{:.2f}"), c["chg_pct"])
+        else:
+            logger.info("🔍 [자동포착·반등] %s(%s) 최근%.0f초 %s%% 하락 후 최근%.0f초 %s%% 반등 — watching 잡 생성",
+                        c["name"], c["ticker"], decline_lookback, scalp_engine.fmt_opt(c["decline"]),
+                        rebound_lookback, scalp_engine.fmt_opt(c["rebound"]))
 
     return bool(picked)
 

@@ -171,6 +171,35 @@ def test_select_auto_candidates_skips_existing():
     print("OK: 이미 진행중인 티커 중복 제외")
 
 
+def test_select_reversal_candidates_requires_decline_and_rebound():
+    candidates = [
+        {"ticker": "A", "liquidity": 1_000_000, "decline": -1.0, "rebound": 1.0},  # 하락폭 부족
+        {"ticker": "B", "liquidity": 1_000_000, "decline": -3.0, "rebound": 0.1},  # 반등폭 부족
+        {"ticker": "C", "liquidity": 100, "decline": -3.0, "rebound": 1.0},        # 유동성 부족
+        {"ticker": "D", "liquidity": 1_000_000, "decline": None, "rebound": 1.0},  # 관측 부족
+        {"ticker": "E", "liquidity": 1_000_000, "decline": -3.0, "rebound": 1.0},  # 통과
+    ]
+    picked = se.select_reversal_candidates(candidates, existing_tickers=set(), min_liquidity=1000,
+                                            slots=5, min_decline_pct=2.0, min_rebound_pct=0.4)
+    assert [c["ticker"] for c in picked] == ["E"], picked
+    print(f"OK: 급락+반등 조건 동시 충족한 후보만 선정 — {picked}")
+
+
+def test_select_reversal_candidates_skips_existing_and_respects_slots():
+    candidates = [
+        {"ticker": "A", "liquidity": 1_000_000, "decline": -3.0, "rebound": 1.0},
+        {"ticker": "B", "liquidity": 1_000_000, "decline": -3.0, "rebound": 1.0},
+    ]
+    picked = se.select_reversal_candidates(candidates, existing_tickers={"A"}, min_liquidity=1000,
+                                            slots=5, min_decline_pct=2.0, min_rebound_pct=0.4)
+    assert [c["ticker"] for c in picked] == ["B"], picked
+
+    picked2 = se.select_reversal_candidates(candidates, existing_tickers=set(), min_liquidity=1000,
+                                             slots=0, min_decline_pct=2.0, min_rebound_pct=0.4)
+    assert picked2 == [], picked2
+    print("OK: 급락반등 후보 — 중복 제외 + 슬롯 0이면 미선정")
+
+
 if __name__ == "__main__":
     test_momentum_insufficient_data()
     test_momentum_calc()
@@ -191,4 +220,6 @@ if __name__ == "__main__":
     test_should_give_up_watching()
     test_select_auto_candidates_filters_and_caps()
     test_select_auto_candidates_skips_existing()
+    test_select_reversal_candidates_requires_decline_and_rebound()
+    test_select_reversal_candidates_skips_existing_and_respects_slots()
     print("\n전체 통과")
