@@ -708,7 +708,7 @@ async function handleScalpJobs(req, res, url, gistId, ghToken) {
       name:                b.name || b.ticker,
       status:              'paused',   // 항상 일시정지로 생성 — 사용자가 직접 시작해야 함
       phase:               'watching',
-      entry_momentum_pct:  +b.entry_momentum_pct || 0.8,
+      entry_momentum_pct:  +b.entry_momentum_pct || 0.4,
       lookback_sec:        +b.lookback_sec       || 30,
       max_day_chg_pct:     +b.max_day_chg_pct    || 5.0,
       take_profit_pct:     +b.take_profit_pct    || 0.6,
@@ -789,7 +789,7 @@ async function handleScalpControl(req, res, gistId, ghToken) {
 // ══════════════════════════════════════════════════════════
 const SCALP_AUTO_DEFAULTS = {
   enabled: false,
-  entry_momentum_pct: 0.8,
+  entry_momentum_pct: 0.4,
   lookback_sec: 30,
   max_day_chg_pct: 5.0,
   take_profit_pct: 0.6,

@@ -121,7 +121,7 @@ function scRenderAutoConfig() {
       </div>
       <div>
         <div style="font-size:11px;color:var(--muted);margin-bottom:4px">진입 모멘텀 (%)</div>
-        <input id="sac-entry-momentum" type="number" min="0.1" step="0.1" value="${cfg.entry_momentum_pct ?? 0.8}"
+        <input id="sac-entry-momentum" type="number" min="0.1" step="0.1" value="${cfg.entry_momentum_pct ?? 0.4}"
           style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
       </div>
       <div>
@@ -188,7 +188,7 @@ async function scSaveAutoConfig() {
     enabled: document.getElementById('sac-enabled').checked,
     [sizeKey]: parseFloat(document.getElementById(sizeId).value) || 0,
     max_concurrent: parseInt(document.getElementById('sac-max-concurrent').value, 10) || 1,
-    entry_momentum_pct: parseFloat(document.getElementById('sac-entry-momentum').value) || 0.8,
+    entry_momentum_pct: parseFloat(document.getElementById('sac-entry-momentum').value) || 0.4,
     lookback_sec: parseInt(document.getElementById('sac-lookback').value, 10) || 30,
     take_profit_pct: parseFloat(document.getElementById('sac-take-profit').value) || 0.6,
     stop_loss_pct: parseFloat(document.getElementById('sac-stop-loss').value) || 0.4,
@@ -257,7 +257,7 @@ async function scRegister() {
 
   const body = {
     ticker, name,
-    entry_momentum_pct: parseFloat(document.getElementById('sc-entry-momentum').value) || 0.8,
+    entry_momentum_pct: parseFloat(document.getElementById('sc-entry-momentum').value) || 0.4,
     lookback_sec:       parseInt(document.getElementById('sc-lookback').value, 10) || 30,
     max_day_chg_pct:    parseFloat(document.getElementById('sc-max-day-chg').value) || 5.0,
     take_profit_pct:    parseFloat(document.getElementById('sc-take-profit').value) || 0.6,
