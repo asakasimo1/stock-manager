@@ -149,7 +149,13 @@ function scRenderAutoConfig() {
         <input id="sac-max-day-chg" type="number" min="1" step="0.5" value="${cfg.max_day_chg_pct ?? 5.0}"
           style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
       </div>
+      <div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px">watching 포기 시간 (초)</div>
+        <input id="sac-watch-timeout" type="number" min="60" step="30" value="${cfg.watch_timeout_sec ?? 300}"
+          style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
+      </div>
     </div>
+    <div style="font-size:11px;color:var(--muted);margin:-4px 0 10px">이 시간 안에 진입 조건을 못 채우면 포기하고 슬롯을 반환합니다 — 안 그러면 조용한 종목이 포착 슬롯을 계속 차지해 새 후보를 못 찾습니다</div>
     <div style="margin-bottom:10px">
       <div style="font-size:11px;color:var(--muted);margin-bottom:4px">최소 유동성 — 이 이하로 거래대금이 적은 종목은 슬리피지 우려로 후보에서 제외 (원)</div>
       <input id="sac-min-liquidity" type="number" min="0" step="1000000"
@@ -182,6 +188,7 @@ async function scSaveAutoConfig() {
     stop_loss_pct: parseFloat(document.getElementById('sac-stop-loss').value) || 0.4,
     time_stop_sec: parseInt(document.getElementById('sac-time-stop').value, 10) || 180,
     max_day_chg_pct: parseFloat(document.getElementById('sac-max-day-chg').value) || 5.0,
+    watch_timeout_sec: parseInt(document.getElementById('sac-watch-timeout').value, 10) || 300,
     min_liquidity: parseFloat(document.getElementById('sac-min-liquidity').value) || 0,
     max_daily_loss_krw: -Math.abs(parseFloat(document.getElementById('sac-daily-loss').value) || 30000),
   };
@@ -396,7 +403,7 @@ function _scJobCardHtml(j) {
         <span style="font-size:11px;font-weight:700;color:${statusColor}">${statusLabel}${isHolding ? ' · 보유중' : ''}</span>
       </div>
       ${holdingLine}
-      ${j.status === 'stopped' && j.stop_reason ? `<div style="font-size:11px;color:#dc2626;margin-bottom:6px">${j.stop_reason}</div>` : ''}
+      ${j.stop_reason && !isHolding ? `<div style="font-size:11px;color:${j.status === 'stopped' ? '#dc2626' : 'var(--muted)'};margin-bottom:6px">${j.stop_reason}</div>` : ''}
       <div style="display:flex;justify-content:space-between;align-items:center">
         <span style="font-size:12px;color:${pnlColor};font-weight:600">오늘 손익 ${pnl >= 0 ? '+' : ''}${Math.round(pnl).toLocaleString()}원 (${j.trades_today || 0}회)</span>
         <div style="display:flex;gap:6px">
