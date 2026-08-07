@@ -1560,7 +1560,7 @@
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
         <div>
           <div style="font-size:11px;color:var(--muted);margin-bottom:4px">진입 모멘텀 (%)</div>
-          <input id="sc-entry-momentum" type="number" min="0.1" step="0.1" value="0.4"
+          <input id="sc-entry-momentum" type="number" min="0.1" step="0.1" value="0.8"
             style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
         </div>
         <div>
@@ -1579,8 +1579,13 @@
             style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
         </div>
         <div>
-          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">시간초과 청산 (초)</div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">시간초과 판단 시점 (초)</div>
           <input id="sc-time-stop" type="number" min="30" step="10" value="180"
+            style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">시간초과 손절 기준 (%)</div>
+          <input id="sc-time-stop-loss" type="number" min="0.1" step="0.1" value="0.5"
             style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
         </div>
         <div>
@@ -1589,6 +1594,7 @@
             style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
         </div>
       </div>
+      <div style="font-size:11px;color:var(--muted);margin:-6px 0 10px">시간초과 손절: 판단 시점에 손실이 이 값을 넘을 때만 청산 — 넘지 않으면 계속 지켜봅니다</div>
 
       <div>
         <div style="font-size:11px;color:var(--muted);margin-bottom:4px">일일 손실 한도 (원, 이 잡의 당일 실현손실이 이 값에 도달하면 자동 정지)</div>

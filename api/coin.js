@@ -708,12 +708,13 @@ async function handleScalpJobs(req, res, url, gistId, ghToken) {
       name:                b.name || b.ticker,
       status:              'paused',   // 항상 일시정지로 생성 — 사용자가 직접 시작해야 함
       phase:               'watching',
-      entry_momentum_pct:  +b.entry_momentum_pct || 0.4,
+      entry_momentum_pct:  +b.entry_momentum_pct || 0.8,
       lookback_sec:        +b.lookback_sec       || 30,
       max_day_chg_pct:     +b.max_day_chg_pct    || 5.0,
       take_profit_pct:     +b.take_profit_pct    || 0.6,
       stop_loss_pct:       +b.stop_loss_pct      || 0.4,
       time_stop_sec:       +b.time_stop_sec      || 180,
+      time_stop_loss_pct:  +b.time_stop_loss_pct || 0.5,
       krw_amount:          +b.krw_amount         || 0,   // 코인용
       qty:                 +b.qty                || 0,   // 주식용 (수량 지정)
       amount:              +b.amount             || 0,   // 주식용 (금액 지정)
@@ -788,12 +789,13 @@ async function handleScalpControl(req, res, gistId, ghToken) {
 // ══════════════════════════════════════════════════════════
 const SCALP_AUTO_DEFAULTS = {
   enabled: false,
-  entry_momentum_pct: 0.4,
+  entry_momentum_pct: 0.8,
   lookback_sec: 30,
   max_day_chg_pct: 5.0,
   take_profit_pct: 0.6,
   stop_loss_pct: 0.4,
   time_stop_sec: 180,
+  time_stop_loss_pct: 0.5,
   max_concurrent: 2,
   max_daily_loss_krw: -30000,
   watch_timeout_sec: 300,

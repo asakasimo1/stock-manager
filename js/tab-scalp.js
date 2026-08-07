@@ -121,7 +121,7 @@ function scRenderAutoConfig() {
       </div>
       <div>
         <div style="font-size:11px;color:var(--muted);margin-bottom:4px">진입 모멘텀 (%)</div>
-        <input id="sac-entry-momentum" type="number" min="0.1" step="0.1" value="${cfg.entry_momentum_pct ?? 0.4}"
+        <input id="sac-entry-momentum" type="number" min="0.1" step="0.1" value="${cfg.entry_momentum_pct ?? 0.8}"
           style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
       </div>
       <div>
@@ -140,8 +140,13 @@ function scRenderAutoConfig() {
           style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
       </div>
       <div>
-        <div style="font-size:11px;color:var(--muted);margin-bottom:4px">시간초과 청산 (초)</div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px">시간초과 판단 시점 (초)</div>
         <input id="sac-time-stop" type="number" min="30" step="10" value="${cfg.time_stop_sec ?? 180}"
+          style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px">시간초과 손절 기준 (%)</div>
+        <input id="sac-time-stop-loss" type="number" min="0.1" step="0.1" value="${cfg.time_stop_loss_pct ?? 0.5}"
           style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
       </div>
       <div>
@@ -155,7 +160,8 @@ function scRenderAutoConfig() {
           style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
       </div>
     </div>
-    <div style="font-size:11px;color:var(--muted);margin:-4px 0 10px">이 시간 안에 진입 조건을 못 채우면 포기하고 슬롯을 반환합니다 — 안 그러면 조용한 종목이 포착 슬롯을 계속 차지해 새 후보를 못 찾습니다</div>
+    <div style="font-size:11px;color:var(--muted);margin:-4px 0 4px">watching 포기 시간: 이 시간 안에 진입 조건을 못 채우면 포기하고 슬롯을 반환합니다 — 안 그러면 조용한 종목이 포착 슬롯을 계속 차지해 새 후보를 못 찾습니다</div>
+    <div style="font-size:11px;color:var(--muted);margin:0 0 10px">시간초과 손절 기준: 시간초과 판단 시점에 손실이 이 값을 넘을 때만 청산합니다 — 넘지 않으면(수익권이거나 손실이 작으면) 무조건 정리하지 않고 계속 지켜봅니다</div>
     <div style="margin-bottom:10px">
       <div style="font-size:11px;color:var(--muted);margin-bottom:4px">최소 유동성 — 이 이하로 거래대금이 적은 종목은 슬리피지 우려로 후보에서 제외 (원)</div>
       <input id="sac-min-liquidity" type="number" min="0" step="1000000"
@@ -182,11 +188,12 @@ async function scSaveAutoConfig() {
     enabled: document.getElementById('sac-enabled').checked,
     [sizeKey]: parseFloat(document.getElementById(sizeId).value) || 0,
     max_concurrent: parseInt(document.getElementById('sac-max-concurrent').value, 10) || 1,
-    entry_momentum_pct: parseFloat(document.getElementById('sac-entry-momentum').value) || 0.4,
+    entry_momentum_pct: parseFloat(document.getElementById('sac-entry-momentum').value) || 0.8,
     lookback_sec: parseInt(document.getElementById('sac-lookback').value, 10) || 30,
     take_profit_pct: parseFloat(document.getElementById('sac-take-profit').value) || 0.6,
     stop_loss_pct: parseFloat(document.getElementById('sac-stop-loss').value) || 0.4,
     time_stop_sec: parseInt(document.getElementById('sac-time-stop').value, 10) || 180,
+    time_stop_loss_pct: parseFloat(document.getElementById('sac-time-stop-loss').value) || 0.5,
     max_day_chg_pct: parseFloat(document.getElementById('sac-max-day-chg').value) || 5.0,
     watch_timeout_sec: parseInt(document.getElementById('sac-watch-timeout').value, 10) || 300,
     min_liquidity: parseFloat(document.getElementById('sac-min-liquidity').value) || 0,
@@ -250,12 +257,13 @@ async function scRegister() {
 
   const body = {
     ticker, name,
-    entry_momentum_pct: parseFloat(document.getElementById('sc-entry-momentum').value) || 0.4,
+    entry_momentum_pct: parseFloat(document.getElementById('sc-entry-momentum').value) || 0.8,
     lookback_sec:       parseInt(document.getElementById('sc-lookback').value, 10) || 30,
     max_day_chg_pct:    parseFloat(document.getElementById('sc-max-day-chg').value) || 5.0,
     take_profit_pct:    parseFloat(document.getElementById('sc-take-profit').value) || 0.6,
     stop_loss_pct:      parseFloat(document.getElementById('sc-stop-loss').value) || 0.4,
     time_stop_sec:      parseInt(document.getElementById('sc-time-stop').value, 10) || 180,
+    time_stop_loss_pct: parseFloat(document.getElementById('sc-time-stop-loss').value) || 0.5,
     max_daily_loss_krw: -Math.abs(parseFloat(document.getElementById('sc-daily-loss').value) || 20000),
   };
 
