@@ -19,6 +19,7 @@
  * GET/POST/PATCH/DELETE /api/scalp-coin   → scalp_coin_jobs.json
  * GET/POST/PATCH/DELETE /api/scalp-stock  → scalp_stock_jobs.json
  * GET/POST(PATCH)       /api/scalp-control → scalp_control.json (전체 정지 킬스위치)
+ * GET/POST(PATCH)       /api/scalp-auto-config → scalp_auto_config.json (자동 종목 발굴 설정)
  *
  * ── Vercel 아웃바운드 IP 확인 ──
  * GET /api/coin-ip
@@ -782,6 +783,48 @@ async function handleScalpControl(req, res, gistId, ghToken) {
 }
 
 // ══════════════════════════════════════════════════════════
+// 초단타 자동 종목 발굴 설정 — coin/stock 각각 enabled 시
+// daemon_scalp.py가 시장 전체를 스캔해 급등 후보를 watching 잡으로 자동 생성
+// ══════════════════════════════════════════════════════════
+const SCALP_AUTO_DEFAULTS = {
+  enabled: false,
+  entry_momentum_pct: 0.4,
+  lookback_sec: 30,
+  max_day_chg_pct: 5.0,
+  take_profit_pct: 0.6,
+  stop_loss_pct: 0.4,
+  time_stop_sec: 180,
+  max_concurrent: 2,
+  max_daily_loss_krw: -30000,
+};
+
+async function handleScalpAutoConfig(req, res, gistId, ghToken) {
+  const FILENAME = 'scalp_auto_config.json';
+  res.setHeader('Cache-Control', 'no-store');
+
+  if (req.method === 'GET') {
+    const cfg = await readGistFile(gistId, ghToken, FILENAME);
+    const base = (cfg && typeof cfg === 'object' && !Array.isArray(cfg)) ? cfg : {};
+    return res.status(200).json({
+      coin:  { ...SCALP_AUTO_DEFAULTS, krw_amount: 10000, min_liquidity: 50_000_000, ...(base.coin || {}) },
+      stock: { ...SCALP_AUTO_DEFAULTS, amount: 500000,   min_liquidity: 100_000_000, ...(base.stock || {}) },
+    });
+  }
+
+  if (req.method === 'POST' || req.method === 'PATCH') {
+    const { market, ...fields } = req.body || {};
+    if (market !== 'coin' && market !== 'stock') return res.status(400).json({ error: "market은 'coin' 또는 'stock'이어야 합니다" });
+    const cfg = await readGistFile(gistId, ghToken, FILENAME);
+    const base = (cfg && typeof cfg === 'object' && !Array.isArray(cfg)) ? cfg : {};
+    const merged = { ...base, [market]: { ...(base[market] || {}), ...fields } };
+    const ok = await writeGistFile(gistId, ghToken, FILENAME, merged);
+    return res.status(ok ? 200 : 500).json(ok ? merged : { error: '저장 실패' });
+  }
+
+  return res.status(405).json({ error: 'Method not allowed' });
+}
+
+// ══════════════════════════════════════════════════════════
 // 일별 코인 거래 수익 집계
 // GET /api/coin-today         → 오늘(KST) 거래 집계
 // GET /api/coin-date?date=    → 특정 날짜(YYYY-MM-DD) 거래 집계
@@ -949,6 +992,7 @@ export default async function handler(req, res) {
   if (url.includes('coin-grid'))   return handleCoinGrid(req, res, gistId, ghToken);
   if (url.includes('coin-today') || url.includes('coin-date')) return handleCoinDate(req, res, gistId, ghToken);
   if (url.includes('coin-'))       return handleCoinJobs(req, res, url, gistId, ghToken);
+  if (url.includes('scalp-auto-config')) return handleScalpAutoConfig(req, res, gistId, ghToken);
   if (url.includes('scalp-control')) return handleScalpControl(req, res, gistId, ghToken);
   if (url.includes('scalp-coin') || url.includes('scalp-stock')) return handleScalpJobs(req, res, url, gistId, ghToken);
   if (url.includes('profit-'))     return handleStockJobs(req, res, url, gistId, ghToken);

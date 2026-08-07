@@ -7,9 +7,12 @@ let _scRefreshTimer = null;
 let _scAcTimer = null;
 let _scControl = { coin_enabled: true, stock_enabled: true };
 let _scJobs = { coin: [], stock: [] };
+let _scAutoConfig = { coin: {}, stock: {} };
+let _scAutoMarket = 'coin';
 
 async function initScalp() {
   await scLoadControl();
+  await scLoadAutoConfig();
   await scLoadJobs();
   clearInterval(_scRefreshTimer);
   _scRefreshTimer = setInterval(() => {
@@ -57,6 +60,132 @@ async function scToggleControl(key, value) {
     _scControl = await r.json();
   } catch (e) { alert('저장 실패: ' + e.message); }
   scRenderControl();
+}
+
+// ── 자동 종목 발굴 설정 ───────────────────────────────────
+async function scLoadAutoConfig() {
+  try {
+    const r = await fetch('/api/scalp-auto-config');
+    _scAutoConfig = await r.json();
+  } catch (_) {}
+  scRenderAutoConfig();
+}
+
+function scAutoMarketChange(market) {
+  _scAutoMarket = market;
+  scRenderAutoConfig();
+}
+
+function scRenderAutoConfig() {
+  const el = document.getElementById('sc-auto-config');
+  if (!el) return;
+  const cfg = _scAutoConfig[_scAutoMarket] || {};
+  const on = !!cfg.enabled;
+  const sizeLabel = _scAutoMarket === 'coin' ? '1회 매수 금액 (원)' : '1회 매수 금액 (원)';
+  const sizeVal = _scAutoMarket === 'coin' ? (cfg.krw_amount ?? 10000) : (cfg.amount ?? 500000);
+  const sizeId = _scAutoMarket === 'coin' ? 'sac-krw-amount' : 'sac-amount';
+
+  el.innerHTML = `
+    <div style="display:flex;gap:8px;margin-bottom:12px">
+      <button onclick="scAutoMarketChange('coin')" style="flex:1;padding:8px;border-radius:8px;cursor:pointer;
+        border:1.5px solid ${_scAutoMarket === 'coin' ? '#7c3aed' : 'var(--border)'};
+        background:${_scAutoMarket === 'coin' ? '#7c3aed18' : 'var(--bg)'};color:var(--text);font-size:12px;font-weight:600">🪙 코인</button>
+      <button onclick="scAutoMarketChange('stock')" style="flex:1;padding:8px;border-radius:8px;cursor:pointer;
+        border:1.5px solid ${_scAutoMarket === 'stock' ? '#7c3aed' : 'var(--border)'};
+        background:${_scAutoMarket === 'stock' ? '#7c3aed18' : 'var(--bg)'};color:var(--text);font-size:12px;font-weight:600">📈 주식</button>
+    </div>
+
+    <label style="display:flex;align-items:center;gap:8px;margin-bottom:12px;cursor:pointer">
+      <input id="sac-enabled" type="checkbox" ${on ? 'checked' : ''} style="width:16px;height:16px" />
+      <span style="font-size:13px;font-weight:600">자동 포착 활성화 — 켜면 데몬이 직접 급등 종목을 스캔해서 진입합니다</span>
+    </label>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+      <div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px">${sizeLabel}</div>
+        <input id="${sizeId}" type="number" min="1000" step="1000" value="${sizeVal}"
+          style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px">동시 포착 개수</div>
+        <input id="sac-max-concurrent" type="number" min="1" max="3" step="1" value="${cfg.max_concurrent ?? 2}"
+          style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px">진입 모멘텀 (%)</div>
+        <input id="sac-entry-momentum" type="number" min="0.1" step="0.1" value="${cfg.entry_momentum_pct ?? 0.4}"
+          style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px">관측 구간 (초)</div>
+        <input id="sac-lookback" type="number" min="10" step="5" value="${cfg.lookback_sec ?? 30}"
+          style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px">익절 기준 (%)</div>
+        <input id="sac-take-profit" type="number" min="0.1" step="0.1" value="${cfg.take_profit_pct ?? 0.6}"
+          style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px">손절 기준 (%)</div>
+        <input id="sac-stop-loss" type="number" min="0.1" step="0.1" value="${cfg.stop_loss_pct ?? 0.4}"
+          style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px">시간초과 청산 (초)</div>
+        <input id="sac-time-stop" type="number" min="30" step="10" value="${cfg.time_stop_sec ?? 180}"
+          style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px">당일 과열 컷 (%)</div>
+        <input id="sac-max-day-chg" type="number" min="1" step="0.5" value="${cfg.max_day_chg_pct ?? 5.0}"
+          style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
+      </div>
+    </div>
+    <div style="margin-bottom:10px">
+      <div style="font-size:11px;color:var(--muted);margin-bottom:4px">최소 유동성 — 이 이하로 거래대금이 적은 종목은 슬리피지 우려로 후보에서 제외 (원)</div>
+      <input id="sac-min-liquidity" type="number" min="0" step="1000000"
+        value="${cfg.min_liquidity ?? (_scAutoMarket === 'coin' ? 50000000 : 100000000)}"
+        style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
+    </div>
+    <div style="margin-bottom:14px">
+      <div style="font-size:11px;color:var(--muted);margin-bottom:4px">자동발굴 일일 손실 한도 (원) — 도달 시 그날은 신규 발굴 중단</div>
+      <input id="sac-daily-loss" type="number" min="0" step="1000" value="${Math.abs(cfg.max_daily_loss_krw ?? 30000)}"
+        style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
+    </div>
+    <button onclick="scSaveAutoConfig()"
+      style="width:100%;background:#7c3aed;color:#fff;border:none;border-radius:10px;padding:12px;font-size:14px;font-weight:700;cursor:pointer">
+      ${_scAutoMarket === 'coin' ? '🪙 코인' : '📈 주식'} 자동 포착 설정 저장
+    </button>`;
+}
+
+async function scSaveAutoConfig() {
+  const market = _scAutoMarket;
+  const sizeId = market === 'coin' ? 'sac-krw-amount' : 'sac-amount';
+  const sizeKey = market === 'coin' ? 'krw_amount' : 'amount';
+  const body = {
+    market,
+    enabled: document.getElementById('sac-enabled').checked,
+    [sizeKey]: parseFloat(document.getElementById(sizeId).value) || 0,
+    max_concurrent: parseInt(document.getElementById('sac-max-concurrent').value, 10) || 1,
+    entry_momentum_pct: parseFloat(document.getElementById('sac-entry-momentum').value) || 0.4,
+    lookback_sec: parseInt(document.getElementById('sac-lookback').value, 10) || 30,
+    take_profit_pct: parseFloat(document.getElementById('sac-take-profit').value) || 0.6,
+    stop_loss_pct: parseFloat(document.getElementById('sac-stop-loss').value) || 0.4,
+    time_stop_sec: parseInt(document.getElementById('sac-time-stop').value, 10) || 180,
+    max_day_chg_pct: parseFloat(document.getElementById('sac-max-day-chg').value) || 5.0,
+    min_liquidity: parseFloat(document.getElementById('sac-min-liquidity').value) || 0,
+    max_daily_loss_krw: -Math.abs(parseFloat(document.getElementById('sac-daily-loss').value) || 30000),
+  };
+  try {
+    const r = await fetch('/api/scalp-auto-config', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    if (!r.ok) { const e = await r.json().catch(() => ({})); alert('저장 실패: ' + (e.error || r.status)); return; }
+    _scAutoConfig = await r.json();
+    scRenderAutoConfig();
+    alert('저장되었습니다');
+  } catch (e) { alert('저장 실패: ' + e.message); }
 }
 
 // ── 잡 등록 폼 ────────────────────────────────────────────
@@ -170,17 +299,18 @@ function scRenderJobs() {
 
   el.innerHTML = all.map(j => {
     const isHolding    = j.phase === 'holding';
-    const statusColor  = j.status === 'active' ? '#16a34a' : j.status === 'stopped' ? '#dc2626' : '#f59e0b';
-    const statusLabel  = j.status === 'active' ? '실행중' : j.status === 'stopped' ? '정지됨' : '일시정지';
+    const statusColor  = j.status === 'active' ? '#16a34a' : j.status === 'stopped' ? '#dc2626' : j.status === 'done' ? 'var(--muted)' : '#f59e0b';
+    const statusLabel  = j.status === 'active' ? '실행중' : j.status === 'stopped' ? '정지됨' : j.status === 'done' ? '완료(1회성)' : '일시정지';
     const pnl          = j.realized_pnl_today || 0;
     const pnlColor     = pnl >= 0 ? '#16a34a' : '#dc2626';
     const marketBadge  = j.market === 'coin' ? '🪙 코인' : '📈 주식';
+    const autoBadge    = j.source === 'auto' ? ' <span style="color:#7c3aed;font-weight:700">🔍 자동포착</span>' : '';
     const enteredLabel = isHolding && j.entered_at
       ? new Date(j.entered_at * 1000).toLocaleTimeString('ko-KR') : '';
 
     return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-        <div><b style="font-size:13px">${j.name}</b> <span style="font-size:11px;color:var(--muted)">${marketBadge} · ${j.ticker}</span></div>
+        <div><b style="font-size:13px">${j.name}</b> <span style="font-size:11px;color:var(--muted)">${marketBadge} · ${j.ticker}</span>${autoBadge}</div>
         <span style="font-size:11px;font-weight:700;color:${statusColor}">${statusLabel}${isHolding ? ' · 보유중' : ''}</span>
       </div>
       ${isHolding ? `<div style="font-size:12px;color:var(--muted);margin-bottom:6px">진입가 ${Math.round(j.buy_price || 0).toLocaleString()}원 · ${enteredLabel} 진입</div>` : ''}
@@ -188,7 +318,7 @@ function scRenderJobs() {
       <div style="display:flex;justify-content:space-between;align-items:center">
         <span style="font-size:12px;color:${pnlColor};font-weight:600">오늘 손익 ${pnl >= 0 ? '+' : ''}${Math.round(pnl).toLocaleString()}원 (${j.trades_today || 0}회)</span>
         <div style="display:flex;gap:6px">
-          ${j.status !== 'stopped' ? `<button onclick="scToggleJob('${j.market}','${j.id}','${j.status === 'active' ? 'paused' : 'active'}')"
+          ${j.status !== 'stopped' && j.status !== 'done' ? `<button onclick="scToggleJob('${j.market}','${j.id}','${j.status === 'active' ? 'paused' : 'active'}')"
             style="padding:5px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:11px;cursor:pointer">
             ${j.status === 'active' ? '⏸ 일시정지' : '▶ 시작'}</button>` : ''}
           <button onclick="scDeleteJob('${j.market}','${j.id}')"

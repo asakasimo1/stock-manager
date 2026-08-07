@@ -50,6 +50,7 @@
     { "src": "/api/scalp-coin(.*)",    "dest": "/api/coin.js" },
     { "src": "/api/scalp-stock(.*)",   "dest": "/api/coin.js" },
     { "src": "/api/scalp-control(.*)", "dest": "/api/coin.js" },
+    { "src": "/api/scalp-auto-config(.*)", "dest": "/api/coin.js" },
     { "src": "/api/chart(.*)",        "dest": "/api/quote.js" },
     { "src": "/api/account(.*)",      "dest": "/api/data.js" },
     { "src": "/api/kis-balance(.*)",  "dest": "/api/data.js" },
