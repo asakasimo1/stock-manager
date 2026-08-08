@@ -265,6 +265,7 @@ def select_reversal_candidates(
     slots: int,
     min_decline_pct: float,
     min_rebound_pct: float,
+    min_volume_surge: float = 0.0,
 ) -> list:
     """
     급락 후 반등 후보 선정 — "빠르게 급락하다가 급 양전"하는 대상을 잡기 위한
@@ -275,6 +276,9 @@ def select_reversal_candidates(
     min_decline_pct/min_rebound_pct: 둘 다 양수로 입력 (부호는 내부에서 처리)
       예: min_decline_pct=2.0 → decline이 -2.0% 이하(더 많이 하락)여야 통과
           min_rebound_pct=0.4 → rebound이 +0.4% 이상이어야 통과
+    min_volume_surge: 0보다 크면 반등 구간에 거래량 증가도 함께 요구 — 매수세 없는 "힘없는
+      바운스"(예: 잠깐 튀었다가 방향 없이 정체)를 걸러내기 위함. select_auto_candidates와
+      동일한 철학이나, 반등 모드는 원래 이 확인이 빠져 있어 추가함.
     당일 등락률 상한(max_day_chg_pct) 필터는 적용하지 않음 — 반등 후보는 보통
     당일 기준으로도 마이너스이거나 미미해서 "추격 과열" 개념 자체가 해당 없음.
     """
@@ -297,6 +301,10 @@ def select_reversal_candidates(
         eff_rebound_th = tick_aware_floor(c.get("price", 0), c.get("tick_size", 0), min_rebound_pct)
         if rebound < eff_rebound_th:
             continue
+        if min_volume_surge > 0:
+            vs = c.get("volume_surge")
+            if vs is None or vs < min_volume_surge:
+                continue
         picked.append(c)
     return picked
 
@@ -341,6 +349,10 @@ def should_exit(
                            그때 익절 확정. take_profit_pct는 "트레일링을 시작하는 문턱"이 되고
                            실제 매도는 추세가 꺾이는 걸 확인한 뒤에 이뤄짐 — 목표가에 닿자마자
                            바로 팔아서 그 뒤로도 계속 오르는 상승분을 놓치는 문제를 줄이기 위함
+      stagnation_multiplier — time_stop_sec의 이 배수(기본 3배)만큼 지나도 손익이 거의 없으면
+                           정체로 보고 청산 (기본 0이면 비활성화 아님, 3배). 오르지도 내리지도
+                           않는 포지션이 동시보유 슬롯을 계속 붙잡아 새 후보를 못 잡는 기회비용을 줄임
+      stagnation_band_pct — 정체 판단 기준 손익 폭(절대값, 기본 0.2%) — 이 안에 머물러 있어야 정체로 간주
     entry_price/cur_price는 이미 수수료를 반영한 값을 넘기는 것을 권장 (job 쪽에서 계산).
     tick_size: 호가 노이즈 보정용 — 저가 코인/종목에서 1틱 하락만으로 손절선을 넘겨버리는 것을
       막기 위해 stop_loss_pct/time_stop_loss_pct를 tick_aware_floor로 자동 상향 (0이면 보정 없음).
@@ -352,6 +364,8 @@ def should_exit(
     time_stop             = float(params.get("time_stop_sec", 180))
     time_stop_loss_pct    = tick_aware_floor(entry_price, tick_size, float(params.get("time_stop_loss_pct", 0.5)))
     trailing_giveback_pct = tick_aware_floor(entry_price, tick_size, float(params.get("trailing_giveback_pct", 0.3)))
+    stagnation_multiplier = float(params.get("stagnation_multiplier", 3.0))
+    stagnation_band_pct   = float(params.get("stagnation_band_pct", 0.2))
 
     if entry_price <= 0:
         return False, ""
@@ -369,8 +383,14 @@ def should_exit(
         if peak >= take_pct and chg_pct <= peak - trailing_giveback_pct:
             return True, f"익절 (고점 +{peak:.2f}% → 청산 {chg_pct:+.2f}%)"
 
-    if now - entered_at >= time_stop:
+    elapsed = now - entered_at
+
+    if elapsed >= time_stop:
         if chg_pct <= -time_stop_loss_pct:
-            return True, f"시간초과 손절 ({int(now - entered_at)}초 경과, {chg_pct:+.2f}%)"
-        return False, ""  # 시간은 지났지만 손실이 크지 않음 — 청산하지 않고 계속 관찰
+            return True, f"시간초과 손절 ({int(elapsed)}초 경과, {chg_pct:+.2f}%)"
+
+    if stagnation_multiplier > 0 and elapsed >= time_stop * stagnation_multiplier:
+        if abs(chg_pct) <= stagnation_band_pct:
+            return True, f"정체 청산 ({int(elapsed)}초 경과, {chg_pct:+.2f}% 정체)"
+
     return False, ""

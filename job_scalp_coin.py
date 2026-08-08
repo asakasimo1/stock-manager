@@ -172,7 +172,7 @@ def _auto_discover(jobs: list, auto_cfg: dict, price_cache: dict, coin_enabled: 
     if reversal_enabled and remaining > 0:
         picked_reversal = scalp_engine.select_reversal_candidates(
             candidates, existing_tickers | {c["ticker"] for c in picked_surge}, min_liquidity, remaining,
-            min_decline_pct=min_decline, min_rebound_pct=min_rebound,
+            min_decline_pct=min_decline, min_rebound_pct=min_rebound, min_volume_surge=min_vol_surge,
         )
         for c in picked_reversal:
             c["_mode"] = "reversal"
@@ -198,7 +198,7 @@ def _auto_discover(jobs: list, auto_cfg: dict, price_cache: dict, coin_enabled: 
             "krw_amount":         auto_cfg.get("krw_amount", 0),
             "max_daily_loss_krw": max_loss,
             "watch_timeout_sec":  auto_cfg.get("watch_timeout_sec", 300),
-            "min_volume_surge_ratio": min_vol_surge if c["_mode"] == "surge" else 0,
+            "min_volume_surge_ratio": min_vol_surge,
             "discovered_at":      now_epoch,
             "buy_price": 0, "buy_qty": 0, "entered_at": 0, "buy_uuid": "",
             "trades_today": 0, "realized_pnl_today": 0, "stats_date": today,

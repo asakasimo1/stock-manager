@@ -333,6 +333,47 @@ def test_update_peak_pnl_tracks_max_per_ticker():
     print("OK: 티커별 고점 손익률 추적 및 초기화")
 
 
+def test_select_reversal_candidates_requires_volume_surge_when_configured():
+    # 오늘 실거래 재현: BORA는 반등폭은 기준을 넘겼지만(매수세 확인 없이) 27분간 정체하다 손절됨.
+    # 반등 모드에도 거래량 증가 조건을 추가해 "힘없는 바운스"를 걸러낼 수 있어야 함
+    candidates = [
+        {"ticker": "A", "liquidity": 1_000_000, "decline": -3.0, "rebound": 1.0, "volume_surge": 1.1},   # 거래량 부족
+        {"ticker": "B", "liquidity": 1_000_000, "decline": -3.0, "rebound": 1.0, "volume_surge": 2.0},   # 통과
+    ]
+    picked = se.select_reversal_candidates(candidates, existing_tickers=set(), min_liquidity=1000,
+                                            slots=5, min_decline_pct=2.0, min_rebound_pct=0.4,
+                                            min_volume_surge=1.5)
+    assert [c["ticker"] for c in picked] == ["B"], picked
+    print(f"OK: 반등 모드도 거래량 증가 미달이면 제외 — {picked}")
+
+    # min_volume_surge=0(미설정)이면 기존처럼 거래량 검사 없이 통과 — 하위호환
+    picked2 = se.select_reversal_candidates(candidates, existing_tickers=set(), min_liquidity=1000,
+                                             slots=5, min_decline_pct=2.0, min_rebound_pct=0.4)
+    assert [c["ticker"] for c in picked2] == ["A", "B"], picked2
+    print("OK: min_volume_surge 미설정 시 기존처럼 거래량 검사 없이 통과 (하위호환)")
+
+
+def test_should_exit_stagnation_closes_flat_position_after_long_hold():
+    # 오늘 실거래 재현: BORA는 27분(1620초)간 손익이 거의 0%대로 정체했음.
+    # time_stop_sec(180초)의 3배(540초)를 넘겨도 손익이 ±0.2% 안에 머물러 있으면 슬롯 반환을 위해 청산
+    params = {"take_profit_pct": 1.0, "stop_loss_pct": 0.5, "time_stop_sec": 180}
+
+    # 540초 전에는 정체라도 그냥 계속 보유 (아직 판단 시점 아님)
+    ok, reason = se.should_exit(entry_price=100, cur_price=100.05, entered_at=0, now=400, params=params)
+    assert ok is False, reason
+    print("OK: 정체 판단 시점(3배) 전에는 그대로 보유")
+
+    # 540초 넘었고 손익이 ±0.2% 안(정체)이면 청산
+    ok, reason = se.should_exit(entry_price=100, cur_price=100.05, entered_at=0, now=600, params=params)
+    assert ok is True and "정체" in reason, reason
+    print(f"OK: 오래 정체된 포지션은 슬롯 반환을 위해 청산 — {reason}")
+
+    # 540초 넘었어도 손익이 밴드를 벗어나 있으면(방향이 생긴 것) 정체 청산 대상 아님
+    ok, reason = se.should_exit(entry_price=100, cur_price=100.3, entered_at=0, now=600, params=params)
+    assert ok is False, reason
+    print("OK: 방향이 생긴 포지션은 정체 청산 대상 아님 (계속 관찰)")
+
+
 if __name__ == "__main__":
     test_momentum_insufficient_data()
     test_momentum_calc()
@@ -364,4 +405,6 @@ if __name__ == "__main__":
     test_should_exit_trailing_take_profit_lets_winner_run()
     test_should_exit_take_profit_immediate_when_no_peak_tracking()
     test_update_peak_pnl_tracks_max_per_ticker()
+    test_select_reversal_candidates_requires_volume_surge_when_configured()
+    test_should_exit_stagnation_closes_flat_position_after_long_hold()
     print("\n전체 통과")
