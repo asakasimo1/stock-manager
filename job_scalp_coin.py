@@ -218,13 +218,19 @@ def _auto_discover(jobs: list, auto_cfg: dict, price_cache: dict, coin_enabled: 
 
 def _poll_executed_volume(order_uuid: str, fallback: float, tries: int = 6, delay: float = 0.5) -> float:
     """시장가 매수 직후 실제 체결수량을 조회. 추정치(fallback)와 실제 체결량이 달라 매도 시
-    잔량(dust)이 남는 문제를 막기 위함 — 반드시 Upbit이 확정한 executed_volume을 사용."""
+    잔량(dust)이 남는 문제를 막기 위함 — 반드시 Upbit이 확정한 executed_volume을 사용.
+
+    주의: ord_type="price"(총액 지정 시장가 매수) 주문은 완전히 체결돼도 Upbit이 state를
+    "done"이 아니라 "cancel"로 반환한다(소진 후 남은 자투리 금액을 취소 처리하는 방식) — 그래서
+    예전에 state=="done"만 확인하던 코드는 이 경우를 절대 못 잡고 매번 추정치로 폴백했고,
+    그 추정치가 실제 체결량보다 살짝 적어 매도 시마다 미세한 잔량(dust)이 쌓였다.
+    state 값과 무관하게 remaining_volume==0(더 이상 미체결분이 없음)이면 체결 확정으로 본다."""
     if not order_uuid:
         return fallback
     for _ in range(tries):
         try:
             order = upbit_api.get_order(order_uuid)
-            if order["state"] == "done" and order["executed_volume"] > 0:
+            if order["remaining_volume"] == 0 and order["executed_volume"] > 0:
                 return order["executed_volume"]
         except Exception as e:
             logger.warning("주문 체결 조회 실패 %s: %s", order_uuid, e)

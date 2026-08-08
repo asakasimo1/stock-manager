@@ -2,6 +2,7 @@
 import job_scalp_coin
 import job_scalp_stock
 import kis_api
+import upbit_api
 import scalp_engine as se
 
 # 모멘텀/거래량증가 게이팅과 무관하게 기존 필터(과열/유동성/슬롯)만 검증하는 테스트에서는
@@ -143,6 +144,29 @@ def test_stock_close_stale_auto_watching():
     print("OK: 장마감 시 미체결 자동발굴 watching 잡만 종료 처리")
 
 
+def test_poll_executed_volume_accepts_cancel_state_when_fully_filled(monkeypatch):
+    # 실거래 재현: Upbit는 ord_type="price" 시장가 매수가 완전 체결돼도 state를 "done"이 아니라
+    # "cancel"로 반환한다. remaining_volume==0이면 state와 무관하게 체결 확정으로 봐야
+    # 매도 시 잔량(dust)이 안 남는다 (예전엔 state=="done"만 봐서 매번 추정치로 폴백했음)
+    monkeypatch.setattr(upbit_api, "get_order", lambda uuid: {
+        "uuid": uuid, "state": "cancel", "executed_volume": 153.84615384,
+        "remaining_volume": 0.0, "avg_price": 0.0, "trades_count": 1,
+    })
+    qty = job_scalp_coin._poll_executed_volume("fake-uuid", fallback=153.76923076, tries=1, delay=0)
+    assert qty == 153.84615384, qty
+    print("OK: state='cancel'이어도 remaining_volume==0이면 실제 체결량 사용 (dust 방지)")
+
+
+def test_poll_executed_volume_falls_back_when_still_pending(monkeypatch):
+    monkeypatch.setattr(upbit_api, "get_order", lambda uuid: {
+        "uuid": uuid, "state": "wait", "executed_volume": 0.0,
+        "remaining_volume": 100.0, "avg_price": 0.0, "trades_count": 0,
+    })
+    qty = job_scalp_coin._poll_executed_volume("fake-uuid", fallback=99.0, tries=2, delay=0)
+    assert qty == 99.0, qty
+    print("OK: 아직 미체결분이 남아있으면(remaining_volume>0) 추정치로 폴백")
+
+
 class _FakeMonkeypatch:
     def setattr(self, obj, name, value):
         self._orig = (obj, name, getattr(obj, name))
@@ -165,4 +189,10 @@ if __name__ == "__main__":
     test_stock_auto_discover_reversal_mode(mp)
     mp.undo()
     test_stock_close_stale_auto_watching()
+    mp = _FakeMonkeypatch()
+    test_poll_executed_volume_accepts_cancel_state_when_fully_filled(mp)
+    mp.undo()
+    mp = _FakeMonkeypatch()
+    test_poll_executed_volume_falls_back_when_still_pending(mp)
+    mp.undo()
     print("\n전체 통과")
