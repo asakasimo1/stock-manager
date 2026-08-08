@@ -1499,26 +1499,30 @@
   <!-- 전체 정지 킬스위치 -->
   <div id="sc-control" style="margin-bottom:16px"></div>
 
-  <!-- 오늘 실현손익 요약 -->
-  <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:16px">
-    <div id="sc-summary"></div>
+  <!-- ── 자동 종목 발굴 설정 (접기 가능, 기본 접힘) ──── -->
+  <div style="background:var(--surface);border:2px solid #7c3aed;border-radius:14px;overflow:hidden;margin-bottom:16px">
+    <div onclick="toggleHistoryCollapse('sc-auto')" style="cursor:pointer;user-select:none;padding:14px 18px;background:#7c3aed18;display:flex;justify-content:space-between;align-items:center;gap:10px">
+      <div>
+        <span style="font-size:14px;font-weight:700;color:#7c3aed">🔍 자동 종목 발굴</span>
+        <span style="font-size:11px;color:var(--muted);margin-left:8px">종목을 직접 고르지 않고, 데몬이 시장 전체를 스캔해서 급등 후보를 찾아 자동 진입</span>
+      </div>
+      <span id="hist-icon-sc-auto" style="font-size:12px;color:#7c3aed;flex:none">▶</span>
+    </div>
+    <div id="hist-body-sc-auto" style="display:none">
+      <div id="sc-auto-config" style="padding:18px 20px"></div>
+    </div>
   </div>
 
-  <!-- ── 자동 종목 발굴 설정 ──────────────────────── -->
+  <!-- ── 잡 등록 섹션 (직접 종목 지정, 접기 가능, 기본 접힘) ── -->
   <div style="background:var(--surface);border:2px solid #7c3aed;border-radius:14px;overflow:hidden;margin-bottom:16px">
-    <div style="padding:14px 18px;background:#7c3aed18">
-      <span style="font-size:14px;font-weight:700;color:#7c3aed">🔍 자동 종목 발굴</span>
-      <span style="font-size:11px;color:var(--muted);margin-left:8px">종목을 직접 고르지 않고, 데몬이 시장 전체를 스캔해서 급등 후보를 찾아 자동 진입</span>
+    <div onclick="toggleHistoryCollapse('sc-register')" style="cursor:pointer;user-select:none;padding:14px 18px;background:#7c3aed18;display:flex;justify-content:space-between;align-items:center;gap:10px">
+      <div>
+        <span style="font-size:14px;font-weight:700;color:#7c3aed">⚡ 초단타 잡 등록 (직접 종목 지정)</span>
+        <span style="font-size:11px;color:var(--muted);margin-left:8px">모멘텀 진입 → 익절/손절/시간초과 자동청산</span>
+      </div>
+      <span id="hist-icon-sc-register" style="font-size:12px;color:#7c3aed;flex:none">▶</span>
     </div>
-    <div id="sc-auto-config" style="padding:18px 20px"></div>
-  </div>
-
-  <!-- ── 잡 등록 섹션 (직접 종목 지정) ─────────────── -->
-  <div style="background:var(--surface);border:2px solid #7c3aed;border-radius:14px;overflow:hidden;margin-bottom:16px">
-    <div style="padding:14px 18px;background:#7c3aed18">
-      <span style="font-size:14px;font-weight:700;color:#7c3aed">⚡ 초단타 잡 등록 (직접 종목 지정)</span>
-      <span style="font-size:11px;color:var(--muted);margin-left:8px">모멘텀 진입 → 익절/손절/시간초과 자동청산</span>
-    </div>
+    <div id="hist-body-sc-register" style="display:none">
     <div style="padding:18px 20px;display:flex;flex-direction:column;gap:12px">
 
       <div>
@@ -1607,19 +1611,26 @@
         잡 등록 (일시정지 상태로 생성 — 목록에서 직접 시작해야 실거래 시작)
       </button>
     </div>
+    </div>
   </div>
 
-  <!-- ── 잡 목록 ─────────────────────────────────── -->
-  <div style="font-size:12px;font-weight:700;color:var(--text);margin-bottom:10px">📋 진행중인 잡</div>
-  <div id="sc-active-list"></div>
+  <!-- ── 진행중인 잡 + 오늘 실현손익 (통합) ─────────── -->
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;overflow:hidden;margin-bottom:16px">
+    <div style="padding:12px 18px;background:var(--bg);border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px 14px">
+      <span style="font-size:14px;font-weight:700;color:var(--text)">📋 진행중인 잡</span>
+      <div id="sc-summary"></div>
+    </div>
+    <div id="sc-active-list" style="padding:14px 18px"></div>
+  </div>
 
-  <div style="margin-top:14px">
-    <div onclick="toggleHistoryCollapse('sc')" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;padding:8px 2px;user-select:none;border-top:1px solid var(--border)">
-      <span style="font-size:12px;font-weight:700;color:var(--muted)">초단타내역 (<span id="hist-count-sc">0건</span>)</span>
-      <span id="hist-icon-sc" style="font-size:11px;color:var(--muted)">▶</span>
+  <!-- ── 초단타내역 ──────────────────────────────── -->
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;overflow:hidden;margin-bottom:16px">
+    <div onclick="toggleHistoryCollapse('sc')" style="cursor:pointer;user-select:none;padding:12px 18px;background:var(--bg);display:flex;justify-content:space-between;align-items:center">
+      <span style="font-size:14px;font-weight:700;color:var(--text)">초단타내역 (<span id="hist-count-sc">0건</span>)</span>
+      <span id="hist-icon-sc" style="font-size:12px;color:var(--muted)">▶</span>
     </div>
     <div id="hist-body-sc" style="display:none">
-      <div id="sc-history-list"></div>
+      <div id="sc-history-list" style="padding:6px 18px 14px"></div>
     </div>
   </div>
 
