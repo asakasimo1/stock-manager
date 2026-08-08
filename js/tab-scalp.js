@@ -422,10 +422,7 @@ function scRenderJobs() {
     ...(_scJobs.stock || []).map(j => ({ ...j, market: 'stock' })),
   ];
 
-  const active  = all.filter(j => j.status === 'active' || j.status === 'paused');
-  const history = all.filter(j => j.status === 'done' || j.status === 'stopped')
-    .filter(j => withinLastDays(j.created_at))
-    .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+  const active = all.filter(j => j.status === 'active' || j.status === 'paused');
 
   // 보유중 → 실행중 → 일시정지 순 (지금 매매 중인 것이 가장 먼저 보이도록)
   active.sort((a, b) => (a.phase === 'holding' ? 0 : a.status === 'active' ? 1 : 2)
@@ -435,10 +432,75 @@ function scRenderJobs() {
     ? active.map(_scJobCardHtml).join('')
     : `<div style="color:var(--muted);font-size:13px;padding:20px;text-align:center">진행중인 스캘핑 잡이 없습니다</div>`;
 
-  elHistory.innerHTML = history.length
-    ? history.map(_scJobCardHtml).join('')
-    : `<div style="color:var(--muted);font-size:13px;padding:12px 0;text-align:center">최근 ${HISTORY_DAYS}일 내 완료/정지 내역이 없습니다</div>`;
-  setHistoryCount('sc', history.length);
+  scRenderHistory(all);
+}
+
+// ── 초단타내역: 매수가/매도가/손익/시간 1줄 표시 (오늘 최대 5건 + 더보기, 지난 날짜는 일일 요약으로 집계) ──
+let _scHistExpanded = false;
+
+function scToggleHistoryMore() {
+  _scHistExpanded = !_scHistExpanded;
+  scRenderHistory([
+    ...(_scJobs.coin  || []).map(j => ({ ...j, market: 'coin' })),
+    ...(_scJobs.stock || []).map(j => ({ ...j, market: 'stock' })),
+  ]);
+}
+
+function _scFlattenTrades(jobs) {
+  const rows = [];
+  jobs.forEach(j => (j.trade_log || []).forEach(t => rows.push({ ...t, ticker: j.ticker, name: j.name, market: j.market })));
+  rows.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+  return rows;
+}
+
+function _scTradeRowHtml(r) {
+  const color = (r.pnl || 0) >= 0 ? '#16a34a' : '#dc2626';
+  const marketIcon = r.market === 'coin' ? '🪙' : '📈';
+  return `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 4px;border-top:1px solid var(--border);font-size:12px">
+    <span style="color:var(--muted);flex:none">${r.time}</span>
+    <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${marketIcon} ${r.name}</span>
+    <span style="color:var(--muted);white-space:nowrap;flex:none">${Math.round(r.buy_price).toLocaleString()}→${Math.round(r.sell_price).toLocaleString()}원</span>
+    <b style="color:${color};white-space:nowrap;flex:none">${(r.pnl || 0) >= 0 ? '+' : ''}${Math.round(r.pnl || 0).toLocaleString()}원</b>
+  </div>`;
+}
+
+function scRenderHistory(all) {
+  const elHistory = document.getElementById('sc-history-list');
+  if (!elHistory) return;
+
+  const rows  = _scFlattenTrades(all);
+  const today = new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10);
+  const todayRows = rows.filter(r => r.date === today);
+  const pastRows  = rows.filter(r => r.date !== today && withinLastDays(r.date));
+
+  // 지난 날짜는 날짜별로 묶어서 "거래 N종목 · 일일수익금 M원" 한 줄 요약으로
+  const byDate = {};
+  pastRows.forEach(r => {
+    const d = byDate[r.date] || (byDate[r.date] = { tickers: new Set(), pnl: 0 });
+    d.tickers.add(r.ticker);
+    d.pnl += (r.pnl || 0);
+  });
+  const dateKeys = Object.keys(byDate).sort((a, b) => b.localeCompare(a));
+
+  const visibleToday = _scHistExpanded ? todayRows : todayRows.slice(0, 5);
+  const todayHtml = visibleToday.map(_scTradeRowHtml).join('');
+  const moreHtml = todayRows.length > 5
+    ? `<div onclick="scToggleHistoryMore()" style="text-align:center;padding:8px;font-size:12px;color:var(--muted);cursor:pointer">${_scHistExpanded ? '접기 ▲' : `더보기 (${todayRows.length - 5}건) ▼`}</div>`
+    : '';
+
+  const dailyHtml = dateKeys.map(d => {
+    const s = byDate[d];
+    const color = s.pnl >= 0 ? '#16a34a' : '#dc2626';
+    const md = d.slice(5).replace('-', '/');
+    return `<div style="display:flex;justify-content:space-between;padding:8px 4px;border-top:1px solid var(--border);font-size:12px;color:var(--muted)">
+      <span>${md} · 거래 ${s.tickers.size}종목</span>
+      <b style="color:${color}">일일수익금 ${s.pnl >= 0 ? '+' : ''}${Math.round(s.pnl).toLocaleString()}원</b>
+    </div>`;
+  }).join('');
+
+  elHistory.innerHTML = (todayHtml + moreHtml + dailyHtml)
+    || `<div style="color:var(--muted);font-size:13px;padding:12px 0;text-align:center">최근 거래 내역이 없습니다</div>`;
+  setHistoryCount('sc', todayRows.length + dateKeys.length);
 }
 
 function _scJobCardHtml(j) {
