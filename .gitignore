@@ -5,3 +5,6 @@ __pycache__/
 *.pyc
 .DS_Store
 trader.log
+*.log
+*.bak
+*.bak.*
