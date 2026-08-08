@@ -15,3 +15,4 @@ __pycache__/
 .vercel/.env*
 .env*.local
 .vercel
+.env*
