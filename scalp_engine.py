@@ -18,6 +18,20 @@ _VOL_HIST_MAX_SEC = 300  # 거래량 증가율 baseline 계산에 필요한 만�
 
 _entry_confirm: dict = {}  # ticker -> 모멘텀 조건을 연속으로 만족한 횟수 (진입 확인용)
 
+_peak_pnl: dict = {}  # ticker -> 현재 보유 포지션 진입 이후 관측된 최고 손익률(%) — 트레일링 익절용
+
+
+def update_peak_pnl(ticker: str, chg_pct: float) -> float:
+    """현재 손익률을 반영해 이 포지션의 고점 손익률을 갱신하고 반환. 프로세스 메모리에만 보관
+    (Gist에 매 사이클 쓰지 않기 위함 — 데몬 재시작 시 리셋되지만 보유 중 재시작은 드묾)."""
+    peak = max(_peak_pnl.get(ticker, chg_pct), chg_pct)
+    _peak_pnl[ticker] = peak
+    return peak
+
+
+def clear_peak_pnl(ticker: str) -> None:
+    _peak_pnl.pop(ticker, None)
+
 
 def record_price(ticker: str, price: float, now: float = None) -> None:
     now = now if now is not None else time.time()
@@ -128,10 +142,12 @@ def reset(ticker: str = None) -> None:
         _price_hist.pop(ticker, None)
         _volume_hist.pop(ticker, None)
         _entry_confirm.pop(ticker, None)
+        _peak_pnl.pop(ticker, None)
     else:
         _price_hist.clear()
         _volume_hist.clear()
         _entry_confirm.clear()
+        _peak_pnl.clear()
 
 
 def should_enter(
@@ -310,6 +326,7 @@ def should_exit(
     now: float,
     params: dict,
     tick_size: float = 0.0,
+    peak_pnl_pct: float | None = None,
 ) -> tuple[bool, str]:
     """
     params:
@@ -320,24 +337,38 @@ def should_exit(
                            그 안이면(수익이거나 손실이 -0.5% 이내면) 무조건 청산하지 않고 계속 보유
                            — "3분 지났다고 무조건 손절"하던 것을 완화, 시간초과=거의 항상 수수료손실
                              패턴(승률 저하 요인)을 줄이기 위함
+      trailing_giveback_pct — peak_pnl_pct 사용 시, 고점 대비 이만큼(양수, 기본 0.3%) 되돌리면
+                           그때 익절 확정. take_profit_pct는 "트레일링을 시작하는 문턱"이 되고
+                           실제 매도는 추세가 꺾이는 걸 확인한 뒤에 이뤄짐 — 목표가에 닿자마자
+                           바로 팔아서 그 뒤로도 계속 오르는 상승분을 놓치는 문제를 줄이기 위함
     entry_price/cur_price는 이미 수수료를 반영한 값을 넘기는 것을 권장 (job 쪽에서 계산).
     tick_size: 호가 노이즈 보정용 — 저가 코인/종목에서 1틱 하락만으로 손절선을 넘겨버리는 것을
       막기 위해 stop_loss_pct/time_stop_loss_pct를 tick_aware_floor로 자동 상향 (0이면 보정 없음).
+    peak_pnl_pct: 이 포지션 보유 중 지금까지 관측된 최고 손익률(%, 호출부에서 매 사이클 추적해서 전달).
+      None이면(하위호환) 트레일링 없이 기존처럼 목표가 도달 즉시 익절.
     """
-    take_pct           = float(params.get("take_profit_pct", 0.6))
-    stop_pct           = tick_aware_floor(entry_price, tick_size, float(params.get("stop_loss_pct", 0.4)))
-    time_stop          = float(params.get("time_stop_sec", 180))
-    time_stop_loss_pct = tick_aware_floor(entry_price, tick_size, float(params.get("time_stop_loss_pct", 0.5)))
+    take_pct              = float(params.get("take_profit_pct", 0.6))
+    stop_pct              = tick_aware_floor(entry_price, tick_size, float(params.get("stop_loss_pct", 0.4)))
+    time_stop             = float(params.get("time_stop_sec", 180))
+    time_stop_loss_pct    = tick_aware_floor(entry_price, tick_size, float(params.get("time_stop_loss_pct", 0.5)))
+    trailing_giveback_pct = tick_aware_floor(entry_price, tick_size, float(params.get("trailing_giveback_pct", 0.3)))
 
     if entry_price <= 0:
         return False, ""
 
     chg_pct = (cur_price - entry_price) / entry_price * 100
 
-    if chg_pct >= take_pct:
-        return True, f"익절 (+{chg_pct:.2f}%)"
     if chg_pct <= -stop_pct:
         return True, f"손절 ({chg_pct:.2f}%)"
+
+    if peak_pnl_pct is None:
+        if chg_pct >= take_pct:
+            return True, f"익절 (+{chg_pct:.2f}%)"
+    else:
+        peak = max(peak_pnl_pct, chg_pct)
+        if peak >= take_pct and chg_pct <= peak - trailing_giveback_pct:
+            return True, f"익절 (고점 +{peak:.2f}% → 청산 {chg_pct:+.2f}%)"
+
     if now - entered_at >= time_stop:
         if chg_pct <= -time_stop_loss_pct:
             return True, f"시간초과 손절 ({int(now - entered_at)}초 경과, {chg_pct:+.2f}%)"

@@ -289,6 +289,50 @@ def test_should_enter_ticker_none_skips_confirm_for_backward_compat():
     print("OK: ticker 미지정 시 기존처럼 즉시 진입 (하위호환)")
 
 
+def test_should_exit_trailing_take_profit_lets_winner_run():
+    # 오늘 실거래 재현: ZKP는 65.1원 매수 후 익절선(+1.0%) 근처인 65.9원에서 바로 팔았지만
+    # 그 뒤로도 68.2원(+4.76%)까지 계속 올랐음. peak_pnl_pct를 넘기면 목표가 도달 즉시 팔지 않고
+    # 고점 대비 trailing_giveback_pct(기본 0.3%)만큼 되돌릴 때까지 계속 보유해야 함
+    params = {"take_profit_pct": 1.0, "stop_loss_pct": 0.5}
+
+    # 익절선(1.0%)을 막 넘긴 시점 — 아직 고점에서 안 밀렸으니 계속 보유
+    ok, reason = se.should_exit(entry_price=100, cur_price=101.0, entered_at=0, now=10,
+                                 params=params, peak_pnl_pct=1.0)
+    assert ok is False, reason
+    print("OK: 목표가에 막 도달한 시점엔 트레일링 대기 (즉시 매도 안 함)")
+
+    # 계속 올라서 고점이 갱신됨 — 여전히 안 밀렸으니 보유
+    ok, reason = se.should_exit(entry_price=100, cur_price=104.0, entered_at=0, now=20,
+                                 params=params, peak_pnl_pct=4.0)
+    assert ok is False, reason
+    print("OK: 고점이 계속 갱신되는 동안은 계속 보유해서 추세를 따라감")
+
+    # 고점(4.0%) 대비 0.3% 이상 되돌리면 그때 확정 익절
+    ok, reason = se.should_exit(entry_price=100, cur_price=103.6, entered_at=0, now=30,
+                                 params=params, peak_pnl_pct=4.0)
+    assert ok is True and "고점" in reason, reason
+    print(f"OK: 고점 대비 되돌림이 나오면 그때 익절 확정 — {reason}")
+
+
+def test_should_exit_take_profit_immediate_when_no_peak_tracking():
+    # peak_pnl_pct를 안 넘기면(하위호환) 기존처럼 목표가 도달 즉시 익절
+    ok, reason = se.should_exit(entry_price=100, cur_price=101.0, entered_at=0, now=10,
+                                 params={"take_profit_pct": 1.0})
+    assert ok is True and "고점" not in reason, reason
+    print(f"OK: peak_pnl_pct 미지정 시 기존처럼 즉시 익절 — {reason}")
+
+
+def test_update_peak_pnl_tracks_max_per_ticker():
+    se.reset("PEAKTEST")
+    assert se.update_peak_pnl("PEAKTEST", 0.5) == 0.5
+    assert se.update_peak_pnl("PEAKTEST", 2.0) == 2.0
+    assert se.update_peak_pnl("PEAKTEST", 1.0) == 2.0  # 내려가도 고점은 유지
+    se.clear_peak_pnl("PEAKTEST")
+    assert se.update_peak_pnl("PEAKTEST", 0.3) == 0.3  # 클리어 후엔 새로 시작
+    se.reset("PEAKTEST")
+    print("OK: 티커별 고점 손익률 추적 및 초기화")
+
+
 if __name__ == "__main__":
     test_momentum_insufficient_data()
     test_momentum_calc()
@@ -317,4 +361,7 @@ if __name__ == "__main__":
     test_select_auto_candidates_tick_floor_filters_low_price_noise()
     test_should_enter_requires_confirm_cycles_before_entering()
     test_should_enter_ticker_none_skips_confirm_for_backward_compat()
+    test_should_exit_trailing_take_profit_lets_winner_run()
+    test_should_exit_take_profit_immediate_when_no_peak_tracking()
+    test_update_peak_pnl_tracks_max_per_ticker()
     print("\n전체 통과")

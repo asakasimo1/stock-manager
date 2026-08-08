@@ -274,6 +274,7 @@ def _force_close(job: dict, cur_price: float, reason: str) -> None:
     qty = _sellable_qty(ticker, qty)
     try:
         result = upbit_api.place_order(market=ticker, side="ask", ord_type="market", volume=qty)
+        scalp_engine.clear_peak_pnl(ticker)
         buy_price = float(job.get("buy_price", 0))
         pnl = (_net_sell_value(cur_price) - _net_buy_cost(buy_price)) * qty
         job["realized_pnl_today"] = job.get("realized_pnl_today", 0) + pnl
@@ -381,8 +382,10 @@ def main():
             entered_at = float(job.get("entered_at", 0))
             net_entry  = _net_buy_cost(buy_price)
             net_cur    = _net_sell_value(cur_price)
+            chg_pct_now = (net_cur - net_entry) / net_entry * 100 if net_entry > 0 else 0
+            peak = scalp_engine.update_peak_pnl(ticker, chg_pct_now)
             should, reason = scalp_engine.should_exit(net_entry, net_cur, entered_at, now_epoch, job,
-                                                       tick_size=upbit_api.price_unit(buy_price))
+                                                       tick_size=upbit_api.price_unit(buy_price), peak_pnl_pct=peak)
             if should:
                 qty = _sellable_qty(ticker, float(job.get("buy_qty", 0)))
                 try:
@@ -399,6 +402,7 @@ def main():
                     if job.get("source") == "auto":
                         job["status"] = "done"  # 자동발굴 잡은 1회성 — 청산 후 슬롯 반환
                     changed = True
+                    scalp_engine.clear_peak_pnl(ticker)
                     _record_trade_log(job, buy_price, cur_price, qty, pnl, pnl_pct, reason)
                     gist_writer.log_trade(ticker, name, "sell", cur_price, qty, pnl=pnl,
                                            pnl_pct=pnl_pct, reason=reason, order_no=result.get("uuid", ""))
@@ -446,6 +450,7 @@ def main():
             result = upbit_api.place_order(market=ticker, side="bid", ord_type="price", price=krw_amount)
             estimated_qty = math.floor(krw_amount / cur_price * (1 - BUY_FEE) * 1e8) / 1e8
             coin_qty = _poll_executed_volume(result.get("uuid", ""), fallback=estimated_qty)
+            scalp_engine.clear_peak_pnl(ticker)
             job["phase"]      = "holding"
             job["buy_price"]  = cur_price
             job["buy_qty"]    = coin_qty
