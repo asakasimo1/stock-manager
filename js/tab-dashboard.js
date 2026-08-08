@@ -523,42 +523,39 @@ function renderTraderSummary(trades, account) {
       </div>
     </div>`;
 
-  // ── 최근 매도 내역 (10건) ──────────────────────────────
+  // ── 최근 매도 내역 (10건) — 모바일에서 잘리지 않도록 표 대신 카드형 리스트로 표시 ──
   const recentClosed = [...closed]
     .sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time))
     .slice(0, 10);
   let closedHtml = '';
   if (recentClosed.length) {
-    const rows = recentClosed.map(t => {
+    const rows = recentClosed.map((t, i) => {
       const up   = Number(t.pnl) >= 0;
       const sign = up ? '+' : '';
+      const pnlColor = up ? '#16a34a' : '#dc2626';
+      const isLast = i === recentClosed.length - 1;
       const reasonLabel = t.reason
         ? `<span style="font-size:10px;color:var(--muted);margin-left:4px">[${t.reason}]</span>` : '';
-      return `<tr>
-        <td style="font-weight:600;white-space:nowrap">${t.name || t.ticker}<br>
-          <span style="font-size:11px;color:var(--muted)">${t.ticker}</span>${reasonLabel}</td>
-        <td style="text-align:right">${Number(t.qty).toLocaleString()}주</td>
-        <td style="text-align:right">${Number(t.price).toLocaleString()}원</td>
-        <td style="text-align:right;font-weight:600">${Number(t.amount).toLocaleString()}원</td>
-        <td style="text-align:right;font-weight:700;color:${up?'#16a34a':'#dc2626'}">${sign}${Math.round(t.pnl).toLocaleString()}원<br>
-          <span style="font-size:11px">${sign}${t.pnl_pct}%</span></td>
-        <td style="text-align:right;font-size:11px;color:var(--muted)">${t.date}</td>
-      </tr>`;
+      return `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;
+          padding:10px 12px;${isLast ? '' : 'border-bottom:1px solid var(--border);'}border-left:3px solid ${pnlColor}">
+        <div style="min-width:0;flex:1">
+          <div style="font-weight:600;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+            ${t.name || t.ticker} <span style="font-size:11px;color:var(--muted);font-weight:400">${t.ticker}</span>${reasonLabel}
+          </div>
+          <div style="font-size:11px;color:var(--muted);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+            ${Number(t.qty).toLocaleString()}주 · ${Number(t.price).toLocaleString()}원 · ${Number(t.amount).toLocaleString()}원 · ${t.date}
+          </div>
+        </div>
+        <div style="text-align:right;flex:none">
+          <div style="font-weight:700;font-size:14px;color:${pnlColor}">${sign}${Math.round(t.pnl).toLocaleString()}원</div>
+          <div style="font-size:11px;color:${pnlColor}">${sign}${t.pnl_pct}%</div>
+        </div>
+      </div>`;
     }).join('');
     closedHtml = `
       <div style="font-size:12px;font-weight:700;color:var(--fg);margin-bottom:6px">🔁 최근 매도 내역</div>
-      <div style="overflow-x:auto">
-        <table class="inv-table">
-          <thead><tr>
-            <th style="text-align:left">종목</th>
-            <th style="text-align:right">수량</th>
-            <th style="text-align:right">매도단가</th>
-            <th style="text-align:right">매도금액</th>
-            <th style="text-align:right">손익</th>
-            <th style="text-align:right">날짜</th>
-          </tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:16px">
+        ${rows}
       </div>`;
   }
 
