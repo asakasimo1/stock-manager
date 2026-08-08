@@ -200,6 +200,62 @@ def test_select_reversal_candidates_skips_existing_and_respects_slots():
     print("OK: 급락반등 후보 — 중복 제외 + 슬롯 0이면 미선정")
 
 
+def test_tick_aware_floor_raises_low_threshold():
+    # 130원짜리 코인(호가단위 1원) — 1틱=0.77%, 2.5틱=1.92%. 설정값 0.4%보다 훨씬 크므로 상향됨
+    floor = se.tick_aware_floor(price=130, tick_size=1, configured_pct=0.4)
+    assert abs(floor - 2.5 * (1 / 130 * 100)) < 1e-6, floor
+    # 5600원짜리 코인(호가단위 1원) — 1틱=0.018%, 2.5틱=0.045% — 설정값 0.4%가 더 크므로 그대로 유지
+    floor2 = se.tick_aware_floor(price=5600, tick_size=1, configured_pct=0.4)
+    assert floor2 == 0.4, floor2
+    print(f"OK: 저가 코인은 호가단위 기준으로 임계값 자동 상향({floor:.2f}%), 고가 코인은 설정값 유지({floor2:.2f}%)")
+
+
+def test_should_enter_blocks_pure_tick_noise_momentum():
+    # 오늘 실거래 재현: 208원 코인, 1틱(1원)만 올라도 momentum이 0.48%로 나와 설정된 진입모멘텀(0.4%)을
+    # 넘겨버리지만, 이는 실제 추세가 아니라 호가 노이즈이므로 tick_size를 주면 차단되어야 함
+    ok, reason = se.should_enter(momentum=0.48, today_chg_pct=1.0,
+                                  params={"entry_momentum_pct": 0.4},
+                                  cur_price=208, tick_size=1)
+    assert ok is False, reason
+    print(f"OK: 저가 코인 1틱 노이즈로는 진입 차단 — {reason}")
+
+    # 같은 코인이라도 진짜 모멘텀(2.5틱 이상)이면 정상적으로 진입 허용
+    ok, reason = se.should_enter(momentum=2.0, today_chg_pct=1.0,
+                                  params={"entry_momentum_pct": 0.4},
+                                  cur_price=208, tick_size=1)
+    assert ok is True, reason
+    print(f"OK: 같은 코인도 충분한 모멘텀이면 진입 허용 — {reason}")
+
+
+def test_should_exit_stop_loss_not_triggered_by_single_tick():
+    # 오늘 실거래 재현: 130원 매수, 1틱(1원) 하락한 129원 — 순수 등락률 -0.77%로 손절선(0.5%)을
+    # 넘기지만, tick_size를 주면 호가 노이즈로 보정되어 손절되지 않아야 함
+    ok, reason = se.should_exit(entry_price=130, cur_price=129, entered_at=0, now=10,
+                                 params={"stop_loss_pct": 0.5}, tick_size=1)
+    assert ok is False, reason
+    print("OK: 저가 코인 1틱 하락은 손절로 처리하지 않음(호가 노이즈 보정)")
+
+    # 진짜로 여러 틱 밀리면(2.5틱 이상 하락) 정상적으로 손절
+    ok, reason = se.should_exit(entry_price=130, cur_price=126, entered_at=0, now=10,
+                                 params={"stop_loss_pct": 0.5}, tick_size=1)
+    assert ok is True and "손절" in reason, reason
+    print(f"OK: 충분히 하락하면 정상적으로 손절 — {reason}")
+
+
+def test_select_auto_candidates_tick_floor_filters_low_price_noise():
+    candidates = [
+        # 130원, 1틱=0.77%, momentum 0.5%는 노이즈 수준(2.5틱=1.92%에 못 미침) — 제외
+        {"ticker": "A", "chg_pct": 2.0, "liquidity": 1_000_000, "price": 130, "tick_size": 1, "momentum": 0.5, "volume_surge": 2.0},
+        # 5600원, 1틱=0.018% — momentum 0.5%는 충분히 실질적 — 통과
+        {"ticker": "B", "chg_pct": 2.0, "liquidity": 1_000_000, "price": 5600, "tick_size": 1, "momentum": 0.5, "volume_surge": 2.0},
+    ]
+    picked = se.select_auto_candidates(candidates, existing_tickers=set(), max_day_chg_pct=5.0,
+                                        min_liquidity=1000, slots=5,
+                                        min_momentum_pct=0.4, min_volume_surge=1.5)
+    assert [c["ticker"] for c in picked] == ["B"], picked
+    print(f"OK: 자동발굴 단계에서도 저가 코인 호가노이즈 모멘텀은 제외 — {picked}")
+
+
 if __name__ == "__main__":
     test_momentum_insufficient_data()
     test_momentum_calc()
@@ -222,4 +278,8 @@ if __name__ == "__main__":
     test_select_auto_candidates_skips_existing()
     test_select_reversal_candidates_requires_decline_and_rebound()
     test_select_reversal_candidates_skips_existing_and_respects_slots()
+    test_tick_aware_floor_raises_low_threshold()
+    test_should_enter_blocks_pure_tick_noise_momentum()
+    test_should_exit_stop_loss_not_triggered_by_single_tick()
+    test_select_auto_candidates_tick_floor_filters_low_price_noise()
     print("\n전체 통과")

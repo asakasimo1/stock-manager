@@ -100,6 +100,22 @@ def momentum_pct(ticker: str, lookback_sec: float, now: float = None) -> float |
     return (cur_price - base_price) / base_price * 100
 
 
+def price_tick_pct(price: float, tick_size: float) -> float:
+    """호가 1틱이 가격 대비 차지하는 비율(%)"""
+    if price is None or tick_size is None or price <= 0 or tick_size <= 0:
+        return 0.0
+    return tick_size / price * 100
+
+
+def tick_aware_floor(price: float, tick_size: float, configured_pct: float, min_ticks: float = 2.5) -> float:
+    """설정된 %가 해당 가격대의 호가 노이즈(min_ticks 틱)보다 작으면 노이즈 기준으로 자동 상향.
+    저가 코인/종목은 1틱만 움직여도 %가 크게 튀어, 모멘텀 진입·손절 조건이 실제 추세가 아니라
+    호가 단위 자체에 의해 충족/발동되는 문제(예: 130원짜리 코인은 1틱=0.77%로 손절선 0.5%를
+    단 1틱 하락만으로 넘겨버림)를 막기 위함. price/tick_size 정보가 없으면 설정값 그대로 사용."""
+    floor = min_ticks * price_tick_pct(price, tick_size)
+    return max(configured_pct, floor)
+
+
 def fmt_opt(val: float | None, fmt: str = "{:+.2f}") -> str:
     """None-safe 로그 포맷팅 — momentum/volume_surge 등 관측 데이터 부족 시 None일 수 있는 값용"""
     return "N/A" if val is None else fmt.format(val)
@@ -119,6 +135,8 @@ def should_enter(
     today_chg_pct: float | None,
     params: dict,
     volume_surge: float | None = None,
+    cur_price: float = 0.0,
+    tick_size: float = 0.0,
 ) -> tuple[bool, str]:
     """
     params:
@@ -126,8 +144,12 @@ def should_enter(
       max_day_chg_pct       — 당일 이미 이 이상 오른 종목은 추격 제외 (기본 5.0%)
       min_volume_surge_ratio — 0보다 크면 거래량 증가 조건도 함께 검사 (기본 0=미검사, 수동 잡 하위호환)
     volume_surge: scalp_engine.volume_surge_ratio() 결과 — min_volume_surge_ratio 검사 시에만 사용
+    cur_price/tick_size: 호가 노이즈 보정용 — 저가 코인/종목에서 1틱 등락만으로 모멘텀 조건이
+      충족되는 것을 막기 위해 entry_momentum_pct를 tick_aware_floor로 자동 상향 (둘 다 필요,
+      하나라도 0이면 보정 없이 설정값 그대로 사용)
     """
-    entry_th = float(params.get("entry_momentum_pct", 0.4))
+    entry_th_cfg = float(params.get("entry_momentum_pct", 0.4))
+    entry_th = tick_aware_floor(cur_price, tick_size, entry_th_cfg)
     max_day  = float(params.get("max_day_chg_pct", 5.0))
     min_vol_surge = float(params.get("min_volume_surge_ratio", 0) or 0)
 
@@ -182,7 +204,10 @@ def select_auto_candidates(
             continue
         if min_momentum_pct > 0:
             m = c.get("momentum")
-            if m is None or m < min_momentum_pct:
+            if m is None:
+                continue
+            eff_th = tick_aware_floor(c.get("price", 0), c.get("tick_size", 0), min_momentum_pct)
+            if m < eff_th:
                 continue
         if min_volume_surge > 0:
             vs = c.get("volume_surge")
@@ -228,7 +253,8 @@ def select_reversal_candidates(
             continue
         if decline > -min_decline_pct:
             continue
-        if rebound < min_rebound_pct:
+        eff_rebound_th = tick_aware_floor(c.get("price", 0), c.get("tick_size", 0), min_rebound_pct)
+        if rebound < eff_rebound_th:
             continue
         picked.append(c)
     return picked
@@ -258,10 +284,11 @@ def should_exit(
     entered_at: float,
     now: float,
     params: dict,
+    tick_size: float = 0.0,
 ) -> tuple[bool, str]:
     """
     params:
-      take_profit_pct   — 익절 기준 (기본 0.6%)
+      take_profit_pct   — 익절 기준 (기본 0.6%) — 호가 노이즈 보정 없음 (노이즈로 익절돼도 손해가 아님)
       stop_loss_pct     — 손절 기준 (기본 0.4%, 양수로 입력) — 시간과 무관하게 항상 적용
       time_stop_sec     — 시간초과 판단 시점 (기본 180초)
       time_stop_loss_pct — 시간초과 시점에 이 손실률(양수 입력)을 넘겼을 때만 청산 (기본 0.5%)
@@ -269,11 +296,13 @@ def should_exit(
                            — "3분 지났다고 무조건 손절"하던 것을 완화, 시간초과=거의 항상 수수료손실
                              패턴(승률 저하 요인)을 줄이기 위함
     entry_price/cur_price는 이미 수수료를 반영한 값을 넘기는 것을 권장 (job 쪽에서 계산).
+    tick_size: 호가 노이즈 보정용 — 저가 코인/종목에서 1틱 하락만으로 손절선을 넘겨버리는 것을
+      막기 위해 stop_loss_pct/time_stop_loss_pct를 tick_aware_floor로 자동 상향 (0이면 보정 없음).
     """
     take_pct           = float(params.get("take_profit_pct", 0.6))
-    stop_pct           = float(params.get("stop_loss_pct", 0.4))
+    stop_pct           = tick_aware_floor(entry_price, tick_size, float(params.get("stop_loss_pct", 0.4)))
     time_stop          = float(params.get("time_stop_sec", 180))
-    time_stop_loss_pct = float(params.get("time_stop_loss_pct", 0.5))
+    time_stop_loss_pct = tick_aware_floor(entry_price, tick_size, float(params.get("time_stop_loss_pct", 0.5)))
 
     if entry_price <= 0:
         return False, ""

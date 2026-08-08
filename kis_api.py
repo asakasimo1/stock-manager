@@ -49,6 +49,25 @@ _logging.getLogger(__name__).info("KIS 모드: %s  BASE_URL: %s", "모의투자"
 
 _KST = timezone(timedelta(hours=9))
 
+# 국내주식(KRX) 호가단위 (가격 범위 → 단위) — 2023.1 개편 이후 KOSPI/KOSDAQ 공통
+_PRICE_UNITS = [
+    (500_000, 1000),
+    (200_000,  500),
+    ( 50_000,  100),
+    ( 20_000,   50),
+    (  5_000,   10),
+    (  2_000,    5),
+    (      0,    1),
+]
+
+
+def price_unit(price: float) -> float:
+    """KRX 호가단위 반환"""
+    for threshold, unit in _PRICE_UNITS:
+        if price >= threshold:
+            return unit
+    return 1
+
 # ─────────────────────────────────────────
 # 공유 HTTP 세션 (TLS/TCP 연결 재활용)
 # ─────────────────────────────────────────

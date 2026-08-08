@@ -140,6 +140,8 @@ def _auto_discover(jobs: list, auto_cfg: dict, stock_enabled: bool, now_epoch: f
         {
             "ticker": r["ticker"],
             "name": r["name"],
+            "price": r["price"],
+            "tick_size": kis_api.price_unit(r["price"]),
             "chg_pct": r["chg_pct"],
             "liquidity": r["acml_vol"] * r["price"],
             "momentum": scalp_engine.momentum_pct(r["ticker"], discovery_lookback, now=now_epoch),
@@ -364,7 +366,8 @@ def main():
             entered_at = float(job.get("entered_at", 0))
             net_entry  = _net_buy_cost(buy_price)
             net_cur    = _net_sell_value(cur_price)
-            should, reason = scalp_engine.should_exit(net_entry, net_cur, entered_at, now_epoch, job)
+            should, reason = scalp_engine.should_exit(net_entry, net_cur, entered_at, now_epoch, job,
+                                                       tick_size=kis_api.price_unit(buy_price))
             if should:
                 qty = int(job.get("buy_qty", 0))
                 try:
@@ -407,7 +410,8 @@ def main():
         lookback = float(job.get("lookback_sec", 30))
         momentum = scalp_engine.momentum_pct(ticker, lookback, now=now_epoch)
         vol_surge = scalp_engine.volume_surge_ratio(ticker, now=now_epoch)
-        should, reason = scalp_engine.should_enter(momentum, today_chg, job, volume_surge=vol_surge)
+        should, reason = scalp_engine.should_enter(momentum, today_chg, job, volume_surge=vol_surge,
+                                                    cur_price=cur_price, tick_size=kis_api.price_unit(cur_price))
         if not should:
             logger.info("  %s(%s) 대기 — %s", name, ticker, reason)
             continue
