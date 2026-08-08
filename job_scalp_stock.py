@@ -236,6 +236,21 @@ def _fetch_prices(tickers: list) -> dict:
     return result
 
 
+def _record_trade_log(job: dict, buy_price: float, sell_price: float, qty: float,
+                       pnl: float, pnl_pct: float, reason: str) -> None:
+    """탭 UI '초단타내역'에 1줄로 표시할 완료된 라운드트립(매수→매도) 기록.
+    잡 하나가 여러 번 진입/청산을 반복할 수 있어 잡 객체 자체(trade_log)에 이력을 쌓는다."""
+    now = datetime.now(KST)
+    log = job.setdefault("trade_log", [])
+    log.insert(0, {
+        "buy_price": buy_price, "sell_price": sell_price, "qty": qty,
+        "pnl": pnl, "pnl_pct": pnl_pct, "reason": reason,
+        "date": now.strftime("%Y-%m-%d"), "time": now.strftime("%H:%M"),
+        "ts": now.timestamp(),
+    })
+    del log[20:]
+
+
 def _force_close(job: dict, cur_price: int, reason: str) -> None:
     ticker = job["ticker"]
     name   = job.get("name", ticker)
@@ -255,10 +270,11 @@ def _force_close(job: dict, cur_price: int, reason: str) -> None:
         job["entered_at"] = 0
         if job.get("source") == "auto":
             job["status"] = "done"  # 자동발굴 잡은 1회성 — 청산 후 슬롯 반환
+        pnl_pct = (pnl / (buy_price * qty) * 100) if buy_price > 0 else None
+        _record_trade_log(job, buy_price, cur_price, qty, pnl, pnl_pct, reason)
         gist_writer.log_trade(ticker, name, "sell", cur_price, qty, pnl=pnl,
-                               pnl_pct=(pnl / (buy_price * qty) * 100) if buy_price > 0 else None,
-                               reason=reason, order_no=result.get("order_no", ""))
-        logger.info("★ [%s] 강제청산 %s %d주 @ %d원  손익 %+,.0f원", reason, ticker, qty, cur_price, pnl)
+                               pnl_pct=pnl_pct, reason=reason, order_no=result.get("order_no", ""))
+        logger.info("★ [%s] 강제청산 %s %d주 @ %d원  손익 %s원", reason, ticker, qty, cur_price, f"{pnl:+,.0f}")
     except Exception as e:
         logger.error("%s 강제청산 실패: %s", ticker, e)
 
@@ -364,10 +380,11 @@ def main():
                     if job.get("source") == "auto":
                         job["status"] = "done"  # 자동발굴 잡은 1회성 — 청산 후 슬롯 반환
                     changed = True
+                    _record_trade_log(job, buy_price, cur_price, qty, pnl, pnl_pct, reason)
                     gist_writer.log_trade(ticker, name, "sell", cur_price, qty, pnl=pnl,
                                            pnl_pct=pnl_pct, reason=reason, order_no=result.get("order_no", ""))
-                    logger.info("★ [%s] %s %d주 @ %d원  손익 %+,.0f원(%.2f%%)",
-                                reason, ticker, qty, cur_price, pnl, pnl_pct)
+                    logger.info("★ [%s] %s %d주 @ %d원  손익 %s원(%.2f%%)",
+                                reason, ticker, qty, cur_price, f"{pnl:+,.0f}", pnl_pct)
                 except Exception as e:
                     logger.error("%s 청산 실패: %s", ticker, e)
             else:
