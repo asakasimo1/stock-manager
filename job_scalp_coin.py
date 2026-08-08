@@ -430,7 +430,8 @@ def main():
         momentum = scalp_engine.momentum_pct(ticker, lookback, now=now_epoch)
         vol_surge = scalp_engine.volume_surge_ratio(ticker, now=now_epoch)
         should, reason = scalp_engine.should_enter(momentum, today_chg, job, volume_surge=vol_surge,
-                                                    cur_price=cur_price, tick_size=upbit_api.price_unit(cur_price))
+                                                    cur_price=cur_price, tick_size=upbit_api.price_unit(cur_price),
+                                                    ticker=ticker)
         if not should:
             logger.info("  %s(%s) 대기 — %s", name, ticker, reason)
             continue

@@ -256,6 +256,39 @@ def test_select_auto_candidates_tick_floor_filters_low_price_noise():
     print(f"OK: 자동발굴 단계에서도 저가 코인 호가노이즈 모멘텀은 제외 — {picked}")
 
 
+def test_should_enter_requires_confirm_cycles_before_entering():
+    # 오늘 실거래 재현: AVAX처럼 순간적으로 모멘텀이 튀었다가 바로 꺾이는 "반짝 스파이크"를
+    # 걸러내기 위해, ticker를 넘기면 기본 2회 연속 조건 충족해야 진입 허용
+    se.reset("AVAX")
+    params = {"entry_momentum_pct": 0.4}
+
+    # 1회차: 조건은 충족하지만 아직 확인 중 — 진입 보류
+    ok, reason = se.should_enter(momentum=0.6, today_chg_pct=1.0, params=params, ticker="AVAX")
+    assert ok is False and "확인 중" in reason, reason
+    print(f"OK: 1회차 충족은 진입 보류 — {reason}")
+
+    # 다음 사이클에 모멘텀이 꺾이면(스파이크였던 것) 카운트 리셋되고 여전히 진입 안 함
+    ok, reason = se.should_enter(momentum=0.1, today_chg_pct=1.0, params=params, ticker="AVAX")
+    assert ok is False, reason
+    ok, reason = se.should_enter(momentum=0.6, today_chg_pct=1.0, params=params, ticker="AVAX")
+    assert ok is False and "1/2" in reason, reason
+    print("OK: 중간에 조건 미달되면 확인 카운트가 리셋됨 (반짝 스파이크 필터링)")
+
+    # 2회 연속 충족하면 그때 진입
+    ok, reason = se.should_enter(momentum=0.6, today_chg_pct=1.0, params=params, ticker="AVAX")
+    assert ok is True, reason
+    print(f"OK: 2회 연속 충족 시 진입 허용 — {reason}")
+
+    se.reset("AVAX")
+
+
+def test_should_enter_ticker_none_skips_confirm_for_backward_compat():
+    # ticker를 안 넘기면(기존 호출부/테스트) 확인 절차 없이 기존처럼 즉시 진입 — 하위호환
+    ok, reason = se.should_enter(momentum=0.6, today_chg_pct=1.0, params={"entry_momentum_pct": 0.4})
+    assert ok is True, reason
+    print("OK: ticker 미지정 시 기존처럼 즉시 진입 (하위호환)")
+
+
 if __name__ == "__main__":
     test_momentum_insufficient_data()
     test_momentum_calc()
@@ -282,4 +315,6 @@ if __name__ == "__main__":
     test_should_enter_blocks_pure_tick_noise_momentum()
     test_should_exit_stop_loss_not_triggered_by_single_tick()
     test_select_auto_candidates_tick_floor_filters_low_price_noise()
+    test_should_enter_requires_confirm_cycles_before_entering()
+    test_should_enter_ticker_none_skips_confirm_for_backward_compat()
     print("\n전체 통과")

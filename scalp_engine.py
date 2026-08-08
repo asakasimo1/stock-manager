@@ -16,6 +16,8 @@ _HIST_MAX_SEC = 180  # lookback_sec 상한보다 넉넉하게 보관
 _volume_hist: dict = {}  # ticker -> deque[(epoch_sec, cumulative_volume)]
 _VOL_HIST_MAX_SEC = 300  # 거래량 증가율 baseline 계산에 필요한 만큼 넉넉히 보관
 
+_entry_confirm: dict = {}  # ticker -> 모멘텀 조건을 연속으로 만족한 횟수 (진입 확인용)
+
 
 def record_price(ticker: str, price: float, now: float = None) -> None:
     now = now if now is not None else time.time()
@@ -125,9 +127,11 @@ def reset(ticker: str = None) -> None:
     if ticker:
         _price_hist.pop(ticker, None)
         _volume_hist.pop(ticker, None)
+        _entry_confirm.pop(ticker, None)
     else:
         _price_hist.clear()
         _volume_hist.clear()
+        _entry_confirm.clear()
 
 
 def should_enter(
@@ -137,34 +141,55 @@ def should_enter(
     volume_surge: float | None = None,
     cur_price: float = 0.0,
     tick_size: float = 0.0,
+    ticker: str | None = None,
 ) -> tuple[bool, str]:
     """
     params:
       entry_momentum_pct    — 진입 모멘텀 임계 (기본 0.4%)
       max_day_chg_pct       — 당일 이미 이 이상 오른 종목은 추격 제외 (기본 5.0%)
       min_volume_surge_ratio — 0보다 크면 거래량 증가 조건도 함께 검사 (기본 0=미검사, 수동 잡 하위호환)
+      entry_confirm_cycles   — 모멘텀 조건을 연속 몇 회 만족해야 진입할지 (기본 2, 1이면 기존처럼 즉시 진입)
+                               찰나의 스파이크가 정점을 찍는 순간 바로 사서 직후 반락하는 것을 방지
     volume_surge: scalp_engine.volume_surge_ratio() 결과 — min_volume_surge_ratio 검사 시에만 사용
     cur_price/tick_size: 호가 노이즈 보정용 — 저가 코인/종목에서 1틱 등락만으로 모멘텀 조건이
       충족되는 것을 막기 위해 entry_momentum_pct를 tick_aware_floor로 자동 상향 (둘 다 필요,
       하나라도 0이면 보정 없이 설정값 그대로 사용)
+    ticker: entry_confirm_cycles 연속 확인 상태를 추적할 키. None이면 확인 절차 없이 즉시 판단(하위호환).
     """
     entry_th_cfg = float(params.get("entry_momentum_pct", 0.4))
     entry_th = tick_aware_floor(cur_price, tick_size, entry_th_cfg)
     max_day  = float(params.get("max_day_chg_pct", 5.0))
     min_vol_surge = float(params.get("min_volume_surge_ratio", 0) or 0)
+    confirm_cycles = int(params.get("entry_confirm_cycles", 2) or 1)
+
+    def _fail(reason: str) -> tuple[bool, str]:
+        if ticker is not None:
+            _entry_confirm[ticker] = 0
+        return False, reason
 
     if momentum is None:
-        return False, "관측 데이터 부족"
+        return _fail("관측 데이터 부족")
     if today_chg_pct is not None and today_chg_pct > max_day:
-        return False, f"당일 이미 +{today_chg_pct:.1f}% 과열 — 추격 제외"
+        return _fail(f"당일 이미 +{today_chg_pct:.1f}% 과열 — 추격 제외")
     if momentum < entry_th:
-        return False, f"모멘텀 {momentum:+.2f}% < 임계 {entry_th:.2f}%"
+        return _fail(f"모멘텀 {momentum:+.2f}% < 임계 {entry_th:.2f}%")
     if min_vol_surge > 0:
         if volume_surge is None:
-            return False, "거래량 데이터 부족"
+            return _fail("거래량 데이터 부족")
         if volume_surge < min_vol_surge:
-            return False, f"거래량 증가 부족 ({volume_surge:.2f}배 < 임계 {min_vol_surge:.2f}배)"
-    return True, f"모멘텀 진입 {momentum:+.2f}%" + (f" · 거래량 {volume_surge:.2f}배" if min_vol_surge > 0 else "")
+            return _fail(f"거래량 증가 부족 ({volume_surge:.2f}배 < 임계 {min_vol_surge:.2f}배)")
+
+    base_reason = f"모멘텀 진입 {momentum:+.2f}%" + (f" · 거래량 {volume_surge:.2f}배" if min_vol_surge > 0 else "")
+
+    if ticker is None or confirm_cycles <= 1:
+        return True, base_reason
+
+    count = _entry_confirm.get(ticker, 0) + 1
+    if count < confirm_cycles:
+        _entry_confirm[ticker] = count
+        return False, f"{base_reason} (지속 확인 중 {count}/{confirm_cycles}회)"
+    _entry_confirm.pop(ticker, None)
+    return True, base_reason
 
 
 def select_auto_candidates(
