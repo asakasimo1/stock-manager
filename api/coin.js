@@ -813,6 +813,7 @@ const SCALP_AUTO_DEFAULTS = {
   fast_decline_momentum_pct: 0,    // 0=비활성. 보유 중 모멘텀이 이 값의 음수 이하면 급락으로 판단
   fast_decline_stop_loss_pct: 0,   // 급락 판단 시 stop_loss_pct 대신 적용할 축소(타이트) 손절 기준
   retry_cooldown_sec: 0,           // 0=당일 1회만 시도(기존 동작). >0이면 이 시간(초) 지나면 같은 티커 재시도 허용
+  max_spread_pct: 0,               // 0=비활성. 매수/매도 1호가 스프레드가 이 값을 넘는 후보는 제외
 };
 
 async function handleScalpAutoConfig(req, res, gistId, ghToken) {
