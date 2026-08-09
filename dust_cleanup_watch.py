@@ -11,7 +11,6 @@ DEADLINE = 1786280400  # 2026-08-09 22:00:00 KST (사용자 요청으로 연장)
 POLL_SEC = 30
 
 TRACKED = [
-    {"ticker": "KRW-YGG",    "sell_uuid": "fa5cdf2f-8620-413c-ab0d-7fff9bea8e36", "avg_price": 26.80058629,   "qty": 186.74964592},
     {"ticker": "KRW-ZIL",    "sell_uuid": "02a357b1-61b5-49d8-a65f-692080be29b6", "avg_price": 3.11995982,    "qty": 1605.78990901},
     {"ticker": "KRW-PUNDIX", "sell_uuid": "e1dc49d5-62cc-4a40-905e-77d819a361ff", "avg_price": 110.00099001,  "qty": 45.4995905},
     {"ticker": "KRW-ORDER",  "sell_uuid": "ad53ac2b-f7ae-4515-b889-ce92a105508e", "avg_price": 41.00029753,   "qty": 122.07228488},
@@ -25,25 +24,35 @@ TRACKED = [
     {"ticker": "KRW-FIL",    "sell_uuid": "5c1de064-c5b1-4677-b5a3-1ccec1f71dcd", "avg_price": 1000.98795188, "qty": 5.00505524},
     {"ticker": "KRW-SUI",    "sell_uuid": "87ff2417-8a88-4b8c-94fc-562ee03295da", "avg_price": 974.98996862,  "qty": 5.1385144},
     {"ticker": "KRW-XLM",    "sell_uuid": "72ce1aee-6fdf-4b83-a7b7-7d4492c6c094", "avg_price": 231.99187618,  "qty": 21.59558378},
-    {"ticker": "KRW-0G",     "sell_uuid": "19e71855-6f47-46a9-a4f7-b0b88d38b49a", "avg_price": 211.99186274,  "qty": 23.63298258},
     {"ticker": "KRW-XPL",    "sell_uuid": "25a826c3-e86b-4dc3-983b-9639c95ce859", "avg_price": 108.01153805,  "qty": 46.43022487},
 ]
 
 
-def _report_fill(ticker: str, avg_price: float, qty: float, order: dict, forced: bool):
-    """체결 완료 시 종목명/매수금액/매도금액/수익금을 계산해서 한 줄로 기록"""
+def _raw_order(uuid: str) -> dict:
+    """get_order() 래퍼는 executed_funds/paid_fee를 안 주므로(ask 주문 avg_price도 0으로 옴)
+    수익 계산에 필요한 원본 필드를 얻기 위해 직접 조회"""
+    r = upbit_api._session.get(f"{upbit_api.BASE_URL}/order",
+                                params={"uuid": uuid}, headers=upbit_api._auth_header({"uuid": uuid}), timeout=10)
+    r.raise_for_status()
+    return r.json()
+
+
+def _report_fill(ticker: str, avg_price: float, sell_uuid: str, forced: bool):
+    """체결 완료 시 종목명/매수단가/매도단가/매수금액/매도금액/수익금을 계산해서 한 줄로 기록"""
     name = upbit_api.COIN_NAMES.get(ticker, ticker)
-    sell_price = order["avg_price"] if order.get("avg_price") else 0
-    executed = order["executed_volume"]
-    buy_amount = avg_price * executed
-    sell_amount = sell_price * executed * (1 - upbit_api.SELL_FEE) if sell_price else None
-    if sell_amount is not None:
+    try:
+        raw = _raw_order(sell_uuid)
+        executed = float(raw["executed_volume"])
+        executed_funds = float(raw["executed_funds"])
+        paid_fee = float(raw["paid_fee"])
+        sell_unit = executed_funds / executed if executed else 0
+        buy_amount = avg_price * executed
+        sell_amount = executed_funds - paid_fee
         profit = sell_amount - buy_amount
-        logger.info("[체결%s] %s(%s)  매수금액=%.0f원  매도금액=%.0f원  수익금=%+.0f원",
-                    " (시장가 강제청산)" if forced else "", name, ticker, buy_amount, sell_amount, profit)
-    else:
-        logger.info("[체결%s] %s(%s)  매수금액=%.0f원  (매도 체결가 정보 없음, executed_volume=%.8f)",
-                    " (시장가 강제청산)" if forced else "", name, ticker, buy_amount, executed)
+        logger.info("[체결%s] %s(%s)  매수단가=%.4f  매도단가=%.4f  매수금액=%.0f원  매도금액=%.0f원  수익금=%+.0f원",
+                    " (시장가 강제청산)" if forced else "", name, ticker, avg_price, sell_unit, buy_amount, sell_amount, profit)
+    except Exception as e:
+        logger.warning("[%s] 체결 상세 조회 실패(체결 자체는 완료): %s", ticker, e)
 
 
 def main():
@@ -60,7 +69,7 @@ def main():
                 logger.warning("[%s] 매도 상태 확인 실패: %s", ticker, e)
                 continue
             if o["remaining_volume"] == 0:
-                _report_fill(ticker, info["avg_price"], info["qty"], o, forced=False)
+                _report_fill(ticker, info["avg_price"], info["sell_uuid"], forced=False)
                 del pending[ticker]
                 continue
             if time.time() >= DEADLINE:
@@ -73,8 +82,7 @@ def main():
                     if h and h["qty"] > 0:
                         result = upbit_api.place_order(market=ticker, side="ask", ord_type="market", volume=h["qty"])
                         time.sleep(1)
-                        o2 = upbit_api.get_order(result["uuid"])
-                        _report_fill(ticker, info["avg_price"], info["qty"], o2, forced=True)
+                        _report_fill(ticker, info["avg_price"], result["uuid"], forced=True)
                 except Exception as e:
                     logger.error("[%s] 강제청산 실패: %s", ticker, e)
                 del pending[ticker]
