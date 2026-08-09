@@ -1,4 +1,4 @@
-"""더스트 정리 지정가 매도 감시 (v3: 마감시각을 사용자 요청으로 당일 22:00까지 연장).
+"""더스트 정리 지정가 매도 감시 (v4: 사용자 요청으로 마감시각 없이 무기한 대기 — 시장가 강제청산 없음).
 기존 dust_cleanup_watch.py를 대체."""
 import time
 import logging
@@ -7,11 +7,9 @@ import upbit_api
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("dust_cleanup_watch")
 
-DEADLINE = 1786280400  # 2026-08-09 22:00:00 KST (사용자 요청으로 연장)
 POLL_SEC = 30
 
 TRACKED = [
-    {"ticker": "KRW-ZIL",    "sell_uuid": "02a357b1-61b5-49d8-a65f-692080be29b6", "avg_price": 3.11995982,    "qty": 1605.78990901},
     {"ticker": "KRW-MET2",   "sell_uuid": "a9eedae2-17c6-4c69-a3e6-5470ef7a0b19", "avg_price": 237.0019813,   "qty": 21.11796691},
     {"ticker": "KRW-XEC",    "sell_uuid": "21186b68-b7f8-4fc3-81ee-a58e6f1ac662", "avg_price": 0.00959973,    "qty": 521368.66523911},
     {"ticker": "KRW-ARX",    "sell_uuid": "13d0523b-5e5b-470f-ba39-ee86e2b08767", "avg_price": 186.04707272,  "qty": 26.92866879},
@@ -54,9 +52,7 @@ def _report_fill(ticker: str, avg_price: float, sell_uuid: str, forced: bool):
 
 def main():
     pending = {t["ticker"]: t for t in TRACKED}
-    remaining_min = max(0, int((DEADLINE - time.time()) / 60))
-    logger.info("감시 재시작: %d건, 마감까지 약 %d분 남음(%s)", len(pending), remaining_min,
-                time.strftime("%H:%M:%S", time.localtime(DEADLINE)))
+    logger.info("감시 재시작: %d건, 마감시각 없음(지정가 체결될 때까지 무기한 대기, 강제청산 안 함)", len(pending))
     while pending:
         time.sleep(POLL_SEC)
         for ticker, info in list(pending.items()):
@@ -67,21 +63,6 @@ def main():
                 continue
             if o["remaining_volume"] == 0:
                 _report_fill(ticker, info["avg_price"], info["sell_uuid"], forced=False)
-                del pending[ticker]
-                continue
-            if time.time() >= DEADLINE:
-                logger.warning("[%s] 마감 시각 경과, 미체결 — 시장가로 강제청산", ticker)
-                try:
-                    upbit_api.cancel_order(info["sell_uuid"])
-                    time.sleep(1)
-                    bal = upbit_api.get_balance()
-                    h = next((x for x in bal["holdings"] if x["ticker"] == ticker), None)
-                    if h and h["qty"] > 0:
-                        result = upbit_api.place_order(market=ticker, side="ask", ord_type="market", volume=h["qty"])
-                        time.sleep(1)
-                        _report_fill(ticker, info["avg_price"], result["uuid"], forced=True)
-                except Exception as e:
-                    logger.error("[%s] 강제청산 실패: %s", ticker, e)
                 del pending[ticker]
     logger.info("전체 정리 완료")
 
