@@ -153,12 +153,18 @@ def _auto_discover(jobs: list, auto_cfg: dict, stock_enabled: bool, now_epoch: f
     ]
     candidates.sort(key=lambda c: c["momentum"] if c["momentum"] is not None else -999, reverse=True)
 
-    # 진행중인 티커 + 오늘 이미 한 번 시도한(성공/실패 무관) 자동발굴 티커는 재시도하지 않음
-    existing_tickers = {
-        j["ticker"] for j in jobs
-        if j.get("status") not in ("done", "stopped")
-        or (j.get("source") == "auto" and j.get("stats_date") == today)
-    }
+    # 진행중인 티커 + 오늘 이미 시도한 자동발굴 티커는 재시도 제한 대상
+    # retry_cooldown_sec=0(기본)이면 기존처럼 당일 1회, >0이면
+    # 마지막 발굴 시점(discovered_at)으로부터 그 시간(초)이 지나면 같은 티커 재시도 허용
+    # (손절 후 진짜 반등이 왔는데도 하루 종일 못 잡던 사각지대 완화 목적)
+    retry_cooldown = float(auto_cfg.get("retry_cooldown_sec", 0) or 0)
+    existing_tickers = set()
+    for j in jobs:
+        if j.get("status") not in ("done", "stopped"):
+            existing_tickers.add(j["ticker"])
+        elif j.get("source") == "auto" and j.get("stats_date") == today:
+            if retry_cooldown <= 0 or (now_epoch - float(j.get("discovered_at", 0) or 0)) < retry_cooldown:
+                existing_tickers.add(j["ticker"])
     max_day_chg = float(auto_cfg.get("max_day_chg_pct", 5.0))
     min_liquidity = float(auto_cfg.get("min_liquidity", 100_000_000))
 
@@ -201,6 +207,8 @@ def _auto_discover(jobs: list, auto_cfg: dict, stock_enabled: bool, now_epoch: f
             "time_stop_loss_pct": auto_cfg.get("time_stop_loss_pct", 0.5),
             "fast_rise_momentum_pct":    auto_cfg.get("fast_rise_momentum_pct", 0),
             "fast_rise_take_profit_pct": auto_cfg.get("fast_rise_take_profit_pct", 0),
+            "fast_decline_momentum_pct":  auto_cfg.get("fast_decline_momentum_pct", 0),
+            "fast_decline_stop_loss_pct": auto_cfg.get("fast_decline_stop_loss_pct", 0),
             "amount":             auto_cfg.get("amount", 0),
             "qty":                0,
             "max_daily_loss_krw": max_loss,
