@@ -112,10 +112,45 @@ def _is_nxt_aftermarket() -> bool:
 def _is_nxt_time() -> bool:
     return _is_nxt_premarket() or _is_nxt_aftermarket()
 
+_holiday_cache: dict = {}
+
+def _is_krx_open_day(target_date=None) -> bool:
+    """KIS 국내휴장일조회(CTCA0903R)로 해당 날짜가 실제 개장일인지 확인.
+    설날/추석 등 공휴일은 요일만으로는 못 걸러내서 별도 조회가 필요함 — 하루 1회만
+    호출하도록 날짜별로 캐시. job_report.py가 이 함수를 호출하는데 기존엔 정의 자체가
+    없어서 평일 리포트 작업이 매번 AttributeError로 실패하고 있었음 — 같이 해결.
+    API 실패 시에는 평일 기준 개장으로 간주(fail-open) — 공휴일 오탐지로 신규 발굴을
+    몇 번 헛되이 시도하는 것보다, API 일시 오류로 실제 거래일을 통째로 놓치는 게
+    훨씬 큰 손실이기 때문."""
+    d = target_date or datetime.now(_KST).date()
+    key = d.strftime("%Y%m%d")
+    if key in _holiday_cache:
+        return _holiday_cache[key]
+    try:
+        params = {"BASS_DT": key, "CTX_AREA_NK": "", "CTX_AREA_FK": ""}
+        resp = _api_get(
+            f"{BASE_URL}/uapi/domestic-stock/v1/quotations/chk-holiday",
+            headers=_headers("CTCA0903R"),
+            params=params,
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        row = next((r for r in data.get("output", []) if r.get("bass_dt") == key), None)
+        is_open = (row.get("opnd_yn") == "Y") if row else True
+        _holiday_cache[key] = is_open
+        return is_open
+    except Exception as e:
+        logger.warning("KRX 휴장일 조회 실패 — 평일 기준 개장으로 간주: %s", e)
+        return True
+
+
 def is_any_market_open() -> bool:
-    """KRX 또는 NXT 거래 가능 시간 (08:00~20:00 KST 평일)"""
+    """KRX 또는 NXT 거래 가능 시간 (08:00~20:00 KST 평일, 공휴일 제외)"""
     now = datetime.now(_KST)
     if now.weekday() >= 5:   # 토·일 제외
+        return False
+    if not _is_krx_open_day(now.date()):
         return False
     t = now.time()
     return dt_time(8, 0) <= t < dt_time(20, 0)
