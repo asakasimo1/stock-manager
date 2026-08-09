@@ -6,6 +6,7 @@
  * POST /api/data  body: { portfolio_meta: { cash: 1000000 } }  → JSONBin 저장
  */
 
+import crypto from 'crypto';
 import { readBin, writeBin } from './_jsonbin.js';
 
 // ── Gist 전체 읽기 캐시 (warm 인스턴스 간 재사용, 30초 TTL) ──
@@ -103,6 +104,53 @@ export default async function handler(req, res) {
       } catch (e) {
         return res.status(500).json({ error: e.message });
       }
+    }
+  }
+
+  // ── 업비트 미체결(대기중) 주문 전체 조회 — 잡 파일에 없는 지정가 매도(더스트 정리 등)까지 포함 ──
+  if (mode === 'coin-open-orders') {
+    const accessKey = process.env.UPBIT_ACCESS_KEY;
+    const secretKey = process.env.UPBIT_SECRET_KEY;
+    if (!accessKey || !secretKey) return res.status(500).json({ error: 'UPBIT_ACCESS_KEY / UPBIT_SECRET_KEY 미설정' });
+    try {
+      const params = { state: 'wait' };
+      const qs     = new URLSearchParams(params).toString();
+      const payload = {
+        access_key: accessKey,
+        nonce: crypto.randomUUID(),
+        query_hash: crypto.createHash('sha512').update(qs).digest('hex'),
+        query_hash_alg: 'SHA512',
+      };
+      const h   = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
+      const b   = Buffer.from(JSON.stringify(payload)).toString('base64url');
+      const sig = crypto.createHmac('sha256', secretKey).update(`${h}.${b}`).digest('base64url');
+      const jwt = `Bearer ${h}.${b}.${sig}`;
+
+      const r = await fetch(`https://api.upbit.com/v1/orders?${qs}`, { headers: { Authorization: jwt } });
+      if (!r.ok) return res.status(r.status).json({ error: `Upbit 주문 조회 실패 HTTP ${r.status}` });
+      const orders = await r.json();
+
+      // 현재가 배치 조회 → 매도 주문은 목표가까지 격차%, 매수 주문은 체결까지 격차% 계산해서 첨부
+      const markets = [...new Set(orders.map(o => o.market))];
+      let prices = {};
+      if (markets.length) {
+        const pr = await fetch(`https://api.upbit.com/v1/ticker?markets=${markets.join(',')}`);
+        if (pr.ok) for (const d of await pr.json()) prices[d.market] = d.trade_price;
+      }
+      const result = orders.map(o => {
+        const cur = prices[o.market] || 0;
+        const price = +o.price;
+        const gapPct = cur ? (o.side === 'ask' ? (price - cur) / cur * 100 : (cur - price) / cur * 100) : null;
+        return {
+          market: o.market, side: o.side, price, cur_price: cur,
+          gap_pct: gapPct != null ? +gapPct.toFixed(2) : null,
+          remaining_volume: +o.remaining_volume, created_at: o.created_at,
+        };
+      });
+      res.setHeader('Cache-Control', 'no-store');
+      return res.status(200).json(result);
+    } catch (e) {
+      return res.status(500).json({ error: e.message });
     }
   }
 
