@@ -123,6 +123,9 @@ function _renderBriefing() {
 // ── 거래 내역 (stock_trader 실거래) ─────────────────────
 let _traderTradesExpanded = false;
 
+// 금액(원) 표시는 전부 소수점 버림 — 코인 거래는 단가/손익에 소수점이 남는 경우가 있음
+const krw = v => Math.trunc(Number(v) || 0).toLocaleString();
+
 function renderTraderTrades(items) {
   const el = document.getElementById('list-trader-trades');
   if (!el) return;
@@ -158,7 +161,7 @@ function renderTraderTrades(items) {
       const up   = t.pnl >= 0;
       const sign = up ? '+' : '';
       pnlHtml = `<span style="color:${up?'#16a34a':'#dc2626'};font-size:12px;font-weight:700">
-        손익 ${sign}${Number(t.pnl).toLocaleString()}원&nbsp;(${sign}${t.pnl_pct}%)
+        손익 ${sign}${krw(t.pnl)}원&nbsp;(${sign}${t.pnl_pct}%)
       </span>`;
     }
 
@@ -177,9 +180,9 @@ function renderTraderTrades(items) {
         <div style="font-size:12px;color:var(--fg);margin-bottom:2px">
           <span style="color:var(--muted)">수량</span> <b>${Number(t.qty).toLocaleString()}주</b>
           &nbsp;·&nbsp;
-          <span style="color:var(--muted)">단가</span> <b>${Number(t.price).toLocaleString()}원</b>
+          <span style="color:var(--muted)">단가</span> <b>${krw(t.price)}원</b>
           &nbsp;·&nbsp;
-          <span style="color:var(--muted)">금액</span> <b>${Number(t.amount).toLocaleString()}원</b>
+          <span style="color:var(--muted)">금액</span> <b>${krw(t.amount)}원</b>
         </div>
         <!-- 손익 (매도만) -->
         ${pnlHtml}
@@ -434,15 +437,15 @@ function renderTraderSummary(trades, account) {
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:16px">
         <div style="background:var(--surface2,#1e2d45);border-radius:10px;padding:12px;text-align:center">
           <div style="font-size:11px;color:var(--muted);margin-bottom:4px">총 평가금액</div>
-          <div style="font-size:16px;font-weight:700;color:#ffffff">${Number(account.total_eval).toLocaleString()}<span style="font-size:11px;color:var(--muted)">원</span></div>
+          <div style="font-size:16px;font-weight:700;color:#ffffff">${krw(account.total_eval)}<span style="font-size:11px;color:var(--muted)">원</span></div>
         </div>
         <div style="background:var(--surface2,#1e2d45);border-radius:10px;padding:12px;text-align:center">
           <div style="font-size:11px;color:var(--muted);margin-bottom:4px">예수금 (현금)</div>
-          <div style="font-size:16px;font-weight:700;color:#ffffff">${Number(account.cash).toLocaleString()}<span style="font-size:11px;color:var(--muted)">원</span></div>
+          <div style="font-size:16px;font-weight:700;color:#ffffff">${krw(account.cash)}<span style="font-size:11px;color:var(--muted)">원</span></div>
         </div>
         <div style="background:var(--surface2,#1e2d45);border-radius:10px;padding:12px;text-align:center">
           <div style="font-size:11px;color:var(--muted);margin-bottom:4px">당일 손익</div>
-          <div style="font-size:16px;font-weight:700;color:${dayPnlColor}">${sg(account.day_pnl)}${Number(account.day_pnl||0).toLocaleString()}<span style="font-size:11px">원</span></div>
+          <div style="font-size:16px;font-weight:700;color:${dayPnlColor}">${sg(account.day_pnl)}${krw(account.day_pnl)}<span style="font-size:11px">원</span></div>
         </div>
         <div style="background:var(--surface2,#1e2d45);border-radius:10px;padding:12px;text-align:center">
           <div style="font-size:11px;color:var(--muted);margin-bottom:4px">당일 수익률</div>
@@ -459,11 +462,11 @@ function renderTraderSummary(trades, account) {
           <td style="font-weight:600;white-space:nowrap">${h.name}<br>
             <span style="font-size:11px;color:var(--muted)">${h.ticker}</span></td>
           <td style="text-align:right">${Number(h.qty).toLocaleString()}주</td>
-          <td style="text-align:right">${Number(h.avg_price).toLocaleString()}원</td>
-          <td style="text-align:right">${Number(h.eval_price).toLocaleString()}원</td>
-          <td style="text-align:right;font-weight:600">${Number(h.eval_amt).toLocaleString()}원</td>
+          <td style="text-align:right">${krw(h.avg_price)}원</td>
+          <td style="text-align:right">${krw(h.eval_price)}원</td>
+          <td style="text-align:right;font-weight:600">${krw(h.eval_amt)}원</td>
           <td style="text-align:right;font-weight:700;color:${up?'#16a34a':'#dc2626'}">
-            ${sg(unrealized)}${Math.round(unrealized).toLocaleString()}원<br>
+            ${sg(unrealized)}${krw(unrealized)}원<br>
             <span style="font-size:11px">${sg(h.pnl_pct)}${h.pnl_pct}%</span>
           </td>
         </tr>`;
@@ -511,7 +514,7 @@ function renderTraderSummary(trades, account) {
       </div>
       <div style="background:var(--surface2,#1e2d45);border-radius:10px;padding:12px;text-align:center">
         <div style="font-size:11px;color:var(--muted);margin-bottom:4px">누적 실현손익</div>
-        <div style="font-size:15px;font-weight:700;color:${c(totalPnl)}">${sg(totalPnl)}${Math.round(totalPnl).toLocaleString()}<span style="font-size:11px">원</span></div>
+        <div style="font-size:15px;font-weight:700;color:${c(totalPnl)}">${sg(totalPnl)}${krw(totalPnl)}<span style="font-size:11px">원</span></div>
       </div>
       <div style="background:var(--surface2,#1e2d45);border-radius:10px;padding:12px;text-align:center">
         <div style="font-size:11px;color:var(--muted);margin-bottom:4px">승률</div>
@@ -543,11 +546,11 @@ function renderTraderSummary(trades, account) {
             ${t.name || t.ticker} <span style="font-size:11px;color:var(--muted);font-weight:400">${t.ticker}</span>${reasonLabel}
           </div>
           <div style="font-size:11px;color:var(--muted);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
-            ${Number(t.qty).toLocaleString()}주 · ${Number(t.price).toLocaleString()}원 · ${Number(t.amount).toLocaleString()}원 · ${t.date}
+            ${Number(t.qty).toLocaleString()}주 · ${krw(t.price)}원 · ${krw(t.amount)}원 · ${t.date}
           </div>
         </div>
         <div style="text-align:right;flex:none">
-          <div style="font-weight:700;font-size:14px;color:${pnlColor}">${sign}${Math.round(t.pnl).toLocaleString()}원</div>
+          <div style="font-weight:700;font-size:14px;color:${pnlColor}">${sign}${krw(t.pnl)}원</div>
           <div style="font-size:11px;color:${pnlColor}">${sign}${t.pnl_pct}%</div>
         </div>
       </div>`;
