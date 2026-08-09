@@ -810,6 +810,9 @@ const SCALP_AUTO_DEFAULTS = {
   min_rebound_pct: 0.4,
   fast_rise_momentum_pct: 0,       // 0=비활성. 보유 중 lookback_sec 모멘텀이 이 값 이상이면 급등으로 판단
   fast_rise_take_profit_pct: 0,    // 급등 판단 시 take_profit_pct 대신 적용할 상향 목표
+  fast_decline_momentum_pct: 0,    // 0=비활성. 보유 중 모멘텀이 이 값의 음수 이하면 급락으로 판단
+  fast_decline_stop_loss_pct: 0,   // 급락 판단 시 stop_loss_pct 대신 적용할 축소(타이트) 손절 기준
+  retry_cooldown_sec: 0,           // 0=당일 1회만 시도(기존 동작). >0이면 이 시간(초) 지나면 같은 티커 재시도 허용
 };
 
 async function handleScalpAutoConfig(req, res, gistId, ghToken) {
