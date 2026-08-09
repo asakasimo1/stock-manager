@@ -166,6 +166,9 @@ def should_enter(
       min_volume_surge_ratio — 0보다 크면 거래량 증가 조건도 함께 검사 (기본 0=미검사, 수동 잡 하위호환)
       entry_confirm_cycles   — 모멘텀 조건을 연속 몇 회 만족해야 진입할지 (기본 2, 1이면 기존처럼 즉시 진입)
                                찰나의 스파이크가 정점을 찍는 순간 바로 사서 직후 반락하는 것을 방지
+      strong_signal_multiplier — 모멘텀·거래량 둘 다 각자 임계치의 이 배수(기본 2.0배) 이상이면
+                               "이미 충분히 강한 신호"로 보고 확인 절차 없이 즉시 진입.
+                               애매한 신호만 confirm_cycles로 걸러내고, 확실한 신호는 놓치지 않기 위함
     volume_surge: scalp_engine.volume_surge_ratio() 결과 — min_volume_surge_ratio 검사 시에만 사용
     cur_price/tick_size: 호가 노이즈 보정용 — 저가 코인/종목에서 1틱 등락만으로 모멘텀 조건이
       충족되는 것을 막기 위해 entry_momentum_pct를 tick_aware_floor로 자동 상향 (둘 다 필요,
@@ -177,6 +180,7 @@ def should_enter(
     max_day  = float(params.get("max_day_chg_pct", 5.0))
     min_vol_surge = float(params.get("min_volume_surge_ratio", 0) or 0)
     confirm_cycles = int(params.get("entry_confirm_cycles", 2) or 1)
+    strong_multiplier = float(params.get("strong_signal_multiplier", 2.0) or 0)
 
     def _fail(reason: str) -> tuple[bool, str]:
         if ticker is not None:
@@ -199,6 +203,13 @@ def should_enter(
 
     if ticker is None or confirm_cycles <= 1:
         return True, base_reason
+
+    if strong_multiplier > 0:
+        momentum_strong = entry_th > 0 and momentum >= entry_th * strong_multiplier
+        volume_strong = min_vol_surge <= 0 or (volume_surge is not None and volume_surge >= min_vol_surge * strong_multiplier)
+        if momentum_strong and volume_strong:
+            _entry_confirm.pop(ticker, None)
+            return True, base_reason + " (강한 신호 — 확인 절차 생략)"
 
     count = _entry_confirm.get(ticker, 0) + 1
     if count < confirm_cycles:

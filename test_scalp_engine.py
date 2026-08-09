@@ -374,6 +374,25 @@ def test_should_exit_stagnation_closes_flat_position_after_long_hold():
     print("OK: 방향이 생긴 포지션은 정체 청산 대상 아님 (계속 관찰)")
 
 
+def test_should_enter_strong_signal_skips_confirmation():
+    # 모멘텀·거래량 둘 다 임계치의 2배(기본 strong_signal_multiplier) 이상이면 확인 절차 없이 즉시 진입
+    se.reset("STRONG")
+    ok, reason = se.should_enter(momentum=1.0, today_chg_pct=1.0,
+                                  params={"entry_momentum_pct": 0.4, "min_volume_surge_ratio": 1.3},
+                                  volume_surge=3.0, ticker="STRONG")
+    assert ok is True and "강한 신호" in reason, reason
+    print(f"OK: 모멘텀·거래량 모두 충분히 강하면 확인 없이 즉시 진입 — {reason}")
+    se.reset("STRONG")
+
+    # 모멘텀은 강하지만 거래량이 부족하면(둘 다 강해야 함) 여전히 확인 절차를 거침
+    ok, reason = se.should_enter(momentum=1.0, today_chg_pct=1.0,
+                                  params={"entry_momentum_pct": 0.4, "min_volume_surge_ratio": 1.3},
+                                  volume_surge=1.4, ticker="STRONG")
+    assert ok is False and "확인 중" in reason, reason
+    print("OK: 모멘텀만 강하고 거래량은 애매하면 여전히 확인 절차 진행")
+    se.reset("STRONG")
+
+
 if __name__ == "__main__":
     test_momentum_insufficient_data()
     test_momentum_calc()
@@ -407,4 +426,5 @@ if __name__ == "__main__":
     test_update_peak_pnl_tracks_max_per_ticker()
     test_select_reversal_candidates_requires_volume_surge_when_configured()
     test_should_exit_stagnation_closes_flat_position_after_long_hold()
+    test_should_enter_strong_signal_skips_confirmation()
     print("\n전체 통과")
