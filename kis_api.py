@@ -509,6 +509,10 @@ def get_balance() -> dict:
             "pnl_pct":        float(item.get("evlu_pfls_rt", 0)),
             # 전일대비 증감(원) — 당일손익 계산용 (누적손익인 pnl_pct와 다름)
             "bfdy_close_diff": int(float(item.get("bfdy_cprs_icdc", 0))),
+            # 실제 매도가능수량 — 그리드 등 다른 미체결 주문이 일부를 잠그고 있으면
+            # hldg_qty(총보유)보다 작음. 전량매도 시 이 값을 써야 "주문 가능한
+            # 수량을 초과했습니다" 오류를 피할 수 있음.
+            "sellable_qty":   int(item.get("ord_psbl_qty", qty)),
         })
 
     return {

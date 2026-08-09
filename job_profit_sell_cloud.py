@@ -164,16 +164,31 @@ def auto_sell_by_rule():
                     reason, name, ticker, pnl_pct, peak)
         _cancel_grid_if_managed(ticker)  # 그리드 관리 종목이면 먼저 주문 취소
         try:
-            result = kis_api.place_order(ticker, "SELL", qty, order_type="market")
-            pnl = (cur_price - h["avg_price"]) * qty
+            # 그리드 취소 직후 매도가능수량을 다시 확인 — 취소 전 스냅샷의
+            # hldg_qty(총보유)만 믿고 그대로 주문하면 그리드 미체결 주문이 일부
+            # 수량을 여전히 잠그고 있을 때 "주문 가능한 수량을 초과했습니다"
+            # 오류가 남 (2026-08-07 실측: 12주 보유인데 반복 실패).
+            fresh = kis_api.get_balance()
+            fresh_h = next((x for x in fresh["holdings"] if x["ticker"] == ticker), None)
+            sell_qty = fresh_h.get("sellable_qty", qty) if fresh_h else 0
+            if sell_qty <= 0:
+                logger.warning("%s 매도가능수량 0 — 이번 사이클 건너뜀(다음 사이클 재시도)", ticker)
+                continue
+            if sell_qty < qty:
+                logger.warning("%s 매도가능수량(%d) < 보유수량(%d) — 가능한 만큼만 매도",
+                                ticker, sell_qty, qty)
+
+            result = kis_api.place_order(ticker, "SELL", sell_qty, order_type="market")
+            pnl = (cur_price - h["avg_price"]) * sell_qty
             notify.send(
                 f"{emoji} <b>자동매도 [{reason}]</b>  {name} ({ticker})\n"
-                f"  {qty}주 @ {cur_price:,}원  손익: <b>{pnl:+,}원 ({pnl_pct:+.2f}%)</b>\n"
+                f"  {sell_qty}주 @ {cur_price:,}원  손익: <b>{pnl:+,}원 ({pnl_pct:+.2f}%)</b>\n"
                 f"  주문번호: {result.get('order_no', '')}"
             )
             logger.info("자동매도 완료 %s %d주 @ %d원  주문번호: %s",
-                        ticker, qty, cur_price, result.get("order_no", ""))
-            _peak_pnl.pop(ticker, None)
+                        ticker, sell_qty, cur_price, result.get("order_no", ""))
+            if sell_qty >= qty:
+                _peak_pnl.pop(ticker, None)
         except Exception as e:
             logger.error("%s 자동매도 실패: %s", ticker, e)
             notify.send(f"❌ 자동매도 실패: {name}({ticker}) — {e}")
