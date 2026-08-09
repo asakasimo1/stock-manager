@@ -21,7 +21,6 @@ TRACKED = [
     {"ticker": "KRW-ARB",    "sell_uuid": "5d3d6fe5-879d-4808-b5e7-b259c01a0200", "avg_price": 110.00392087,  "qty": 45.54383117},
     {"ticker": "KRW-QUID",   "sell_uuid": "cd36bfe3-166f-4949-809d-a7d0d1ab34ee", "avg_price": 130.0,         "qty": 38.53846154},
     {"ticker": "KRW-TT",     "sell_uuid": "5f61fb44-197d-43fb-90f6-f11d36049e8f", "avg_price": 0.524998,      "qty": 9542.89349326},
-    {"ticker": "KRW-FIL",    "sell_uuid": "5c1de064-c5b1-4677-b5a3-1ccec1f71dcd", "avg_price": 1000.98795188, "qty": 5.00505524},
     {"ticker": "KRW-SUI",    "sell_uuid": "87ff2417-8a88-4b8c-94fc-562ee03295da", "avg_price": 974.98996862,  "qty": 5.1385144},
     {"ticker": "KRW-XLM",    "sell_uuid": "72ce1aee-6fdf-4b83-a7b7-7d4492c6c094", "avg_price": 231.99187618,  "qty": 21.59558378},
     {"ticker": "KRW-XPL",    "sell_uuid": "25a826c3-e86b-4dc3-983b-9639c95ce859", "avg_price": 108.01153805,  "qty": 46.43022487},
@@ -43,7 +42,8 @@ def _report_fill(ticker: str, avg_price: float, sell_uuid: str, forced: bool):
     try:
         raw = _raw_order(sell_uuid)
         executed = float(raw["executed_volume"])
-        executed_funds = float(raw["executed_funds"])
+        # 단건 조회(/order)는 executed_funds 필드가 없음 — trades[].funds 합산으로 계산
+        executed_funds = sum(float(t["funds"]) for t in raw.get("trades", []))
         paid_fee = float(raw["paid_fee"])
         sell_unit = executed_funds / executed if executed else 0
         buy_amount = avg_price * executed
