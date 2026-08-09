@@ -346,10 +346,17 @@ def should_exit(
     params: dict,
     tick_size: float = 0.0,
     peak_pnl_pct: float | None = None,
+    cur_momentum_pct: float | None = None,
 ) -> tuple[bool, str]:
     """
     params:
       take_profit_pct   — 익절 기준 (기본 0.6%) — 호가 노이즈 보정 없음 (노이즈로 익절돼도 손해가 아님)
+      fast_rise_momentum_pct — 보유 중 lookback_sec 동안의 모멘텀(cur_momentum_pct)이 이 값
+                           (기본 0=비활성) 이상이면 "급등 중"으로 보고 take_profit_pct 대신
+                           fast_rise_take_profit_pct를 목표로 사용 — 급등이 꺾이기 전에 너무
+                           일찍 익절해서 남은 상승분을 놓치는 것을 막기 위함
+      fast_rise_take_profit_pct — 급등 판단 시 적용할 상향된 익절 목표 (기본 take_profit_pct와 동일,
+                           즉 값을 안 주면 사실상 비활성)
       stop_loss_pct     — 손절 기준 (기본 0.4%, 양수로 입력) — 시간과 무관하게 항상 적용
       time_stop_sec     — 시간초과 판단 시점 (기본 180초)
       time_stop_loss_pct — 시간초과 시점에 이 손실률(양수 입력)을 넘겼을 때만 청산 (기본 0.5%)
@@ -369,14 +376,18 @@ def should_exit(
       막기 위해 stop_loss_pct/time_stop_loss_pct를 tick_aware_floor로 자동 상향 (0이면 보정 없음).
     peak_pnl_pct: 이 포지션 보유 중 지금까지 관측된 최고 손익률(%, 호출부에서 매 사이클 추적해서 전달).
       None이면(하위호환) 트레일링 없이 기존처럼 목표가 도달 즉시 익절.
+    cur_momentum_pct: 보유 중 lookback_sec 동안의 실시간 모멘텀(%, 호출부에서 매 사이클 계산해서 전달).
+      None이면(하위호환) fast_rise 판단 없이 기존처럼 take_profit_pct만 사용.
     """
-    take_pct              = float(params.get("take_profit_pct", 0.6))
-    stop_pct              = tick_aware_floor(entry_price, tick_size, float(params.get("stop_loss_pct", 0.4)))
-    time_stop             = float(params.get("time_stop_sec", 180))
-    time_stop_loss_pct    = tick_aware_floor(entry_price, tick_size, float(params.get("time_stop_loss_pct", 0.5)))
-    trailing_giveback_pct = tick_aware_floor(entry_price, tick_size, float(params.get("trailing_giveback_pct", 0.3)))
-    stagnation_multiplier = float(params.get("stagnation_multiplier", 3.0))
-    stagnation_band_pct   = float(params.get("stagnation_band_pct", 0.2))
+    take_pct               = float(params.get("take_profit_pct", 0.6))
+    stop_pct               = tick_aware_floor(entry_price, tick_size, float(params.get("stop_loss_pct", 0.4)))
+    time_stop              = float(params.get("time_stop_sec", 180))
+    time_stop_loss_pct     = tick_aware_floor(entry_price, tick_size, float(params.get("time_stop_loss_pct", 0.5)))
+    trailing_giveback_pct  = tick_aware_floor(entry_price, tick_size, float(params.get("trailing_giveback_pct", 0.3)))
+    stagnation_multiplier  = float(params.get("stagnation_multiplier", 3.0))
+    stagnation_band_pct    = float(params.get("stagnation_band_pct", 0.2))
+    fast_rise_momentum_pct = float(params.get("fast_rise_momentum_pct", 0) or 0)
+    fast_rise_take_pct     = float(params.get("fast_rise_take_profit_pct", take_pct) or take_pct)
 
     if entry_price <= 0:
         return False, ""
@@ -386,12 +397,16 @@ def should_exit(
     if chg_pct <= -stop_pct:
         return True, f"손절 ({chg_pct:.2f}%)"
 
+    effective_take_pct = take_pct
+    if fast_rise_momentum_pct > 0 and cur_momentum_pct is not None and cur_momentum_pct >= fast_rise_momentum_pct:
+        effective_take_pct = max(take_pct, fast_rise_take_pct)
+
     if peak_pnl_pct is None:
-        if chg_pct >= take_pct:
+        if chg_pct >= effective_take_pct:
             return True, f"익절 (+{chg_pct:.2f}%)"
     else:
         peak = max(peak_pnl_pct, chg_pct)
-        if peak >= take_pct and chg_pct <= peak - trailing_giveback_pct:
+        if peak >= effective_take_pct and chg_pct <= peak - trailing_giveback_pct:
             return True, f"익절 (고점 +{peak:.2f}% → 청산 {chg_pct:+.2f}%)"
 
     elapsed = now - entered_at

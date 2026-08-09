@@ -195,6 +195,8 @@ def _auto_discover(jobs: list, auto_cfg: dict, price_cache: dict, coin_enabled: 
             "stop_loss_pct":      auto_cfg.get("stop_loss_pct", 0.4),
             "time_stop_sec":      auto_cfg.get("time_stop_sec", 180),
             "time_stop_loss_pct": auto_cfg.get("time_stop_loss_pct", 0.5),
+            "fast_rise_momentum_pct":    auto_cfg.get("fast_rise_momentum_pct", 0),
+            "fast_rise_take_profit_pct": auto_cfg.get("fast_rise_take_profit_pct", 0),
             "krw_amount":         auto_cfg.get("krw_amount", 0),
             "max_daily_loss_krw": max_loss,
             "watch_timeout_sec":  auto_cfg.get("watch_timeout_sec", 300),
@@ -390,8 +392,10 @@ def main():
             net_cur    = _net_sell_value(cur_price)
             chg_pct_now = (net_cur - net_entry) / net_entry * 100 if net_entry > 0 else 0
             peak = scalp_engine.update_peak_pnl(ticker, chg_pct_now)
+            cur_momentum = scalp_engine.momentum_pct(ticker, float(job.get("lookback_sec", 30)), now=now_epoch)
             should, reason = scalp_engine.should_exit(net_entry, net_cur, entered_at, now_epoch, job,
-                                                       tick_size=upbit_api.price_unit(buy_price), peak_pnl_pct=peak)
+                                                       tick_size=upbit_api.price_unit(buy_price), peak_pnl_pct=peak,
+                                                       cur_momentum_pct=cur_momentum)
             if should:
                 qty = _sellable_qty(ticker, float(job.get("buy_qty", 0)))
                 try:
