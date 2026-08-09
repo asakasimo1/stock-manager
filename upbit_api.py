@@ -345,7 +345,11 @@ def place_order(
     if volume is not None:
         params["volume"] = str(volume)
     if price is not None:
-        params["price"] = str(int(price)) if price > 1 else str(price)
+        # 정수 KRW 금액(예: 시장가 매수 20000)은 "20000.0" 대신 "20000"으로 보내되,
+        # 지정가의 소수 단가(예: 3.13원)는 int()로 잘라내면 안 됨 — 예전엔 price>1이면
+        # 무조건 int() 캐스팅해서 소수점을 통째로 버렸고, 그 결과 지정가 매도 총액이
+        # 실제보다 작게 계산되어 최소주문금액 미달로 거부되는 버그가 있었음
+        params["price"] = str(int(price)) if price == int(price) else str(price)
 
     t0 = time.monotonic()
     r = _session.post(
