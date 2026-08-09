@@ -189,6 +189,24 @@ def _auto_discover(jobs: list, auto_cfg: dict, stock_enabled: bool, now_epoch: f
 
     picked = picked_surge + picked_reversal
 
+    # 호가 스프레드 필터 — KIS는 코인처럼 일괄조회가 안 돼 종목별로 확인.
+    # max_spread_pct=0(기본)이면 비활성. 조회 실패 시 필터 없이 통과(과도한 제외 방지).
+    max_spread = float(auto_cfg.get("max_spread_pct", 0) or 0)
+    if max_spread > 0 and picked:
+        filtered = []
+        for c in picked:
+            try:
+                sp = kis_api.get_spread_pct(c["ticker"])
+            except Exception as e:
+                logger.warning("%s 스프레드 조회 실패 — 필터 없이 통과: %s", c["ticker"], e)
+                sp = None
+            if sp is not None and sp > max_spread:
+                logger.info("🚫 [스프레드 초과] %s(%s) %.3f%% > 기준 %.2f%% — 후보 제외",
+                            c["name"], c["ticker"], sp, max_spread)
+                continue
+            filtered.append(c)
+        picked = filtered
+
     for c in picked:
         jobs.append({
             "id":                 f"auto-{c['ticker']}-{int(now_epoch)}",

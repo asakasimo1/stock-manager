@@ -190,6 +190,31 @@ def get_price(market: str) -> dict:
     }
 
 
+def get_spread_pct(markets: list) -> dict:
+    """복수 코인 매수/매도 1호가 스프레드(%) 일괄 조회 — 슬리피지 우려 종목 배제용.
+    Returns: {'KRW-BTC': 0.05, ...}  (스프레드% = (매도1호가-매수1호가)/중간가*100)
+    실패하거나 호가가 비어있는 마켓은 결과 dict에서 제외(호출부에서 None 취급하도록)."""
+    if not markets:
+        return {}
+    t0 = time.monotonic()
+    r = _session.get(f"{BASE_URL}/orderbook", params={"markets": ",".join(markets)}, timeout=10)
+    ms = (time.monotonic() - t0) * 1000
+    logger.info("⏱  GET  orderbook %-30s %5.0fms  HTTP%s", markets, ms, r.status_code)
+    if not r.ok:
+        raise RuntimeError(f"호가 일괄 조회 실패: HTTP {r.status_code}")
+    result = {}
+    for d in r.json():
+        units = d.get("orderbook_units") or []
+        if not units:
+            continue
+        bid, ask = units[0].get("bid_price", 0), units[0].get("ask_price", 0)
+        if bid <= 0 or ask <= 0:
+            continue
+        mid = (bid + ask) / 2
+        result[d["market"]] = round((ask - bid) / mid * 100, 4)
+    return result
+
+
 def get_prices(markets: list) -> dict:
     """복수 코인 현재가 일괄 조회
     Returns: {'KRW-BTC': {'price': ..., 'chg_pct': ...}, ...}

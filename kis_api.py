@@ -390,6 +390,45 @@ def get_price(ticker: str) -> dict:
     return data["output"]
 
 
+def get_spread_pct(ticker: str) -> float | None:
+    """매수/매도 1호가 스프레드(%) 조회 — 슬리피지 우려 종목 배제용.
+    get_price()와 동일하게 NXT 시간대엔 NX 시세 우선, 실패 시 KRX(J)로 폴백.
+    호가가 없거나 조회 실패 시 None(호출부에서 필터를 건너뛰도록)."""
+    tr_id = "FHKST01010200"
+
+    def _fetch(market: str) -> float | None:
+        resp = _api_get(
+            f"{BASE_URL}/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn",
+            headers=_headers(tr_id),
+            params={"fid_cond_mrkt_div_code": market, "fid_input_iscd": ticker},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("rt_cd") != "0":
+            return None
+        out1 = data.get("output1", {})
+        bid, ask = int(out1.get("bidp1", 0) or 0), int(out1.get("askp1", 0) or 0)
+        if bid <= 0 or ask <= 0:
+            return None
+        mid = (bid + ask) / 2
+        return round((ask - bid) / mid * 100, 4)
+
+    if not PAPER and _is_nxt_time():
+        try:
+            spread = _fetch("NX")
+            if spread is not None:
+                return spread
+        except Exception as e:
+            logger.debug("NXT 호가 조회 실패(%s) — KRX 폴백: %s", ticker, e)
+
+    try:
+        return _fetch("J")
+    except Exception as e:
+        logger.warning("%s 호가 조회 실패: %s", ticker, e)
+        return None
+
+
 # ─────────────────────────────────────────
 # 2. 잔고 조회
 # ─────────────────────────────────────────

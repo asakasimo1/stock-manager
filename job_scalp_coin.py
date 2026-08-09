@@ -184,6 +184,24 @@ def _auto_discover(jobs: list, auto_cfg: dict, price_cache: dict, coin_enabled: 
 
     picked = picked_surge + picked_reversal
 
+    # 호가 스프레드 필터 — 유동성(거래대금) 기준은 통과해도 매수/매도 1호가 차이가 크면
+    # 시장가 진입 시 슬리피지가 커질 수 있어 별도 확인. max_spread_pct=0(기본)이면 비활성.
+    max_spread = float(auto_cfg.get("max_spread_pct", 0) or 0)
+    if max_spread > 0 and picked:
+        try:
+            spreads = upbit_api.get_spread_pct([c["ticker"] for c in picked])
+            filtered = []
+            for c in picked:
+                sp = spreads.get(c["ticker"])
+                if sp is not None and sp > max_spread:
+                    logger.info("🚫 [스프레드 초과] %s(%s) %.3f%% > 기준 %.2f%% — 후보 제외",
+                                c["name"], c["ticker"], sp, max_spread)
+                    continue
+                filtered.append(c)
+            picked = filtered
+        except Exception as e:
+            logger.warning("스프레드 필터 조회 실패 — 필터 없이 진행: %s", e)
+
     for c in picked:
         jobs.append({
             "id":                 f"auto-{c['ticker']}-{int(now_epoch)}",
