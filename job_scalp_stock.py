@@ -453,7 +453,14 @@ def main():
 
         qty = int(job.get("qty", 0))
         amount = float(job.get("amount", 0))
-        if qty <= 0 and amount > 0:
+        test_until = auto_cfg.get("test_fixed_qty_until", "")
+        if qty <= 0 and test_until and _today_str() <= test_until:
+            # 초단타 운용 첫날 테스트 — 지정일까지는 예산 계산 대신 고정 소량만 매수
+            # (scalp_auto_config.json의 test_fixed_qty_until 지난 뒤엔 자동으로 원래
+            # amount 기반 로직으로 돌아감 — 되돌리는 걸 잊어도 문제 없음).
+            qty = int(auto_cfg.get("test_fixed_qty", 1))
+            logger.info("%s(%s) 테스트모드 — 고정 %d주 (%s까지)", name, ticker, qty, test_until)
+        elif qty <= 0 and amount > 0:
             # 설정 예산(amount)이 실제 예수금보다 크면 "주문 가능한 금액을
             # 초과했습니다"로 진입 자체가 계속 실패함 — 예수금 한도 내에서
             # 살 수 있는 만큼만 수량을 줄여서 시도.
