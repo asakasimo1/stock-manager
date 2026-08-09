@@ -1,6 +1,5 @@
-"""더스트 정리 지정가 매도 감시 — 타임아웃을 45분으로 재설정하면서 만든 통합 감시 스크립트.
-기존 dust_cleanup.py / dust_cleanup_extra.py를 대체 (남은 미체결 17건을 지금 시점부터 45분 감시).
-30초마다 체결 여부 확인, 45분 지나도 미체결이면 시장가로 강제청산."""
+"""더스트 정리 지정가 매도 감시 (v3: 마감시각을 사용자 요청으로 당일 22:00까지 연장).
+기존 dust_cleanup_watch.py를 대체."""
 import time
 import logging
 import upbit_api
@@ -8,35 +7,50 @@ import upbit_api
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("dust_cleanup_watch")
 
-TIMEOUT_SEC = 45 * 60
+DEADLINE = 1786280400  # 2026-08-09 22:00:00 KST (사용자 요청으로 연장)
 POLL_SEC = 30
 
 TRACKED = [
-    {"ticker": "KRW-YGG",    "sell_uuid": "fa5cdf2f-8620-413c-ab0d-7fff9bea8e36"},
-    {"ticker": "KRW-ZIL",    "sell_uuid": "02a357b1-61b5-49d8-a65f-692080be29b6"},
-    {"ticker": "KRW-PUNDIX", "sell_uuid": "e1dc49d5-62cc-4a40-905e-77d819a361ff"},
-    {"ticker": "KRW-ORDER",  "sell_uuid": "ad53ac2b-f7ae-4515-b889-ce92a105508e"},
-    {"ticker": "KRW-MET2",   "sell_uuid": "a9eedae2-17c6-4c69-a3e6-5470ef7a0b19"},
-    {"ticker": "KRW-XEC",    "sell_uuid": "21186b68-b7f8-4fc3-81ee-a58e6f1ac662"},
-    {"ticker": "KRW-ARX",    "sell_uuid": "13d0523b-5e5b-470f-ba39-ee86e2b08767"},
-    {"ticker": "KRW-KITE",   "sell_uuid": "77506a96-5dba-4a10-adac-6642e3140a1a"},
-    {"ticker": "KRW-ARB",    "sell_uuid": "5d3d6fe5-879d-4808-b5e7-b259c01a0200"},
-    {"ticker": "KRW-QUID",   "sell_uuid": "cd36bfe3-166f-4949-809d-a7d0d1ab34ee"},
-    {"ticker": "KRW-TT",     "sell_uuid": "5f61fb44-197d-43fb-90f6-f11d36049e8f"},
-    {"ticker": "KRW-FIL",    "sell_uuid": "5c1de064-c5b1-4677-b5a3-1ccec1f71dcd"},
-    {"ticker": "KRW-SUI",    "sell_uuid": "87ff2417-8a88-4b8c-94fc-562ee03295da"},
-    {"ticker": "KRW-XLM",    "sell_uuid": "72ce1aee-6fdf-4b83-a7b7-7d4492c6c094"},
-    {"ticker": "KRW-0G",     "sell_uuid": "19e71855-6f47-46a9-a4f7-b0b88d38b49a"},
-    {"ticker": "KRW-XPL",    "sell_uuid": "25a826c3-e86b-4dc3-983b-9639c95ce859"},
-    {"ticker": "KRW-NEAR",   "sell_uuid": "022d50f8-4b91-4a6d-89cf-5119db85eb63"},
+    {"ticker": "KRW-YGG",    "sell_uuid": "fa5cdf2f-8620-413c-ab0d-7fff9bea8e36", "avg_price": 26.80058629,   "qty": 186.74964592},
+    {"ticker": "KRW-ZIL",    "sell_uuid": "02a357b1-61b5-49d8-a65f-692080be29b6", "avg_price": 3.11995982,    "qty": 1605.78990901},
+    {"ticker": "KRW-PUNDIX", "sell_uuid": "e1dc49d5-62cc-4a40-905e-77d819a361ff", "avg_price": 110.00099001,  "qty": 45.4995905},
+    {"ticker": "KRW-ORDER",  "sell_uuid": "ad53ac2b-f7ae-4515-b889-ce92a105508e", "avg_price": 41.00029753,   "qty": 122.07228488},
+    {"ticker": "KRW-MET2",   "sell_uuid": "a9eedae2-17c6-4c69-a3e6-5470ef7a0b19", "avg_price": 237.0019813,   "qty": 21.11796691},
+    {"ticker": "KRW-XEC",    "sell_uuid": "21186b68-b7f8-4fc3-81ee-a58e6f1ac662", "avg_price": 0.00959973,    "qty": 521368.66523911},
+    {"ticker": "KRW-ARX",    "sell_uuid": "13d0523b-5e5b-470f-ba39-ee86e2b08767", "avg_price": 186.04707272,  "qty": 26.92866879},
+    {"ticker": "KRW-KITE",   "sell_uuid": "77506a96-5dba-4a10-adac-6642e3140a1a", "avg_price": 141.00776421,  "qty": 35.52995842},
+    {"ticker": "KRW-ARB",    "sell_uuid": "5d3d6fe5-879d-4808-b5e7-b259c01a0200", "avg_price": 110.00392087,  "qty": 45.54383117},
+    {"ticker": "KRW-QUID",   "sell_uuid": "cd36bfe3-166f-4949-809d-a7d0d1ab34ee", "avg_price": 130.0,         "qty": 38.53846154},
+    {"ticker": "KRW-TT",     "sell_uuid": "5f61fb44-197d-43fb-90f6-f11d36049e8f", "avg_price": 0.524998,      "qty": 9542.89349326},
+    {"ticker": "KRW-FIL",    "sell_uuid": "5c1de064-c5b1-4677-b5a3-1ccec1f71dcd", "avg_price": 1000.98795188, "qty": 5.00505524},
+    {"ticker": "KRW-SUI",    "sell_uuid": "87ff2417-8a88-4b8c-94fc-562ee03295da", "avg_price": 974.98996862,  "qty": 5.1385144},
+    {"ticker": "KRW-XLM",    "sell_uuid": "72ce1aee-6fdf-4b83-a7b7-7d4492c6c094", "avg_price": 231.99187618,  "qty": 21.59558378},
+    {"ticker": "KRW-0G",     "sell_uuid": "19e71855-6f47-46a9-a4f7-b0b88d38b49a", "avg_price": 211.99186274,  "qty": 23.63298258},
+    {"ticker": "KRW-XPL",    "sell_uuid": "25a826c3-e86b-4dc3-983b-9639c95ce859", "avg_price": 108.01153805,  "qty": 46.43022487},
 ]
 
 
+def _report_fill(ticker: str, avg_price: float, qty: float, order: dict, forced: bool):
+    """체결 완료 시 종목명/매수금액/매도금액/수익금을 계산해서 한 줄로 기록"""
+    name = upbit_api.COIN_NAMES.get(ticker, ticker)
+    sell_price = order["avg_price"] if order.get("avg_price") else 0
+    executed = order["executed_volume"]
+    buy_amount = avg_price * executed
+    sell_amount = sell_price * executed * (1 - upbit_api.SELL_FEE) if sell_price else None
+    if sell_amount is not None:
+        profit = sell_amount - buy_amount
+        logger.info("[체결%s] %s(%s)  매수금액=%.0f원  매도금액=%.0f원  수익금=%+.0f원",
+                    " (시장가 강제청산)" if forced else "", name, ticker, buy_amount, sell_amount, profit)
+    else:
+        logger.info("[체결%s] %s(%s)  매수금액=%.0f원  (매도 체결가 정보 없음, executed_volume=%.8f)",
+                    " (시장가 강제청산)" if forced else "", name, ticker, buy_amount, executed)
+
+
 def main():
-    now = time.time()
-    pending = {t["ticker"]: {**t, "placed_at": now} for t in TRACKED}
-    logger.info("감시 시작: %d건, 마감 %d분 후(%s)", len(pending), TIMEOUT_SEC // 60,
-                time.strftime("%H:%M:%S", time.localtime(now + TIMEOUT_SEC)))
+    pending = {t["ticker"]: t for t in TRACKED}
+    remaining_min = max(0, int((DEADLINE - time.time()) / 60))
+    logger.info("감시 재시작: %d건, 마감까지 약 %d분 남음(%s)", len(pending), remaining_min,
+                time.strftime("%H:%M:%S", time.localtime(DEADLINE)))
     while pending:
         time.sleep(POLL_SEC)
         for ticker, info in list(pending.items()):
@@ -46,20 +60,21 @@ def main():
                 logger.warning("[%s] 매도 상태 확인 실패: %s", ticker, e)
                 continue
             if o["remaining_volume"] == 0:
-                logger.info("[%s] 지정가 매도 체결 완료", ticker)
+                _report_fill(ticker, info["avg_price"], info["qty"], o, forced=False)
                 del pending[ticker]
                 continue
-            elapsed = time.time() - info["placed_at"]
-            if elapsed >= TIMEOUT_SEC:
-                logger.warning("[%s] %d초 경과, 미체결 — 시장가로 강제청산", ticker, int(elapsed))
+            if time.time() >= DEADLINE:
+                logger.warning("[%s] 마감 시각 경과, 미체결 — 시장가로 강제청산", ticker)
                 try:
                     upbit_api.cancel_order(info["sell_uuid"])
                     time.sleep(1)
                     bal = upbit_api.get_balance()
                     h = next((x for x in bal["holdings"] if x["ticker"] == ticker), None)
                     if h and h["qty"] > 0:
-                        upbit_api.place_order(market=ticker, side="ask", ord_type="market", volume=h["qty"])
-                        logger.info("[%s] 시장가 강제청산 완료", ticker)
+                        result = upbit_api.place_order(market=ticker, side="ask", ord_type="market", volume=h["qty"])
+                        time.sleep(1)
+                        o2 = upbit_api.get_order(result["uuid"])
+                        _report_fill(ticker, info["avg_price"], info["qty"], o2, forced=True)
                 except Exception as e:
                     logger.error("[%s] 강제청산 실패: %s", ticker, e)
                 del pending[ticker]
