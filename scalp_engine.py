@@ -358,6 +358,12 @@ def should_exit(
       fast_rise_take_profit_pct — 급등 판단 시 적용할 상향된 익절 목표 (기본 take_profit_pct와 동일,
                            즉 값을 안 주면 사실상 비활성)
       stop_loss_pct     — 손절 기준 (기본 0.4%, 양수로 입력) — 시간과 무관하게 항상 적용
+      fast_decline_momentum_pct — 보유 중 lookback_sec 동안의 모멘텀(cur_momentum_pct)이 이 값의
+                           음수(기본 0=비활성) 이하로 급락 중이면 stop_loss_pct 대신 더 타이트한
+                           fast_decline_stop_loss_pct를 손절선으로 사용 — 급락장에서 기본 손절선까지
+                           기다리다 손실이 더 커지는 것을 막기 위함 (fast_rise의 대칭 개념)
+      fast_decline_stop_loss_pct — 급락 판단 시 적용할 축소된 손절 기준 (기본 stop_loss_pct와 동일,
+                           즉 값을 안 주면 사실상 비활성). stop_loss_pct보다 작아야 의미 있음
       time_stop_sec     — 시간초과 판단 시점 (기본 180초)
       time_stop_loss_pct — 시간초과 시점에 이 손실률(양수 입력)을 넘겼을 때만 청산 (기본 0.5%)
                            그 안이면(수익이거나 손실이 -0.5% 이내면) 무조건 청산하지 않고 계속 보유
@@ -388,14 +394,27 @@ def should_exit(
     stagnation_band_pct    = float(params.get("stagnation_band_pct", 0.2))
     fast_rise_momentum_pct = float(params.get("fast_rise_momentum_pct", 0) or 0)
     fast_rise_take_pct     = float(params.get("fast_rise_take_profit_pct", take_pct) or take_pct)
+    fast_decline_momentum_pct = float(params.get("fast_decline_momentum_pct", 0) or 0)
+    fast_decline_stop_pct  = tick_aware_floor(entry_price, tick_size,
+                                               float(params.get("fast_decline_stop_loss_pct", stop_pct) or stop_pct))
 
     if entry_price <= 0:
         return False, ""
 
     chg_pct = (cur_price - entry_price) / entry_price * 100
 
-    if chg_pct <= -stop_pct:
-        return True, f"손절 ({chg_pct:.2f}%)"
+    effective_stop_pct = stop_pct
+    is_fast_decline = (
+        fast_decline_momentum_pct > 0
+        and cur_momentum_pct is not None
+        and cur_momentum_pct <= -fast_decline_momentum_pct
+    )
+    if is_fast_decline:
+        effective_stop_pct = min(stop_pct, fast_decline_stop_pct)
+
+    if chg_pct <= -effective_stop_pct:
+        label = "급락 손절" if is_fast_decline and effective_stop_pct < stop_pct else "손절"
+        return True, f"{label} ({chg_pct:.2f}%)"
 
     effective_take_pct = take_pct
     if fast_rise_momentum_pct > 0 and cur_momentum_pct is not None and cur_momentum_pct >= fast_rise_momentum_pct:
