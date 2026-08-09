@@ -251,17 +251,24 @@ def _account_parts():
 # 등락률 순위 조회 (초단타 자동 종목 발굴용)
 # VM 실계좌로 직접 호출 검증 완료 (2026-08-07)
 # ─────────────────────────────────────────
-def get_fluctuation_ranking(top_n: int = 30, sort: str = "gainers") -> list[dict]:
+def get_fluctuation_ranking(top_n: int = 30, sort: str = "gainers", market: str | None = None) -> list[dict]:
     """
     국내주식 등락률 순위 조회 — 한 번 호출로 상위 N종목 반환.
     sort: "gainers"(상승률순, 급등 후보 발굴용) | "losers"(하락률순, 급락후반등 후보 발굴용)
+    market: "J"(KRX) | "NX"(NXT) | None이면 현재 시각 기준 자동 선택
+            (NXT 프리마켓/애프터마켓 시간대엔 "NX", 그 외(KRX 정규장 등)엔 "J")
+            VM 실계좌로 NX가 KRX와 다른 실제 NXT 전용 순위를 반환하는 것을 직접 조회로 검증 완료
+            (2026-08-09) — 기존엔 이 함수가 "J" 고정이라 NXT 전용 시간대엔 신규 후보 발굴이
+            전혀 안 되던 문제를 해결.
     반환: [{ticker, name, price, chg_pct, acml_vol}, ...]
     VM 실계좌로 두 모드 모두 직접 호출 검증 완료 (2026-08-07)
     """
+    if market is None:
+        market = "NX" if _is_nxt_time() else "J"
     tr_id = "FHPST01700000"
     params = {
         "fid_rsfl_rate2":         "",
-        "fid_cond_mrkt_div_code": "J",
+        "fid_cond_mrkt_div_code": market,
         "fid_cond_scr_div_code":  "20170",
         "fid_input_iscd":         "0000",   # 전체
         "fid_rank_sort_cls_code": "1" if sort == "losers" else "0",  # 0=상승률순, 1=하락률순
