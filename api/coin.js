@@ -808,6 +808,8 @@ const SCALP_AUTO_DEFAULTS = {
   min_decline_pct: 2.0,
   rebound_lookback_sec: 30,
   min_rebound_pct: 0.4,
+  fast_rise_momentum_pct: 0,       // 0=비활성. 보유 중 lookback_sec 모멘텀이 이 값 이상이면 급등으로 판단
+  fast_rise_take_profit_pct: 0,    // 급등 판단 시 take_profit_pct 대신 적용할 상향 목표
 };
 
 async function handleScalpAutoConfig(req, res, gistId, ghToken) {
