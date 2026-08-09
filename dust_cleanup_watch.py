@@ -12,15 +12,12 @@ POLL_SEC = 30
 
 TRACKED = [
     {"ticker": "KRW-ZIL",    "sell_uuid": "02a357b1-61b5-49d8-a65f-692080be29b6", "avg_price": 3.11995982,    "qty": 1605.78990901},
-    {"ticker": "KRW-PUNDIX", "sell_uuid": "e1dc49d5-62cc-4a40-905e-77d819a361ff", "avg_price": 110.00099001,  "qty": 45.4995905},
-    {"ticker": "KRW-ORDER",  "sell_uuid": "ad53ac2b-f7ae-4515-b889-ce92a105508e", "avg_price": 41.00029753,   "qty": 122.07228488},
     {"ticker": "KRW-MET2",   "sell_uuid": "a9eedae2-17c6-4c69-a3e6-5470ef7a0b19", "avg_price": 237.0019813,   "qty": 21.11796691},
     {"ticker": "KRW-XEC",    "sell_uuid": "21186b68-b7f8-4fc3-81ee-a58e6f1ac662", "avg_price": 0.00959973,    "qty": 521368.66523911},
     {"ticker": "KRW-ARX",    "sell_uuid": "13d0523b-5e5b-470f-ba39-ee86e2b08767", "avg_price": 186.04707272,  "qty": 26.92866879},
     {"ticker": "KRW-KITE",   "sell_uuid": "77506a96-5dba-4a10-adac-6642e3140a1a", "avg_price": 141.00776421,  "qty": 35.52995842},
     {"ticker": "KRW-ARB",    "sell_uuid": "5d3d6fe5-879d-4808-b5e7-b259c01a0200", "avg_price": 110.00392087,  "qty": 45.54383117},
     {"ticker": "KRW-QUID",   "sell_uuid": "cd36bfe3-166f-4949-809d-a7d0d1ab34ee", "avg_price": 130.0,         "qty": 38.53846154},
-    {"ticker": "KRW-TT",     "sell_uuid": "5f61fb44-197d-43fb-90f6-f11d36049e8f", "avg_price": 0.524998,      "qty": 9542.89349326},
     {"ticker": "KRW-SUI",    "sell_uuid": "87ff2417-8a88-4b8c-94fc-562ee03295da", "avg_price": 974.98996862,  "qty": 5.1385144},
     {"ticker": "KRW-XLM",    "sell_uuid": "72ce1aee-6fdf-4b83-a7b7-7d4492c6c094", "avg_price": 231.99187618,  "qty": 21.59558378},
     {"ticker": "KRW-XPL",    "sell_uuid": "25a826c3-e86b-4dc3-983b-9639c95ce859", "avg_price": 108.01153805,  "qty": 46.43022487},
