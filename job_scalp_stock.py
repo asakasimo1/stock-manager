@@ -454,9 +454,17 @@ def main():
         qty = int(job.get("qty", 0))
         amount = float(job.get("amount", 0))
         if qty <= 0 and amount > 0:
-            qty = int(amount // cur_price)
+            # 설정 예산(amount)이 실제 예수금보다 크면 "주문 가능한 금액을
+            # 초과했습니다"로 진입 자체가 계속 실패함 — 예수금 한도 내에서
+            # 살 수 있는 만큼만 수량을 줄여서 시도.
+            try:
+                cash = kis_api.get_balance()["cash"]
+            except Exception as e:
+                logger.warning("%s(%s) 예수금 조회 실패 — 설정 예산 그대로 사용: %s", name, ticker, e)
+                cash = amount
+            qty = int(min(amount, cash) // cur_price)
         if qty < 1:
-            logger.warning("%s(%s) 수량/금액 미설정 — 건너뜀", name, ticker)
+            logger.warning("%s(%s) 수량/금액 미설정 또는 예수금 부족 — 건너뜀", name, ticker)
             continue
 
         logger.info("★ [진입] %s(%s) @ %d원 — %s", name, ticker, cur_price, reason)
