@@ -234,6 +234,28 @@ export default async function handler(req, res) {
     }
   }
 
+  // ── Gist trader_trades만 (대시보드 거래내역 카드 폴링용) ──────
+  if (mode === 'trades') {
+    try {
+      let gist;
+      const now = Date.now();
+      if (_gistCache && now - _gistCacheAt < GIST_TTL) {
+        gist = _gistCache;
+      } else {
+        const r = await fetch(`https://api.github.com/gists/${gistId}`, { headers: ghHeaders });
+        if (!r.ok) return res.status(r.status).json({ error: `GitHub API error: ${r.status}` });
+        gist = await r.json();
+        _gistCache = gist; _gistCacheAt = now;
+      }
+      const file = (gist.files || {})['trader_trades.json'];
+      const data = file ? JSON.parse(file.content || '[]') : [];
+      res.setHeader('Cache-Control', 'no-store');
+      return res.status(200).json({ trader_trades: data });
+    } catch (e) {
+      return res.status(500).json({ error: e.message });
+    }
+  }
+
   // ── POST: portfolio_meta 저장 (JSONBin) ──────────────────
   if (req.method === 'POST') {
     const jsonbinKey   = process.env.JSONBIN_KEY;

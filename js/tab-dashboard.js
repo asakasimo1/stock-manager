@@ -55,7 +55,6 @@ async function _pollAccount() {
     const { account_balance } = await r.json();
     if (!account_balance) return;
     if (_dashData) _dashData.account_balance = account_balance;
-    renderTraderSummary(_dashData?.trader_trades || [], account_balance);
     // 자동매매 탭 계좌 현황도 갱신
     if (typeof atRenderAccount === 'function') {
       _atAccount = account_balance;
@@ -64,6 +63,23 @@ async function _pollAccount() {
   } catch (e) {
     console.warn('KIS 계좌 폴링 실패:', e.message);
   }
+
+  // 거래내역도 함께 갱신 — 이게 없으면 페이지를 새로고침하기 전까지
+  // 매도가 이미 체결됐어도 대시보드에 계속 "보유중"으로 표시됨
+  try {
+    const r2 = await fetch('/api/data?mode=trades');
+    if (r2.ok) {
+      const { trader_trades } = await r2.json();
+      if (trader_trades) {
+        if (_dashData) _dashData.trader_trades = trader_trades;
+        renderTraderTrades(trader_trades, _dashData?.account_balance || null);
+      }
+    }
+  } catch (e) {
+    console.warn('거래내역 폴링 실패:', e.message);
+  }
+
+  renderTraderSummary(_dashData?.trader_trades || [], _dashData?.account_balance || null);
 }
 function startAccountPolling() {
   if (_accountPollTimer) return;
