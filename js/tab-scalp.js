@@ -539,7 +539,11 @@ function _scJobCardHtml(j) {
       const live = _scLivePrices[j.ticker];
       const buyPrice = j.buy_price || 0;
       if (live && buyPrice > 0) {
-        const upnlPct = (live.price - buyPrice) / buyPrice * 100;
+        // 매수/매도 수수료(+주식은 거래세) 포함 순손익률
+        const buyFee  = j.market === 'coin' ? 0.0005 : 0.00015;
+        const sellFee = j.market === 'coin' ? 0.0005 : 0.00015 + 0.0018;
+        const cost    = buyPrice * (1 + buyFee);
+        const upnlPct = ((live.price * (1 - sellFee)) - cost) / cost * 100;
         const upnlColor = upnlPct >= 0 ? '#16a34a' : '#dc2626';
         holdingLine = `<div style="font-size:12px;margin-bottom:6px">
           진입가 ${Math.round(buyPrice).toLocaleString()}원 → 현재가 ${Math.round(live.price).toLocaleString()}원

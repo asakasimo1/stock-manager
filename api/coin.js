@@ -343,9 +343,10 @@ async function handleCoinRunner(req, res, gistId, ghToken) {
         const curPrice = prices[ticker]?.price ?? avgPrice;
         const cost     = avgPrice * qty * (1 + BUY_FEE);
         const evalAmt  = curPrice * qty;
+        const netEval  = evalAmt * (1 - SELL_FEE);  // pnl/pnl_pct는 매도수수료까지 포함한 순손익
         holdings.push({ ticker, symbol: acc.currency, name: COIN_NAMES[ticker] || acc.currency, qty, avg_price: avgPrice,
           cur_price: curPrice, eval_amount: evalAmt,
-          pnl: evalAmt - cost, pnl_pct: +((evalAmt - cost) / cost * 100).toFixed(2) });
+          pnl: netEval - cost, pnl_pct: +((netEval - cost) / cost * 100).toFixed(2) });
       }
       const account = { krw, holdings, updated_at: nowKst() };
       await writeGistFiles(gistId, ghToken, { 'coin_account.json': account });

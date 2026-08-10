@@ -142,6 +142,19 @@ let _traderTradesExpanded = false;
 // 금액(원) 표시는 전부 소수점 버림 — 코인 거래는 단가/손익에 소수점이 남는 경우가 있음
 const krw = v => Math.trunc(Number(v) || 0).toLocaleString();
 
+// 수익금액/수익률은 전부 매매 수수료(+주식은 증권거래세) 포함해서 계산 —
+// 단순 (매도금액-매수금액)은 실제 손익보다 항상 커 보여서 오해를 유발함.
+const _isCoinTicker = t => typeof t === 'string' && t.startsWith('KRW-');
+const _feeRates = t => _isCoinTicker(t)
+  ? { buy: 0.0005, sell: 0.0005 }                  // 업비트: 매수/매도 각 0.05%
+  : { buy: 0.00015, sell: 0.00015 + 0.0018 };      // KIS: 매수 0.015% / 매도 0.015%+거래세 0.18%
+function _netPnl(ticker, buyAmount, sellAmount) {
+  const { buy, sell } = _feeRates(ticker);
+  const net = sellAmount * (1 - sell) - buyAmount * (1 + buy);
+  const cost = buyAmount * (1 + buy);
+  return { pnl: net, pct: cost > 0 ? (net / cost * 100) : 0 };
+}
+
 // 종목/거래시각/(매수→매도)금액/상태(보유중,종료)만 표기. 티커별로 매수를
 // 수량단위 lot으로 쌓아두고, 매도가 들어오면 앞 lot부터 수량만큼 잘라서 짝짓는다
 // (그리드처럼 여러 번 나눠 산 뒤 한 번에 몰아 파는 패턴에서도, 실제로 팔린
@@ -163,12 +176,16 @@ function _pairTrades(items) {
         let remain = t.qty;
         while (remain > 0 && lots.length) {
           const lot = lots[0];
-          const matchQty = Math.min(lot.qty, remain);
+          const matchQty  = Math.min(lot.qty, remain);
+          const buyAmount  = Math.round(lot.price * matchQty);
+          const sellAmount = Math.round(t.price * matchQty);
+          const { pnl, pct } = _netPnl(ticker, buyAmount, sellAmount);
           pairs.push({
             ticker,
             name: t.name || lot.name,
-            buy:  { date: lot.date, time: lot.time, price: lot.price, qty: matchQty, amount: Math.round(lot.price * matchQty) },
-            sell: { date: t.date,   time: t.time,   price: t.price,   qty: matchQty, amount: Math.round(t.price * matchQty) },
+            buy:  { date: lot.date, time: lot.time, price: lot.price, qty: matchQty, amount: buyAmount },
+            sell: { date: t.date,   time: t.time,   price: t.price,   qty: matchQty, amount: sellAmount },
+            netPnl: pnl, netPnlPct: pct,
           });
           lot.qty -= matchQty;
           remain -= matchQty;
@@ -252,7 +269,7 @@ async function renderTraderTrades(items, accountBalance) {
       const curPrice = priceMap[p.ticker];
       if (curPrice != null) {
         const curAmount = Math.round(curPrice * p.buy.qty);
-        const pnl = curAmount - p.buy.amount;
+        const { pnl } = _netPnl(p.ticker, p.buy.amount, curAmount);
         const up  = pnl >= 0;
         barColor  = up ? '#16a34a' : '#dc2626';
         const pnlStr = `${up ? '+' : ''}${krw(pnl)}원`;
@@ -262,7 +279,7 @@ async function renderTraderTrades(items, accountBalance) {
         amountHtml = `<b>${krw(p.buy.amount)}원</b>`;
       }
     } else {
-      const pnl = p.sell.amount - p.buy.amount;
+      const pnl = p.netPnl;
       const up  = pnl >= 0;
       barColor  = up ? '#16a34a' : '#dc2626';
       const pnlStr = `${up ? '+' : ''}${krw(pnl)}원`;
@@ -563,13 +580,13 @@ function renderTraderSummary(trades, account) {
     return;
   }
 
-  // ── 종결된 거래 손익 집계 ──────────────────────────────
-  const closed = trades.filter(t => t.type === 'sell' && t.pnl != null);
-  const totalPnl  = closed.reduce((s, t) => s + Number(t.pnl), 0);
-  const wins      = closed.filter(t => t.pnl > 0).length;
+  // ── 종결된 거래 손익 집계 (매수→매도 lot 매칭 + 수수료 포함 손익 기준) ──
+  const closed    = _pairTrades(trades).filter(p => p.sell);
+  const totalPnl  = closed.reduce((s, p) => s + p.netPnl, 0);
+  const wins      = closed.filter(p => p.netPnl > 0).length;
   const winRate   = closed.length ? Math.round(wins / closed.length * 100) : null;
   const avgPnlPct = closed.length
-    ? (closed.reduce((s, t) => s + Number(t.pnl_pct || 0), 0) / closed.length).toFixed(2)
+    ? (closed.reduce((s, p) => s + p.netPnlPct, 0) / closed.length).toFixed(2)
     : null;
 
   // ── 거래 통계 카드 ─────────────────────────────────────
