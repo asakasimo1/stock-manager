@@ -436,10 +436,11 @@ function scRenderJobs() {
 }
 
 // ── 초단타내역: 매수가/매도가/손익/시간 1줄 표시 (오늘 최대 5건 + 더보기, 지난 날짜는 일일 요약으로 집계) ──
-let _scHistExpanded = false;
+// 코인/주식을 별도 섹션으로 분리해서 보여줌 (시간순 통합 나열이 아님)
+let _scHistExpanded = { stock: false, coin: false };
 
-function scToggleHistoryMore() {
-  _scHistExpanded = !_scHistExpanded;
+function scToggleHistoryMore(market) {
+  _scHistExpanded[market] = !_scHistExpanded[market];
   scRenderHistory([
     ...(_scJobs.coin  || []).map(j => ({ ...j, market: 'coin' })),
     ...(_scJobs.stock || []).map(j => ({ ...j, market: 'stock' })),
@@ -455,25 +456,21 @@ function _scFlattenTrades(jobs) {
 
 function _scTradeRowHtml(r) {
   const color = (r.pnl || 0) >= 0 ? '#16a34a' : '#dc2626';
-  const marketIcon = r.market === 'coin' ? '🪙' : '📈';
   return `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 4px;border-top:1px solid var(--border);font-size:12px">
     <span style="color:var(--muted);flex:none">${r.time}</span>
-    <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${marketIcon} ${r.name}</span>
+    <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.name}</span>
     <span style="color:var(--muted);white-space:nowrap;flex:none">${Math.round(r.buy_price).toLocaleString()}→${Math.round(r.sell_price).toLocaleString()}원</span>
     <b style="color:${color};white-space:nowrap;flex:none">${(r.pnl || 0) >= 0 ? '+' : ''}${Math.round(r.pnl || 0).toLocaleString()}원</b>
   </div>`;
 }
 
-function scRenderHistory(all) {
-  const elHistory = document.getElementById('sc-history-list');
-  if (!elHistory) return;
-
-  const rows  = _scFlattenTrades(all);
+// market별로 "오늘 N건(더보기 포함) + 지난 날짜 일일요약"을 한 섹션 HTML로 렌더링.
+// 반환값의 count는 헤더 뱃지(초단타내역 (N건)) 합산용.
+function _scRenderHistorySection(rows, market, label) {
   const today = new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10);
   const todayRows = rows.filter(r => r.date === today);
   const pastRows  = rows.filter(r => r.date !== today && withinLastDays(r.date));
 
-  // 지난 날짜는 날짜별로 묶어서 "거래 N종목 · 일일수익금 M원" 한 줄 요약으로
   const byDate = {};
   pastRows.forEach(r => {
     const d = byDate[r.date] || (byDate[r.date] = { tickers: new Set(), pnl: 0 });
@@ -482,10 +479,11 @@ function scRenderHistory(all) {
   });
   const dateKeys = Object.keys(byDate).sort((a, b) => b.localeCompare(a));
 
-  const visibleToday = _scHistExpanded ? todayRows : todayRows.slice(0, 5);
+  const expanded = _scHistExpanded[market];
+  const visibleToday = expanded ? todayRows : todayRows.slice(0, 5);
   const todayHtml = visibleToday.map(_scTradeRowHtml).join('');
   const moreHtml = todayRows.length > 5
-    ? `<div onclick="scToggleHistoryMore()" style="text-align:center;padding:8px;font-size:12px;color:var(--muted);cursor:pointer">${_scHistExpanded ? '접기 ▲' : `더보기 (${todayRows.length - 5}건) ▼`}</div>`
+    ? `<div onclick="scToggleHistoryMore('${market}')" style="text-align:center;padding:8px;font-size:12px;color:var(--muted);cursor:pointer">${expanded ? '접기 ▲' : `더보기 (${todayRows.length - 5}건) ▼`}</div>`
     : '';
 
   const dailyHtml = dateKeys.map(d => {
@@ -498,9 +496,27 @@ function scRenderHistory(all) {
     </div>`;
   }).join('');
 
-  elHistory.innerHTML = (todayHtml + moreHtml + dailyHtml)
-    || `<div style="color:var(--muted);font-size:13px;padding:12px 0;text-align:center">최근 거래 내역이 없습니다</div>`;
-  setHistoryCount('sc', todayRows.length + dateKeys.length);
+  const body = todayHtml + moreHtml + dailyHtml;
+  const html = `
+    <div style="padding:10px 4px 4px;font-size:12px;font-weight:700;color:var(--text)">${label}</div>
+    ${body || `<div style="color:var(--muted);font-size:12px;padding:8px 4px;border-top:1px solid var(--border)">거래 내역 없음</div>`}
+  `;
+  return { html, count: todayRows.length + dateKeys.length };
+}
+
+function scRenderHistory(all) {
+  const elHistory = document.getElementById('sc-history-list');
+  if (!elHistory) return;
+
+  const rows = _scFlattenTrades(all);
+  const stockRows = rows.filter(r => r.market === 'stock');
+  const coinRows  = rows.filter(r => r.market === 'coin');
+
+  const stockSec = _scRenderHistorySection(stockRows, 'stock', '📈 주식');
+  const coinSec  = _scRenderHistorySection(coinRows,  'coin',  '🪙 코인');
+
+  elHistory.innerHTML = stockSec.html + coinSec.html;
+  setHistoryCount('sc', stockSec.count + coinSec.count);
 }
 
 function _scJobCardHtml(j) {

@@ -84,17 +84,19 @@ async function atRefreshPrices() {
 async function atLoadAll() {
   try {
     // /api/data는 전역 캐시 재사용 (dashboard/portfolio 탭이 이미 로드했으면 네트워크 불필요)
-    const [rSell, rBuy, rCycle, rGrid, gistData] = await Promise.all([
+    const [rSell, rBuy, rCycle, rGrid, rScalp, gistData] = await Promise.all([
       fetch('/api/profit-sell'),
       fetch('/api/profit-buy'),
       fetch('/api/profit-cycle'),
       fetch('/api/stock-grid'),
+      fetch('/api/scalp-stock'),
       _fetchGistData(),
     ]);
     if (rSell.ok)  _atJobs    = await rSell.json();
     if (rBuy.ok)   _abJobs    = await rBuy.json();
     if (rCycle.ok) _acJobs    = await rCycle.json();
     if (rGrid.ok)  _agJobs    = await rGrid.json();
+    if (rScalp.ok) _asJobs    = await rScalp.json();
     _atAccount = gistData.account_balance || null;
   } catch (e) {
     console.warn('자동매매 데이터 로드 실패:', e);
@@ -1516,6 +1518,7 @@ function ctCheckDaemonStatus() {
 // ═══════════════════════════════════════════════════════════════
 let _agJobs = [];
 let _agAcTimer = null;
+let _asJobs = [];  // 초단타(스캘핑) 잡 — 일별 수익현황 합산용
 
 // ── 종목 자동완성 ──────────────────────────────────────────────
 function onAgNameInput(val) {
@@ -1714,7 +1717,25 @@ function atCalcDayProfit(dateStr) {
       }));
   });
 
-  const items = [...sells, ...cycleSells, ...gridSells].sort((a, b) => a.time.localeCompare(b.time));
+  // 초단타(스캘핑) 당일 체결 내역 (trade_log 배열)
+  const scalpSells = (Array.isArray(_asJobs) ? _asJobs : []).flatMap(job => {
+    const log = Array.isArray(job.trade_log) ? job.trade_log : [];
+    return log
+      .filter(t => t.date === dateStr)
+      .map(t => ({
+        name:      job.name || job.ticker,
+        ticker:    job.ticker,
+        qty:       t.qty,
+        buyPrice:  t.buy_price,
+        sellPrice: t.sell_price,
+        profit:    t.buy_price ? Math.round(t.pnl) : null,
+        time:      (t.time || '').slice(0, 5),
+        buyTime:   null,
+        source:    'scalp',
+      }));
+  });
+
+  const items = [...sells, ...cycleSells, ...gridSells, ...scalpSells].sort((a, b) => a.time.localeCompare(b.time));
   return {
     date:      dateStr,
     sells:     items,

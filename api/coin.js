@@ -854,11 +854,12 @@ async function handleCoinDate(req, res, gistId, ghToken) {
 
   const FEE = 0.0005; // 업비트 수수료 0.05% (매수·매도 각각)
 
-  const [buyJobs, sellJobs, cycleJobs, gridJobs] = await Promise.all([
+  const [buyJobs, sellJobs, cycleJobs, gridJobs, scalpJobs] = await Promise.all([
     readGistFile(gistId, ghToken, 'coin_buy_jobs.json'),
     readGistFile(gistId, ghToken, 'coin_sell_jobs.json'),
     readGistFile(gistId, ghToken, 'coin_cycle_jobs.json'),
     readGistFile(gistId, ghToken, 'coin_grid_jobs.json'),
+    readGistFile(gistId, ghToken, 'scalp_coin_jobs.json'),
   ]);
 
   // ── 매수잡 당일 체결 (미매도 포지션 — 손익 미확정)
@@ -942,8 +943,28 @@ async function handleCoinDate(req, res, gistId, ghToken) {
       }));
   });
 
+  // ── 초단타(스캘핑) 당일 체결 내역 (trade_log 배열)
+  const scalpSells = (Array.isArray(scalpJobs) ? scalpJobs : []).flatMap(job => {
+    const log = Array.isArray(job.trade_log) ? job.trade_log : [];
+    return log
+      .filter(t => t.date === targetDate)
+      .map(t => ({
+        time:      (t.time || '').slice(0, 5),
+        buyTime:   null,
+        name:      job.name || job.ticker,
+        ticker:    job.ticker,
+        qty:       t.qty,
+        buyPrice:  t.buy_price,
+        sellPrice: t.sell_price,
+        amount:    Math.round((t.sell_price || 0) * (t.qty || 0)),
+        fee:       0,
+        profit:    t.buy_price ? Math.round(t.pnl) : null,
+        source:    'scalp',
+      }));
+  });
+
   const allBuys  = [...buys,  ...cycleBuys ].sort((a, b) => a.time.localeCompare(b.time));
-  const allSells = [...sells, ...cycleSells, ...gridSells].sort((a, b) => a.time.localeCompare(b.time));
+  const allSells = [...sells, ...cycleSells, ...gridSells, ...scalpSells].sort((a, b) => a.time.localeCompare(b.time));
 
   // 실현손익 = 당일 체결된 매도의 (매도 - 매수) 손익 합계
   const netProfit = Math.round(allSells.reduce((s, o) => s + (o.profit || 0), 0));
