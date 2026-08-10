@@ -14,7 +14,7 @@ Gist scalp_auto_config.json 의 stock.enabled=true 이면 KIS 등락률 순위�
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, time as _dtime
 
 import kis_api
 import gist_writer
@@ -35,6 +35,16 @@ MAX_CONCURRENT_POSITIONS = 3  # 주식 스캘핑 동시 보유 종목 상한 (�
 
 DISCOVERY_INTERVAL_SEC = 30  # 자동발굴 스캔 주기 하한 — 등락률 순위 조회·Gist 쓰기 빈도 제한
 _last_discover_at = 0.0
+
+
+def _time_based_stop_loss_pct(auto_cfg: dict) -> float:
+    """09:00~10:00(거래량 많은 개장 직후)는 변동성이 커서 손절폭을 넉넉하게,
+    그 외 시간대는 상대적으로 타이트하게. 잡 발굴(진입) 시점 기준으로 한 번
+    정해지면 그 포지션이 살아있는 동안 유지됨(보유 중 시각 경과로 재조정 안 함)."""
+    now = datetime.now(KST).time()
+    if _dtime(9, 0) <= now < _dtime(10, 0):
+        return float(auto_cfg.get("stop_loss_pct_active_hour", 1.5))
+    return float(auto_cfg.get("stop_loss_pct_quiet_hour", 1.0))
 
 
 def _should_run_discovery(now_epoch: float) -> bool:
@@ -220,11 +230,12 @@ def _auto_discover(jobs: list, auto_cfg: dict, stock_enabled: bool, now_epoch: f
             "lookback_sec":       auto_cfg.get("lookback_sec", 30),
             "max_day_chg_pct":    max_day_chg,
             "take_profit_pct":    auto_cfg.get("take_profit_pct", 0.6),
-            "stop_loss_pct":      auto_cfg.get("stop_loss_pct", 0.4),
+            "stop_loss_pct":      _time_based_stop_loss_pct(auto_cfg),
             "time_stop_sec":      auto_cfg.get("time_stop_sec", 180),
             "time_stop_loss_pct": auto_cfg.get("time_stop_loss_pct", 0.5),
             "fast_rise_momentum_pct":    auto_cfg.get("fast_rise_momentum_pct", 0),
             "fast_rise_take_profit_pct": auto_cfg.get("fast_rise_take_profit_pct", 0),
+            "fast_rise_trailing_giveback_pct": auto_cfg.get("fast_rise_trailing_giveback_pct", 0),
             "fast_decline_momentum_pct":  auto_cfg.get("fast_decline_momentum_pct", 0),
             "fast_decline_stop_loss_pct": auto_cfg.get("fast_decline_stop_loss_pct", 0),
             "amount":             auto_cfg.get("amount", 0),

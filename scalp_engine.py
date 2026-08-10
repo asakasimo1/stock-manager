@@ -373,6 +373,12 @@ def should_exit(
                            그때 익절 확정. take_profit_pct는 "트레일링을 시작하는 문턱"이 되고
                            실제 매도는 추세가 꺾이는 걸 확인한 뒤에 이뤄짐 — 목표가에 닿자마자
                            바로 팔아서 그 뒤로도 계속 오르는 상승분을 놓치는 문제를 줄이기 위함
+      fast_rise_trailing_giveback_pct — 급등 판단(fast_rise) 중일 때 trailing_giveback_pct 대신
+                           쓰는 더 넉넉한 되돌림 허용폭 (기본 trailing_giveback_pct와 동일, 즉
+                           값을 안 주면 사실상 비활성). 급등 종목은 등락폭 자체가 커서 기본
+                           되돌림폭(0.3%)이면 추세가 살아있는데도 너무 일찍 끊기는 문제가 있어
+                           분리 — cur_momentum_pct가 매 사이클 갱신되므로, 급등 기세가 식으면
+                           자동으로 다시 기본 되돌림폭으로 좁혀짐
       stagnation_multiplier — time_stop_sec의 이 배수(기본 3배)만큼 지나도 손익이 거의 없으면
                            정체로 보고 청산 (기본 0이면 비활성화 아님, 3배). 오르지도 내리지도
                            않는 포지션이 동시보유 슬롯을 계속 붙잡아 새 후보를 못 잡는 기회비용을 줄임
@@ -390,6 +396,8 @@ def should_exit(
     time_stop              = float(params.get("time_stop_sec", 180))
     time_stop_loss_pct     = tick_aware_floor(entry_price, tick_size, float(params.get("time_stop_loss_pct", 0.5)))
     trailing_giveback_pct  = tick_aware_floor(entry_price, tick_size, float(params.get("trailing_giveback_pct", 0.3)))
+    fast_rise_giveback_pct = tick_aware_floor(entry_price, tick_size,
+                                               float(params.get("fast_rise_trailing_giveback_pct", trailing_giveback_pct) or trailing_giveback_pct))
     stagnation_multiplier  = float(params.get("stagnation_multiplier", 3.0))
     stagnation_band_pct    = float(params.get("stagnation_band_pct", 0.2))
     fast_rise_momentum_pct = float(params.get("fast_rise_momentum_pct", 0) or 0)
@@ -417,15 +425,18 @@ def should_exit(
         return True, f"{label} ({chg_pct:.2f}%)"
 
     effective_take_pct = take_pct
+    is_fast_rise = False
     if fast_rise_momentum_pct > 0 and cur_momentum_pct is not None and cur_momentum_pct >= fast_rise_momentum_pct:
         effective_take_pct = max(take_pct, fast_rise_take_pct)
+        is_fast_rise = effective_take_pct > take_pct
+    effective_giveback_pct = fast_rise_giveback_pct if is_fast_rise else trailing_giveback_pct
 
     if peak_pnl_pct is None:
         if chg_pct >= effective_take_pct:
             return True, f"익절 (+{chg_pct:.2f}%)"
     else:
         peak = max(peak_pnl_pct, chg_pct)
-        if peak >= effective_take_pct and chg_pct <= peak - trailing_giveback_pct:
+        if peak >= effective_take_pct and chg_pct <= peak - effective_giveback_pct:
             return True, f"익절 (고점 +{peak:.2f}% → 청산 {chg_pct:+.2f}%)"
 
     elapsed = now - entered_at
