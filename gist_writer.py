@@ -156,29 +156,40 @@ def _read_gist_file(filename: str):
 
 
 def _write_gist(files_dict: dict) -> bool:
-    """임의 파일을 Gist에 저장. files_dict = {filename: python_object}"""
+    """임의 파일을 Gist에 저장. files_dict = {filename: python_object}
+    stock/coin/scalp 데몬 3개가 같은 Gist에 동시에 쓰다 보면 GitHub이 "Gist cannot
+    be updated"(HTTP 409, 동시쓰기 충돌)로 거절하는 경우가 있음 — 이때 재시도 없이
+    그냥 실패 처리하면, 매도 체결 등으로 이미 바뀐 잡 상태(phase/buy_qty 등)가
+    Gist엔 저장되지 않은 채 유실돼서 "매도됐는데 화면엔 계속 보유중"인 유령
+    포지션이 생김(2026-08-10 대동스틸 048470 실측). 409는 대개 순간적인 충돌이라
+    짧게 대기 후 재시도하면 대부분 성공하므로, 여기서 최대 3회 재시도한다."""
     if not GIST_ID or not GH_TOKEN:
         logger.warning("[Gist] GIST_ID 또는 GH_TOKEN 미설정 — 저장 건너뜀")
         return False
-    try:
-        payload = {
-            "files": {
-                name: {"content": json.dumps(data, ensure_ascii=False, indent=2)}
-                for name, data in files_dict.items()
-            }
+    payload = {
+        "files": {
+            name: {"content": json.dumps(data, ensure_ascii=False, indent=2)}
+            for name, data in files_dict.items()
         }
-        t0 = time.monotonic()
-        r = _session.patch(f"https://api.github.com/gists/{GIST_ID}",
-                           headers=_headers(), json=payload, timeout=15)
-        ms = (time.monotonic() - t0) * 1000
-        logger.info("⏱  PATCH Gist %-40s %5.0fms  HTTP%s", list(files_dict.keys()), ms, r.status_code)
-        if r.ok:
-            logger.info("[Gist] 저장 완료: %s", list(files_dict.keys()))
-            _invalidate_gist_cache()
-            return True
-        logger.warning("[Gist] 저장 실패 %s: %s", r.status_code, r.text[:200])
-    except Exception as e:
-        logger.warning("[Gist] 저장 예외: %s", e)
+    }
+    for attempt in range(3):
+        try:
+            t0 = time.monotonic()
+            r = _session.patch(f"https://api.github.com/gists/{GIST_ID}",
+                               headers=_headers(), json=payload, timeout=15)
+            ms = (time.monotonic() - t0) * 1000
+            logger.info("⏱  PATCH Gist %-40s %5.0fms  HTTP%s", list(files_dict.keys()), ms, r.status_code)
+            if r.ok:
+                logger.info("[Gist] 저장 완료: %s", list(files_dict.keys()))
+                _invalidate_gist_cache()
+                return True
+            logger.warning("[Gist] 저장 실패 %s: %s", r.status_code, r.text[:200])
+            if r.status_code == 409 and attempt < 2:
+                time.sleep(0.5 * (attempt + 1))
+                continue
+        except Exception as e:
+            logger.warning("[Gist] 저장 예외: %s", e)
+        break
     return False
 
 
