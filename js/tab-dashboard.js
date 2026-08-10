@@ -40,7 +40,7 @@ async function initDashboard() {
 }
 
 function renderDashboard(data) {
-  renderTraderTrades(data.trader_trades || []);
+  renderTraderTrades(data.trader_trades || [], data.account_balance || null);
   renderTraderSummary(data.trader_trades || [], data.account_balance || null);
   renderIpoList(data.ipo || []);
   renderCalendar(data);
@@ -126,10 +126,12 @@ let _traderTradesExpanded = false;
 // 금액(원) 표시는 전부 소수점 버림 — 코인 거래는 단가/손익에 소수점이 남는 경우가 있음
 const krw = v => Math.trunc(Number(v) || 0).toLocaleString();
 
-// 종목/거래시각/(매수→매도)금액/상태(보유중,종료)만 표기. 티커별로 매수·매도를
-// 시간순 FIFO로 짝지어서(그리드처럼 같은 종목이 여러 번 반복돼도 정확히 매칭)
-// 짝이 맞은 건 "매수금액 → 매도금액"(손익 색상 포함)로, 아직 안 팔린 매수는
-// "매수금액"만 "보유중"으로 표시. 계좌잔고 대조 없이 거래기록만으로 판단 가능.
+// 종목/거래시각/(매수→매도)금액/상태(보유중,종료)만 표기. 티커별로 매수를
+// 수량단위 lot으로 쌓아두고, 매도가 들어오면 앞 lot부터 수량만큼 잘라서 짝짓는다
+// (그리드처럼 여러 번 나눠 산 뒤 한 번에 몰아 파는 패턴에서도, 실제로 팔린
+// 매수분은 전부 "종료"로 정확히 빠지고 안 팔린 수량만 "보유중"으로 남음 —
+// 매매 건수 1:1로만 짝짓던 이전 방식은 이 경우 오래된 매수 lot 일부가 이미
+// 팔렸는데도 계속 "보유중"으로 잘못 표시되는 문제가 있었음).
 function _pairTrades(items) {
   const byTicker = {};
   for (const t of items) (byTicker[t.ticker] = byTicker[t.ticker] || []).push(t);
@@ -137,28 +139,77 @@ function _pairTrades(items) {
   const pairs = [];
   for (const ticker in byTicker) {
     const list = byTicker[ticker].sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
-    const buyQueue = [];
+    const lots = []; // 아직 안 팔린 매수 lot (qty는 남은 수량으로 계속 차감됨)
     for (const t of list) {
       if (t.type === 'buy') {
-        buyQueue.push(t);
-      } else if (t.type === 'sell' && buyQueue.length) {
-        pairs.push({ ticker, name: t.name || buyQueue[0].name, buy: buyQueue.shift(), sell: t });
+        lots.push({ date: t.date, time: t.time, price: t.price, qty: t.qty, name: t.name });
+      } else if (t.type === 'sell') {
+        let remain = t.qty;
+        while (remain > 0 && lots.length) {
+          const lot = lots[0];
+          const matchQty = Math.min(lot.qty, remain);
+          pairs.push({
+            ticker,
+            name: t.name || lot.name,
+            buy:  { date: lot.date, time: lot.time, price: lot.price, qty: matchQty, amount: Math.round(lot.price * matchQty) },
+            sell: { date: t.date,   time: t.time,   price: t.price,   qty: matchQty, amount: Math.round(t.price * matchQty) },
+          });
+          lot.qty -= matchQty;
+          remain -= matchQty;
+          if (lot.qty <= 0) lots.shift();
+        }
+        // remain > 0(매칭되는 매수 기록 없는 매도, 조회기간 이전부터 보유하던 물량 등)은 표시 대상에서 제외
       }
-      // 매칭되는 매수 없는 매도(이전부터 보유하던 물량 등)는 표시 대상에서 제외
     }
-    for (const b of buyQueue) pairs.push({ ticker, name: b.name, buy: b, sell: null });
+    for (const lot of lots) {
+      pairs.push({
+        ticker, name: lot.name,
+        buy: { date: lot.date, time: lot.time, price: lot.price, qty: lot.qty, amount: Math.round(lot.price * lot.qty) },
+        sell: null,
+      });
+    }
   }
   return pairs.sort((a, b) => (b.buy.date + b.buy.time).localeCompare(a.buy.date + a.buy.time));
 }
 
-function renderTraderTrades(items) {
+// 보유중 항목의 미실현 손익 계산용 현재가 조회(주식: account_balance, 코인: /api/coin-account, 30초 캐시)
+let _dashCoinHoldings   = null;
+let _dashCoinHoldingsTs = 0;
+let _lastTraderAccountBalance = null;
+async function _fetchCoinHoldingsCached() {
+  const now = Date.now();
+  if (_dashCoinHoldings && (now - _dashCoinHoldingsTs) < 30000) return _dashCoinHoldings;
+  try {
+    const r = await fetch('/api/coin-account');
+    if (r.ok) {
+      const d = await r.json();
+      _dashCoinHoldings   = d.holdings || [];
+      _dashCoinHoldingsTs = now;
+    }
+  } catch (e) {
+    console.warn('코인 잔고 조회 실패:', e.message);
+  }
+  return _dashCoinHoldings || [];
+}
+
+async function renderTraderTrades(items, accountBalance) {
   const el = document.getElementById('list-trader-trades');
   if (!el) return;
+
+  if (accountBalance) _lastTraderAccountBalance = accountBalance;
+  else accountBalance = _lastTraderAccountBalance;
 
   const pairs = _pairTrades(items);
   if (!pairs.length) {
     el.innerHTML = '<div class="empty-msg">거래 내역이 없습니다</div>';
     return;
+  }
+
+  // 보유중(미체결) 항목이 있으면 현재가를 조회해서 평가손익을 함께 표시
+  let priceMap = {};
+  if (pairs.some(p => !p.sell)) {
+    for (const h of (accountBalance?.holdings || [])) priceMap[h.ticker] = h.eval_price;
+    for (const h of await _fetchCoinHoldingsCached()) priceMap[h.ticker] = h.cur_price;
   }
 
   const toShow  = _traderTradesExpanded ? pairs.slice(0, 50) : pairs.slice(0, 10);
@@ -178,18 +229,35 @@ function renderTraderTrades(items) {
       ? `<span style="background:#dcfce7;color:#166534;border-radius:5px;padding:2px 8px;font-size:11px;font-weight:700">보유중</span>`
       : `<span style="background:#f1f5f9;color:#64748b;border-radius:5px;padding:2px 8px;font-size:11px;font-weight:700">종료</span>`;
 
+    // 왼쪽 세로선: 수익 초록 / 손실 빨강. 보유중이라도 현재가를 알면 평가손익 기준으로 색상 표시
+    let barColor = 'var(--border)';
     let amountHtml;
     if (isOpen) {
-      amountHtml = `<b>${krw(p.buy.amount)}원</b>`;
+      const curPrice = priceMap[p.ticker];
+      if (curPrice != null) {
+        const curAmount = Math.round(curPrice * p.buy.qty);
+        const pnl = curAmount - p.buy.amount;
+        const up  = pnl >= 0;
+        barColor  = up ? '#16a34a' : '#dc2626';
+        const pnlStr = `${up ? '+' : ''}${krw(pnl)}원`;
+        amountHtml = `${krw(p.buy.amount)}원 → <b style="color:${barColor}">${krw(curAmount)}원</b>
+          &nbsp;<span style="color:${barColor};font-size:11px;font-weight:700">(${pnlStr} 평가)</span>`;
+      } else {
+        amountHtml = `<b>${krw(p.buy.amount)}원</b>`;
+      }
     } else {
-      const up   = p.sell.amount >= p.buy.amount;
-      const color = up ? '#16a34a' : '#dc2626';
-      amountHtml = `${krw(p.buy.amount)}원 → <b style="color:${color}">${krw(p.sell.amount)}원</b>`;
+      const pnl = p.sell.amount - p.buy.amount;
+      const up  = pnl >= 0;
+      barColor  = up ? '#16a34a' : '#dc2626';
+      const pnlStr = `${up ? '+' : ''}${krw(pnl)}원`;
+      amountHtml = `${krw(p.buy.amount)}원 → <b style="color:${barColor}">${krw(p.sell.amount)}원</b>
+        &nbsp;<span style="color:${barColor};font-size:11px;font-weight:700">(${pnlStr})</span>`;
     }
 
     return `
     <div style="display:flex;align-items:center;justify-content:space-between;
-                padding:9px 0;border-bottom:1px solid var(--border)">
+                padding:9px 0 9px 10px;border-bottom:1px solid var(--border);
+                border-left:3px solid ${barColor}">
       <div style="flex:1;min-width:0">
         <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
           <span style="font-weight:700;font-size:13px">${p.name || p.ticker}</span>
