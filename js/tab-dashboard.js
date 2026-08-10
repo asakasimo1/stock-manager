@@ -167,7 +167,18 @@ function _pairTrades(items) {
 
   const pairs = [];
   for (const ticker in byTicker) {
-    const list = byTicker[ticker].sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
+    // 거래시각이 분(minute) 단위까지만 기록돼서, 초단타처럼 매수·매도가 같은
+    // 분 안에 체결되면 원래 배열 순서에 따라 매도가 매수보다 먼저 정렬될 수
+    // 있음 — 그러면 아직 lots에 없는 매수를 팔려는 꼴이 돼서 그 매도가 조용히
+    // 무시되고, 실제로는 이미 팔린 매수가 계속 "보유중"으로 잘못 표시됨
+    // (2026-08-11 실측: 지놈앤컴퍼니 등 다수 종목). 같은 분이면 매수를 항상
+    // 먼저 오도록 타이브레이커를 둬서 방지.
+    const list = byTicker[ticker].sort((a, b) => {
+      const ak = a.date + a.time, bk = b.date + b.time;
+      if (ak !== bk) return ak.localeCompare(bk);
+      if (a.type === b.type) return 0;
+      return a.type === 'buy' ? -1 : 1;
+    });
     const lots = []; // 아직 안 팔린 매수 lot (qty는 남은 수량으로 계속 차감됨)
     for (const t of list) {
       if (t.type === 'buy') {
