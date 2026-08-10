@@ -109,28 +109,15 @@ def _read_trades() -> list:
 
 
 def _write_trades(records: list):
-    if not GIST_ID or not GH_TOKEN:
-        logger.warning("[Gist] GIST_ID 또는 GH_TOKEN 미설정 — 거래 내역 저장 건너뜀")
-        return False
-    try:
-        payload = {
-            "files": {
-                FILENAME: {"content": json.dumps(records, ensure_ascii=False, indent=2)}
-            }
-        }
-        t0 = time.monotonic()
-        r = _session.patch(f"https://api.github.com/gists/{GIST_ID}",
-                           headers=_headers(), json=payload, timeout=15)
-        ms = (time.monotonic() - t0) * 1000
-        logger.info("⏱  PATCH Gist %-40s %5.0fms  HTTP%s", GIST_ID[:12], ms, r.status_code)
-        if r.ok:
-            logger.info("[Gist] 거래 내역 저장 완료 (총 %d건)", len(records))
-            _invalidate_gist_cache()
-            return True
-        logger.warning("[Gist] 저장 실패 %s: %s", r.status_code, r.text[:200])
-    except Exception as e:
-        logger.warning("[Gist] 거래 내역 저장 예외: %s", e)
-    return False
+    # _write_gist()의 409(동시쓰기 충돌) 재시도 로직을 그대로 재사용 — 예전엔 이 함수가
+    # 별도로 PATCH를 직접 호출해서 재시도가 없었고, 그 때문에 스캘핑/그리드 등 여러
+    # 데몬이 동시에 Gist에 쓰는 순간 매도 체결 기록(trader_trades.json)이 조용히
+    # 유실돼 대시보드 "시스템 트레이딩 내역"에서 이미 판 종목이 계속 "보유중"으로
+    # 잘못 나오는 원인이 됐음(2026-08-11 다수 종목 실측).
+    ok = _write_gist({FILENAME: records})
+    if ok:
+        logger.info("[Gist] 거래 내역 저장 완료 (총 %d건)", len(records))
+    return ok
 
 
 def _read_gist_file(filename: str):
@@ -235,7 +222,10 @@ def log_trade(
 
 def flush_trades():
     """버퍼에 쌓인 거래 내역을 Gist에 일괄 저장 (GET 1회 + PATCH 1회).
-    거래가 없으면 아무것도 하지 않습니다."""
+    거래가 없으면 아무것도 하지 않습니다.
+    저장이 끝내 실패하면(재시도 3회 소진) 버퍼를 비우지 않고 남겨둬서 다음
+    flush_trades() 호출(다음 폴링 사이클) 때 다시 시도함 — 여기서 무조건
+    clear()하면 매도 체결 기록 자체가 통째로 유실돼 버림."""
     if not _pending_trades:
         return
     count = len(_pending_trades)
@@ -243,6 +233,9 @@ def flush_trades():
     records = _read_trades()
     for trade in reversed(_pending_trades):   # 최신 순 유지
         records.insert(0, trade)
-    _write_trades(records[:MAX_HISTORY])
-    _pending_trades.clear()
-    logger.info("[Gist] flush_trades 완료 (%d건)", count)
+    ok = _write_trades(records[:MAX_HISTORY])
+    if ok:
+        _pending_trades.clear()
+        logger.info("[Gist] flush_trades 완료 (%d건)", count)
+    else:
+        logger.error("[Gist] 거래 내역 저장 실패 — 버퍼 유지, 다음 사이클에 재시도 (%d건)", count)
