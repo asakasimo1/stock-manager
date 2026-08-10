@@ -2,7 +2,6 @@
 주식 자동매매 통합 데몬 (Oracle VM 상시 실행)
 - profit_buy_jobs  : 매수 조건 체크 → KIS 매수
 - profit_sell_jobs : 수익매도 체크 → KIS 매도
-- profit_cycle_jobs: 사이클 트레이딩
 - 30초 폴링 (GitHub Actions 5분 cron 대체)
 
 실행:
@@ -20,7 +19,6 @@ load_dotenv()
 
 import job_profit_buy_cloud
 import job_profit_sell_cloud
-import job_cycle_cloud
 import job_stock_grid
 import job_balance
 import kis_api
@@ -56,7 +54,6 @@ def main():
                 logger.info("[%s] 잡 체크 시작 (사이클 %d)", now_kst(), cycle)
                 job_profit_buy_cloud.main()
                 job_profit_sell_cloud.main()
-                job_cycle_cloud.main()
                 job_stock_grid.main()
                 # 매 N 사이클마다 잔고 Gist 업데이트 (heartbeat + 대시보드 갱신)
                 if cycle % BALANCE_EVERY == 0:

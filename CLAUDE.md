@@ -7,7 +7,7 @@
 ```
 [Oracle VM — 상시 실행]          [GitHub Actions — 보조/수동]
   coin-daemon.service  ──────────  coin_buy / coin_sell / coin_balance  (비활성)
-  stock-daemon.service ──────────  cycle / monitor / profit_sell        (수동만)
+  stock-daemon.service ──────────  monitor / profit_sell                (수동만)
                                    buy / close / signals / report       (스케줄)
 ```
 
@@ -19,8 +19,8 @@
 
 | 서비스 | 관리 | 실행 파일 | 역할 | 주기 |
 |--------|------|-----------|------|------|
-| `coin-daemon.service` | systemd | `daemon_coin.py` | 코인 매수/매도/사이클/그리드/시그널/잔고 | 30초, 24/7 |
-| `stock-daemon.service` | systemd | `daemon_stock.py` | 주식 매수잡/수익매도/사이클/잔고갱신 | 30초, 08:00~20:00 KST 평일 |
+| `coin-daemon.service` | systemd | `daemon_coin.py` | 코인 매수/매도/그리드/시그널/잔고 | 30초, 24/7 |
+| `stock-daemon.service` | systemd | `daemon_stock.py` | 주식 매수잡/수익매도/잔고갱신 | 30초, 08:00~20:00 KST 평일 |
 
 ```bash
 # 상태 확인
@@ -57,13 +57,12 @@ sudo systemctl restart coin-daemon
 | `coin_buy` | `*/5 * * * *` (self-hosted) | `coin-daemon.service` 가 30초마다 처리 |
 | `coin_sell` | `*/5 * * * *` (self-hosted) | `coin-daemon.service` 가 30초마다 처리 |
 | `coin_balance` | `*/5 * * * *` 의존 | `coin-daemon.service` 가 30초마다 처리 |
-| `cycle` | `*/10 0-10, 23 * * *` | `stock-daemon.service` 가 30초마다 처리 |
 | `monitor` | `*/30 0-6 * * 1-5` | `stock-daemon.service` 가 30초마다 처리 |
 | `profit_sell` | — | `stock-daemon.service` 가 30초마다 처리 |
 
 ### 🛠️ 수동 전용 (workflow_dispatch only)
 
-`balance`, `test_today`, `profit_sell`, `cycle`, `monitor`, `monitor_036030`,
+`balance`, `test_today`, `profit_sell`, `monitor`, `monitor_036030`,
 `force_done_submitted`, `coin_buy`, `coin_sell`, `coin_balance`
 
 ---
@@ -73,9 +72,9 @@ sudo systemctl restart coin-daemon
 | 이름 | 역할 | 상태 |
 |------|------|------|
 | `coin-runner` | Upbit API HTTP 서버 (port 3000) — Vercel 프론트엔드 fallback | online |
-| `cycle-runner` | (구) 주식 사이클 데몬 — `stock-daemon.service` 로 대체 | **stopped** |
+| `cycle-runner` | (구) 주식 사이클 데몬 — 사이클 트레이딩 기능 자체가 삭제되어 대상 스크립트(`job_cycle_cloud.py`) 없음 | **stopped** |
 
-> **`cycle-runner` 절대 재시작 금지** — `stock-daemon.service` 와 중복 실행됨
+> **`cycle-runner` 재시작 금지** — 대상 스크립트가 삭제되어 실행 불가 (VM에서 `pm2 delete cycle-runner` 로 정리 권장)
 
 ---
 
@@ -86,10 +85,9 @@ sudo systemctl restart coin-daemon
 | `daemon_coin.py` | coin-daemon.service | 코인 전체 루프 |
 | `daemon_stock.py` | stock-daemon.service | 주식 전체 루프 |
 | `job_coin_buy.py` | daemon_coin + 수동 GHA | 코인 매수 |
-| `job_coin_sell.py` | daemon_coin + 수동 GHA | 코인 매도/사이클 |
+| `job_coin_sell.py` | daemon_coin + 수동 GHA | 코인 매도 |
 | `job_profit_buy_cloud.py` | stock-daemon | 주식 조건부 매수 |
 | `job_profit_sell_cloud.py` | stock-daemon | 주식 수익매도 (auto_sell은 KRX 09:00~15:30만) |
-| `job_cycle_cloud.py` | stock-daemon + 수동 GHA | 주식 사이클 (NXT 지원) |
 | `job_balance.py` | stock-daemon (5분마다) + 수동 GHA | KIS 잔고 Gist 갱신 |
 | `job_signals.py` | GHA signals | 매수 신호 생성 |
 | `job_buy.py` | GHA buy | 신호 기반 매수 |

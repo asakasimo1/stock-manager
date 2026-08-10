@@ -26,6 +26,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add --ignore-errors profit_buy_cloud.log profit_sell_cloud.log cycle_cloud.log coin_buy_cloud.log coin_sell_cloud.log || true
+          git add --ignore-errors profit_buy_cloud.log profit_sell_cloud.log coin_buy_cloud.log coin_sell_cloud.log || true
           git diff --cached --quiet || git commit -m "logs: 3일 경과 로그 정리 [skip ci]"
           git push origin HEAD:main

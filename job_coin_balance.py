@@ -16,10 +16,10 @@ logger = logging.getLogger(__name__)
 
 
 def _reconcile_trades():
-    """업비트 실제 체결 전체(그리드/사이클/스캘핑 잡 + 업비트 앱 수동주문 포함)를
+    """업비트 실제 체결 전체(그리드/스캘핑 잡 + 업비트 앱 수동주문 포함)를
     조회해서 아직 trader_trades.json에 없는 체결만 uuid 기준 중복 없이 추가.
     job_balance.py(주식, KIS 체결 통합기록)와 동일한 역할 — 이게 없어서 스캘핑
-    외(그리드/사이클/수동) 코인 매도가 거래내역/챗봇 조회에서 통째로 누락되고
+    외(그리드/수동) 코인 매도가 거래내역/챗봇 조회에서 통째로 누락되고
     있었음(2026-08-10 확인)."""
     try:
         orders = upbit_api.get_closed_orders(state="done", limit=100)

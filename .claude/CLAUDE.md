@@ -9,12 +9,12 @@ Oracle VM (158.180.84.109)
 └── systemd: coin-daemon.service (상시 실행)
     └── daemon_coin.py  ← 30초마다 폴링
         ├── job_coin_buy.py   (매수 조건 체크 → Upbit 주문)
-        └── job_coin_sell.py  (매도·사이클 체크 → Upbit 주문)
+        └── job_coin_sell.py  (매도 체크 → Upbit 주문)
 ```
 
-- **상태 저장**: GitHub Gist (`coin_cycle_jobs.json`, `coin_sell_jobs.json`, `coin_buy_jobs.json`)
+- **상태 저장**: GitHub Gist (`coin_sell_jobs.json`, `coin_buy_jobs.json`)
 - **거래소**: Upbit (`upbit_api.py`)
-- **KIS 주식 데몬**: `daemon_cycle.py` (주식 사이클), `daemon_stock.py` (주식 매매)
+- **KIS 주식 데몬**: `daemon_stock.py` (주식 매매)
 
 ### 문제 발생 시 첫 번째 확인 장소
 

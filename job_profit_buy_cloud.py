@@ -1,14 +1,12 @@
 """
 매수 조건 잡 — GitHub Actions에서 5분마다 실행
 Gist profit_buy_jobs.json 에서 활성 잡 읽기 → 조건 달성 시 즉시 매수 → 상태 업데이트
-Gist profit_cycle_jobs.json 의 waiting_buy 잡도 처리 (즉시 매수 포함)
 
 조건 유형:
   market : 등록 즉시 시장가 매수
   limit  : 현재가 <= target_price 일 때 매수
 """
 import logging
-import math
 import time as _time_mod
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone, timedelta
@@ -66,98 +64,6 @@ def now_kst() -> str:
     return datetime.now(KST).strftime("%Y-%m-%d %H:%M")
 
 
-def _calc_sell_price(buy_price: int, qty: int, take_pct: float) -> int:
-    target_gross = buy_price * qty * (1 + BUY_FEE) * (1 + take_pct)
-    sell_unit    = target_gross / qty / (1 - SELL_FEE)
-    return math.ceil(sell_unit) + 1
-
-
-def process_cycle_buy():
-    """profit_cycle_jobs.json 의 waiting_buy 처리 — 매수 잡 실행 시 즉시 처리"""
-    if not kis_api.is_any_market_open():
-        return
-
-    jobs = gist_writer._read_gist_file("profit_cycle_jobs.json")
-    if jobs is None:
-        logger.error("profit_cycle_jobs.json Gist 읽기 실패")
-        return
-    jobs = jobs if isinstance(jobs, list) else []
-
-    waiting = [j for j in jobs if j.get("phase") == "waiting_buy"
-               and j.get("status") not in ("done", "cancelled", "stopped")]
-    if not waiting:
-        logger.info("사이클 waiting_buy 잡 없음")
-        return
-
-    tickers = list({j["ticker"] for j in waiting})
-
-    def _fetch(ticker):
-        try:
-            return ticker, kis_api.get_price(ticker)
-        except Exception as e:
-            logger.error("현재가 조회 실패 %s: %s", ticker, e)
-            return ticker, None
-
-    price_cache = {}
-    with ThreadPoolExecutor(max_workers=min(len(tickers), 5)) as ex:
-        for ticker, info in ex.map(_fetch, tickers):
-            if info:
-                price_cache[ticker] = info
-
-    changed = False
-    for job in jobs:
-        if job.get("phase") != "waiting_buy":
-            continue
-        if job.get("status") in ("done", "cancelled", "stopped"):
-            continue
-
-        ticker     = job["ticker"]
-        name       = job.get("name", ticker)
-        cond_type  = job.get("condition_type", "market")
-        buy_price  = int(job.get("buy_price", 0))
-        take_pct   = float(job.get("take_pct", 0.03))
-        qty        = int(job.get("qty", 0))
-        amount     = int(job.get("amount", 0))
-
-        info = price_cache.get(ticker)
-        if not info:
-            continue
-        cur_price = int(info["stck_prpr"])
-
-        should_buy = (cond_type == "market") or (buy_price > 0 and cur_price <= buy_price)
-        if not should_buy:
-            logger.info("  %s(%s) 매수 대기 현재가=%d / 목표=%d", name, ticker, cur_price, buy_price)
-            continue
-
-        if qty <= 0 and amount > 0:
-            qty = amount // cur_price
-        if qty < 1:
-            logger.warning("%s 수량/금액 미설정 — 건너뜀", name)
-            continue
-
-        logger.info("★ [cycle waiting_buy] 매수 실행: %s(%s) %d주 @ %d원", name, ticker, qty, cur_price)
-        try:
-            result = kis_api.place_order(ticker, "BUY", qty, order_type="market")
-            sell_price = _calc_sell_price(cur_price, qty, take_pct)
-            job["phase"]       = "holding"
-            job["buy_price"]   = cur_price
-            job["sell_price"]  = sell_price
-            job["qty"]         = qty
-            job["cycle_no"]    = 1
-            job["last_buy_at"] = now_kst()
-            job["order_no"]    = result.get("order_no", "")
-            job["status"]      = "active"
-            changed = True
-            logger.info("매수 완료 %s %d주 @ %d원 → 매도 목표: %d원",
-                        ticker, qty, cur_price, sell_price)
-        except Exception as e:
-            logger.error("%s 사이클 매수 실패: %s", ticker, e)
-
-    if changed:
-        ok = gist_writer._write_gist({"profit_cycle_jobs.json": jobs})
-        logger.info("profit_cycle_jobs Gist 저장 %s", "완료" if ok else "실패")
-
-
 def main():
     if not kis_api.is_any_market_open():
         logger.info("거래 시간 외 (KRX/NXT 모두 닫힘) — 종료")
@@ -181,7 +87,6 @@ def main():
 
     if not active:
         logger.info("활성 매수 잡 없음")
-        process_cycle_buy()
         return
 
     logger.info("활성 잡 %d개 처리", len(active))
@@ -289,8 +194,6 @@ def main():
         logger.info("Gist 업데이트 %s", "완료" if ok else "실패")
 
     logger.info("매수 잡 체크 완료")
-
-    process_cycle_buy()
 
 
 if __name__ == "__main__":

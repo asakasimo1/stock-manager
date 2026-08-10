@@ -19,7 +19,6 @@ JOB_MAP = {
     "report":           "job_report.py",
     "profit_sell":      "job_profit_sell_cloud.py",
     "profit_buy":       "job_profit_buy_cloud.py",
-    "cycle":            "job_cycle_cloud.py",
     "balance":          "job_balance.py",
     "factor_rebalance": "job_factor_rebalance.py",
     "monitor_036030":   "monitor_036030.py",

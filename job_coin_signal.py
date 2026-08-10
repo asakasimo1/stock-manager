@@ -9,13 +9,12 @@
 
 매수 시그널 실행 후:
   - 시장가 매수 주문 실행
-  - coin_cycle_jobs.json 에 holding 상태 사이클 잡 자동 생성 (이후 sell/rebuy 자동 사이클)
+  - coin_sell_jobs.json 에 목표 수익률 매도잡 1회성 자동 등록 (도달 시 job_coin_sell.py가 매도)
 
 설정 파일 (Gist): coin_signal_jobs.json
 """
 import logging
 import math
-import uuid
 from datetime import datetime, timezone, timedelta
 
 import upbit_api
@@ -30,11 +29,6 @@ logger = logging.getLogger(__name__)
 
 def now_kst() -> str:
     return datetime.now(KST).strftime("%Y-%m-%d %H:%M")
-
-
-def calc_sell_price(buy_price: float, take_pct: float) -> float:
-    cost = buy_price * (1 + BUY_FEE)
-    return math.ceil(cost * (1 + take_pct / 100) / (1 - SELL_FEE))
 
 
 def _get_extended_prices(markets: list) -> dict:
@@ -143,8 +137,8 @@ SIGNAL_CHECKERS = {
 # 실행: 매수 / 강제 매도
 # ─────────────────────────────────────────
 
-def _do_buy(job: dict, cur_price: float, cycle_jobs: list) -> bool:
-    """시장가 매수 + 사이클 잡 자동 생성"""
+def _do_buy(job: dict, cur_price: float, sell_jobs: list) -> bool:
+    """시장가 매수 + 목표 수익률 도달 시 자동매도할 매도잡 1회성 등록"""
     ticker     = job["ticker"]
     name       = job.get("name", ticker)
     krw_amount = float(job.get("krw_amount", 0))
@@ -157,32 +151,20 @@ def _do_buy(job: dict, cur_price: float, cycle_jobs: list) -> bool:
         result   = upbit_api.place_order(market=ticker, side="bid", ord_type="price", price=krw_amount)
         coin_qty = math.floor(krw_amount / cur_price * (1 - BUY_FEE) * 1e8) / 1e8
         take_pct = float(job.get("take_pct", 2.0))
-        sell_price_target = calc_sell_price(cur_price, take_pct)
 
-        new_cycle = {
-            "id":             str(uuid.uuid4())[:8],
-            "name":           name,
-            "ticker":         ticker,
-            "status":         "active",
-            "phase":          "holding",
-            "condition_type": "market_krw",
-            "krw_amount":     krw_amount,
-            "buy_price":      cur_price,
-            "hold_qty":       coin_qty,
-            "sell_price":     sell_price_target,
-            "take_pct":       take_pct,
-            "rebuy_drop":     float(job.get("rebuy_drop", 2.0)),
-            "repeat_take":    float(job.get("repeat_take", 2.0)),
-            "max_cycles":     int(job.get("max_cycles", 0)),
-            "cycle_count":    0,
-            "buy_uuid":       result.get("uuid", ""),
-            "bought_at":      now_kst(),
-            "created_at":     now_kst(),
-            "signal_id":      job.get("id", ""),
-        }
-        cycle_jobs.append(new_cycle)
-        logger.info("★ 시그널 매수 완료 %s %.8f개 @ %s원 → 목표매도 %s원",
-                    ticker, coin_qty, f"{cur_price:,.0f}", f"{sell_price_target:,.0f}")
+        sell_jobs.append({
+            "ticker":       ticker,
+            "name":         name,
+            "status":       "active",
+            "buy_price":    cur_price,
+            "qty":          coin_qty,
+            "target_type":  "pct",
+            "target_value": take_pct,
+            "created_at":   now_kst(),
+            "signal_id":    job.get("id", ""),
+        })
+        logger.info("★ 시그널 매수 완료 %s %.8f개 @ %s원 → 목표수익 +%s%% 매도잡 등록",
+                    ticker, coin_qty, f"{cur_price:,.0f}", take_pct)
         return True
     except Exception as e:
         logger.error("%s 시그널 매수 실패: %s", ticker, e)
@@ -240,10 +222,10 @@ def main():
         logger.error("현재가 조회 실패: %s", e)
         return
 
-    cycle_jobs = gist_writer._read_gist_file("coin_cycle_jobs.json") or []
+    sell_jobs = gist_writer._read_gist_file("coin_sell_jobs.json") or []
 
     changed_signals = False
-    changed_cycles  = False
+    changed_sells   = False
 
     for job in jobs:
         if job.get("status") != "watching":
@@ -280,9 +262,9 @@ def main():
             if cur_price <= 0:
                 logger.warning("  %s 현재가 조회 실패 — 매수 건너뜀", ticker)
                 continue
-            success = _do_buy(job, cur_price, cycle_jobs)
+            success = _do_buy(job, cur_price, sell_jobs)
             if success:
-                changed_cycles = True
+                changed_sells = True
 
         if success:
             job["last_triggered"] = datetime.now(KST).isoformat()
@@ -295,8 +277,8 @@ def main():
 
     if changed_signals:
         gist_writer._write_gist({"coin_signal_jobs.json": jobs})
-    if changed_cycles:
-        gist_writer._write_gist({"coin_cycle_jobs.json": cycle_jobs})
+    if changed_sells:
+        gist_writer._write_gist({"coin_sell_jobs.json": sell_jobs})
 
     logger.info("시그널 잡 체크 완료")
 

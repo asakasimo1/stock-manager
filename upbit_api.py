@@ -407,7 +407,7 @@ def place_order(
 # ─────────────────────────────────────────
 def get_closed_orders(state: str = "done", limit: int = 100) -> list:
     """완료된 주문 목록 조회 (전체 마켓 대상, market 파라미터 생략).
-    거래내역 통합 기록(reconcile)용 — 어떤 잡(그리드/사이클/스캘핑)이 냈든,
+    거래내역 통합 기록(reconcile)용 — 어떤 잡(그리드/스캘핑)이 냈든,
     심지어 업비트 앱에서 수동으로 낸 주문이든 전부 포함된다.
     반환: [{uuid, market, side, created_at}, ...] (실제 체결분만, executed_volume>0)"""
     params = {"state": state, "limit": limit, "order_by": "desc"}

@@ -23,7 +23,6 @@ LOG_FILES  = [
     "monitor_036030.log",
     "profit_buy_cloud.log",
     "profit_sell_cloud.log",
-    "cycle_cloud.log",
 ]
 
 

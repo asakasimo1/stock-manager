@@ -1,7 +1,7 @@
 """
 코인 자동매매 통합 데몬 (Oracle VM 상시 실행)
 - coin_buy_jobs  : 매수 조건 체크 → Upbit 매수
-- coin_sell_jobs : 수익매도/사이클 체크 → Upbit 매도
+- coin_sell_jobs : 수익매도 체크 → Upbit 매도
 - 30초 폴링 (24/7, 시장 시간 제한 없음)
 
 실행:
