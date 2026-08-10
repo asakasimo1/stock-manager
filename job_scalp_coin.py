@@ -309,7 +309,10 @@ def _force_close(job: dict, cur_price: float, reason: str) -> None:
         result = upbit_api.place_order(market=ticker, side="ask", ord_type="market", volume=qty)
         scalp_engine.clear_peak_pnl(ticker)
         buy_price = float(job.get("buy_price", 0))
-        pnl = (_net_sell_value(cur_price) - _net_buy_cost(buy_price)) * qty
+        # 청산 판단(트리거)은 수수료 포함 순가격으로 하되, 기록/표시되는 손익은
+        # 수수료 제외 단순 가격차(기존 방식)로 계산 — 2026-08-11 사용자 요청으로
+        # 트리거와 표시값을 분리함(트리거만 수수료 반영 유지).
+        pnl = (cur_price - buy_price) * qty
         job["realized_pnl_today"] = job.get("realized_pnl_today", 0) + pnl
         job["trades_today"] = job.get("trades_today", 0) + 1
         job["phase"] = "watching"
@@ -425,8 +428,11 @@ def main():
                 qty = _sellable_qty(ticker, float(job.get("buy_qty", 0)))
                 try:
                     result = upbit_api.place_order(market=ticker, side="ask", ord_type="market", volume=qty)
-                    pnl = (net_cur - net_entry) * qty
-                    pnl_pct = (net_cur - net_entry) / net_entry * 100 if net_entry > 0 else 0
+                    # 청산 판단(should_exit, 위에서 이미 net_entry/net_cur로 완료)은 수수료
+                    # 포함 기준을 유지하되, 기록/표시되는 손익은 수수료 제외 단순 가격차
+                    # (기존 방식)로 계산 — 2026-08-11 사용자 요청으로 트리거와 표시값 분리.
+                    pnl = (cur_price - buy_price) * qty
+                    pnl_pct = (cur_price - buy_price) / buy_price * 100 if buy_price > 0 else 0
                     job["realized_pnl_today"] = job.get("realized_pnl_today", 0) + pnl
                     job["trades_today"] = job.get("trades_today", 0) + 1
                     job["phase"] = "watching"
