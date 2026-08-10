@@ -1075,66 +1075,6 @@
 
   <div style="border-top:1px solid var(--border);margin:8px 0 20px"></div>
 
-  <!-- 시그널 자동매수 -->
-  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-    <div style="font-size:13px;font-weight:700;color:var(--text)">📡 시그널 자동매수</div>
-    <button onclick="ctToggleSignalForm()" id="ct-signal-add-btn"
-      style="padding:4px 12px;background:var(--primary);color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer">+ 추가</button>
-  </div>
-
-  <!-- 시그널 추가 폼 -->
-  <div id="ct-signal-form" style="display:none;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:12px">
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
-      <div>
-        <div style="font-size:10px;color:var(--muted);margin-bottom:3px">이름</div>
-        <input id="cs-sig-name" type="text" placeholder="예: BTC급등-리플" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:13px;box-sizing:border-box">
-      </div>
-      <div>
-        <div style="font-size:10px;color:var(--muted);margin-bottom:3px">코인 (티커)</div>
-        <input id="cs-sig-ticker" type="text" placeholder="예: KRW-XRP" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:13px;box-sizing:border-box">
-      </div>
-    </div>
-    <div style="margin-bottom:8px">
-      <div style="font-size:10px;color:var(--muted);margin-bottom:3px">시그널 타입</div>
-      <select id="cs-sig-type" onchange="ctSignalTypeChange()" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:13px">
-        <option value="btc_pump_lag">BTC 급등 + 알트 지연 → 매수</option>
-        <option value="dip_buy">24h 고점 급락 → 반등 매수</option>
-        <option value="price_breakout">가격 돌파 → 즉시 매수</option>
-        <option value="btc_dump_sell">BTC 급락 → 강제 매도</option>
-      </select>
-    </div>
-    <div id="cs-sig-params" style="background:var(--bg);border-radius:8px;padding:10px;margin-bottom:8px;font-size:12px;color:var(--muted)"></div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px" id="cs-sig-buy-fields">
-      <div>
-        <div style="font-size:10px;color:var(--muted);margin-bottom:3px">매수금액(원)</div>
-        <input id="cs-sig-krw" type="number" placeholder="50000" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:13px;box-sizing:border-box">
-      </div>
-      <div>
-        <div style="font-size:10px;color:var(--muted);margin-bottom:3px">수익률%</div>
-        <input id="cs-sig-take" type="number" value="2" step="0.1" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:13px;box-sizing:border-box">
-      </div>
-    </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
-      <div>
-        <div style="font-size:10px;color:var(--muted);margin-bottom:3px">쿨다운(분)</div>
-        <input id="cs-sig-cooldown" type="number" value="60" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:13px;box-sizing:border-box">
-      </div>
-      <div>
-        <div style="font-size:10px;color:var(--muted);margin-bottom:3px">최대트리거(0=무제한)</div>
-        <input id="cs-sig-max-triggers" type="number" value="0" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:13px;box-sizing:border-box">
-      </div>
-    </div>
-    <div style="display:flex;gap:8px">
-      <button onclick="ctAddSignalJob()" style="flex:1;padding:8px;background:var(--primary);color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">등록</button>
-      <button onclick="ctToggleSignalForm()" style="padding:8px 16px;background:none;border:1px solid var(--border);border-radius:8px;font-size:13px;color:var(--muted);cursor:pointer">취소</button>
-    </div>
-    <div id="cs-sig-msg" style="font-size:12px;margin-top:8px;text-align:center;min-height:16px"></div>
-  </div>
-
-  <div id="ct-signal-list" style="margin-bottom:24px"><div style="color:var(--muted);font-size:13px;padding:8px 0">없음</div></div>
-
-  <div style="border-top:1px solid var(--border);margin:8px 0 20px"></div>
-
   <!-- 완료/취소 내역 -->
   <div onclick="toggleHistoryCollapse('ct')" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;padding:8px 2px;user-select:none">
     <span style="font-size:13px;font-weight:700;color:var(--text)">📋 완료 / 취소 내역 (<span id="hist-count-ct">0건</span>)</span>

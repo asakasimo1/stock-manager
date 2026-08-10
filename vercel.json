@@ -41,7 +41,6 @@
     { "src": "/api/coin-runner(.*)",  "dest": "/api/coin.js" },
     { "src": "/api/coin-ip(.*)",      "dest": "/api/coin.js" },
     { "src": "/api/coin-price(.*)",   "dest": "/api/coin.js" },
-    { "src": "/api/coin-signal(.*)",  "dest": "/api/coin.js" },
     { "src": "/api/coin-grid(.*)",    "dest": "/api/coin.js" },
     { "src": "/api/coin-today(.*)",   "dest": "/api/coin.js" },
     { "src": "/api/coin-date(.*)",    "dest": "/api/coin.js" },

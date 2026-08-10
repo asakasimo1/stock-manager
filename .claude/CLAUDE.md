@@ -33,8 +33,8 @@ Oracle VM 코드 저장소: `github.com/asakasimo1/stock-trader`
 | `js/tab-stocks.js` | 개별주 CRUD + IPO 관리 |
 | `js/tab-etf.js` | ETF CRUD, 거래내역, 배당금, DRIP |
 | `js/tab-market.js` | 시장현황 |
-| `js/tab-autotrade.js` | 주식 자동매매 (buy/above/cycle) |
-| `js/tab-cointrade.js` | 코인 자동매매 (buy/sell/grid/signal) |
+| `js/tab-autotrade.js` | 주식 자동매매 (buy/sell/grid) |
+| `js/tab-cointrade.js` | 코인 자동매매 (buy/sell/grid) |
 | `js/tab-watchlist.js` | 브리핑 관심종목 관리 |
 | `api/coin.js` | Gist CRUD + coin-runner 보조 트리거 |
 | `api/data.js` | 대시보드 데이터 / KIS 잔고 / watchlist / coin-runner 트리거 프록시 |

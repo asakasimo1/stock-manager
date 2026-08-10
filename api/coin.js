@@ -473,69 +473,6 @@ async function handleCoinRunner(req, res, gistId, ghToken) {
 
 // ── Vercel 아웃바운드 IP 확인 ─────────────────────────────
 // ══════════════════════════════════════════════════════════
-// 코인 시그널 잡 CRUD
-// ══════════════════════════════════════════════════════════
-async function handleCoinSignal(req, res, gistId, ghToken) {
-  const FILENAME = 'coin_signal_jobs.json';
-  res.setHeader('Cache-Control', 'no-store');
-
-  if (req.method === 'GET') {
-    return res.status(200).json(await readGistFile(gistId, ghToken, FILENAME));
-  }
-
-  if (req.method === 'POST') {
-    const body = req.body || {};
-    if (!body.ticker)       return res.status(400).json({ error: 'ticker 필수' });
-    if (!body.signal_type)  return res.status(400).json({ error: 'signal_type 필수' });
-    const jobs = await readGistFile(gistId, ghToken, FILENAME);
-    const list = Array.isArray(jobs) ? jobs : [];
-    const newJob = {
-      id:            Date.now().toString(36),
-      name:          body.name || body.ticker,
-      ticker:        body.ticker,
-      signal_type:   body.signal_type,
-      params:        body.params || {},
-      krw_amount:    +body.krw_amount || 0,
-      take_pct:      +body.take_pct   || 2.0,
-      cooldown_min:  +body.cooldown_min || 60,
-      max_triggers:  +body.max_triggers || 0,
-      status:        'watching',
-      trigger_count: 0,
-      last_triggered: null,
-      created_at:    nowKst(),
-    };
-    list.unshift(newJob);
-    const ok = await writeGistFile(gistId, ghToken, FILENAME, list);
-    return res.status(ok ? 200 : 500).json(ok ? newJob : { error: '저장 실패' });
-  }
-
-  if (req.method === 'PATCH') {
-    const { id } = req.query;
-    if (!id) return res.status(400).json({ error: 'id 필수' });
-    const jobs = await readGistFile(gistId, ghToken, FILENAME);
-    const list = Array.isArray(jobs) ? jobs : [];
-    const idx  = list.findIndex(j => j.id === id);
-    if (idx < 0) return res.status(404).json({ error: '잡 없음' });
-    list[idx] = { ...list[idx], ...req.body };
-    const ok = await writeGistFile(gistId, ghToken, FILENAME, list);
-    return res.status(ok ? 200 : 500).json(ok ? list[idx] : { error: '저장 실패' });
-  }
-
-  if (req.method === 'DELETE') {
-    const { id } = req.query;
-    if (!id) return res.status(400).json({ error: 'id 필수' });
-    const jobs = await readGistFile(gistId, ghToken, FILENAME);
-    const list = Array.isArray(jobs) ? jobs : [];
-    const idx  = list.findIndex(j => j.id === id);
-    if (idx >= 0) list.splice(idx, 1);
-    const ok = await writeGistFile(gistId, ghToken, FILENAME, list);
-    return res.status(ok ? 200 : 500).json(ok ? { ok: true } : { error: '삭제 실패' });
-  }
-
-  return res.status(405).json({ error: 'Method not allowed' });
-}
-
-// ══════════════════════════════════════════════════════════
 // 그리드 트레이딩 잡 CRUD
 // ══════════════════════════════════════════════════════════
 async function handleCoinGrid(req, res, gistId, ghToken) {
@@ -922,7 +859,6 @@ export default async function handler(req, res) {
   if (url.includes('coin-runner')) return handleCoinRunner(req, res, gistId, ghToken);
   if (url.includes('coin-ip'))     return handleCoinIp(res);
   if (url.includes('coin-price'))  return handleCoinPrice(req, res);
-  if (url.includes('coin-signal')) return handleCoinSignal(req, res, gistId, ghToken);
   if (url.includes('coin-grid'))   return handleCoinGrid(req, res, gistId, ghToken);
   if (url.includes('coin-today') || url.includes('coin-date')) return handleCoinDate(req, res, gistId, ghToken);
   if (url.includes('coin-'))       return handleCoinJobs(req, res, url, gistId, ghToken);

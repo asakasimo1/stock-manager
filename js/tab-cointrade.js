@@ -193,17 +193,15 @@ async function ctLoadToday() {
 
 async function ctLoadAll() {
   try {
-    const [rBuy, rSell, rAccount, rSignal, rGrid] = await Promise.all([
+    const [rBuy, rSell, rAccount, rGrid] = await Promise.all([
       fetch('/api/coin-buy'),
       fetch('/api/coin-sell'),
       fetch('/api/coin-account'),
-      fetch('/api/coin-signal'),
       fetch('/api/coin-grid'),
     ]);
     if (rBuy.ok)    _ctBuyJobs    = await rBuy.json();
     if (rSell.ok)   _ctSellJobs   = await rSell.json();
     if (rAccount.ok) _ctAccount   = await rAccount.json();
-    if (rSignal.ok) _ctSignalJobs = await rSignal.json();
     if (rGrid.ok)   _ctGridJobs   = await rGrid.json();
   } catch (e) {
     console.warn('코인 데이터 로드 실패:', e);
@@ -221,7 +219,6 @@ async function ctLoadAll() {
   ctRenderBuyJobs();
   ctRenderSellJobs();
   ctRenderGridJobs();
-  ctRenderSignalJobs();
   ctRenderHistory();
   ctRenderHoldingChips();
   ctRefreshPrices();
@@ -1027,197 +1024,6 @@ function ctRenderGridJobs() {
             style="padding:6px 14px;background:none;border:1px solid var(--border);border-radius:6px;font-size:12px;color:var(--muted);cursor:pointer">취소</button>
         </div>
       </div>` : ''}
-    </div>`;
-  }).join('');
-}
-
-// ── 시그널 타입별 파라미터 UI ─────────────────────────────
-const SIGNAL_PARAM_UI = {
-  btc_pump_lag: `
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-      <div><div style="font-size:10px;color:var(--muted);margin-bottom:2px">BTC 최소 상승률 (%)</div>
-        <input id="cs-p-btc_rise_pct" type="number" value="2" step="0.1" style="width:100%;padding:5px 7px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--text);font-size:12px;box-sizing:border-box"></div>
-      <div><div style="font-size:10px;color:var(--muted);margin-bottom:2px">대상 코인 최대 상승률 (%)</div>
-        <input id="cs-p-coin_max_pct" type="number" value="1" step="0.1" style="width:100%;padding:5px 7px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--text);font-size:12px;box-sizing:border-box"></div>
-    </div>
-    <div style="margin-top:6px;font-size:11px;color:var(--muted)">BTC 24h 상승률 ≥ X% 이면서 대상 코인 24h 상승률 &lt; Y% 일 때 매수</div>`,
-  dip_buy: `
-    <div><div style="font-size:10px;color:var(--muted);margin-bottom:2px">24h 고점 대비 최소 하락률 (%)</div>
-      <input id="cs-p-dip_pct" type="number" value="5" step="0.5" style="width:100%;padding:5px 7px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--text);font-size:12px;box-sizing:border-box"></div>
-    <div style="margin-top:6px;font-size:11px;color:var(--muted)">24h 고점 대비 X% 이상 하락 시 반등 매수</div>`,
-  price_breakout: `
-    <div><div style="font-size:10px;color:var(--muted);margin-bottom:2px">돌파 기준가 (원)</div>
-      <input id="cs-p-breakout_price" type="number" placeholder="예: 2500" style="width:100%;padding:5px 7px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--text);font-size:12px;box-sizing:border-box"></div>
-    <div style="margin-top:6px;font-size:11px;color:var(--muted)">현재가 ≥ 기준가 돌파 시 즉시 매수</div>`,
-  btc_dump_sell: `
-    <div><div style="font-size:10px;color:var(--muted);margin-bottom:2px">BTC 최소 하락률 (%)</div>
-      <input id="cs-p-btc_drop_pct" type="number" value="3" step="0.5" style="width:100%;padding:5px 7px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--text);font-size:12px;box-sizing:border-box"></div>
-    <div style="margin-top:6px;font-size:11px;color:var(--muted)">BTC 24h 하락률 ≥ X% 시 보유 코인 강제 매도</div>`,
-};
-
-const SIGNAL_TYPE_LABELS = {
-  btc_pump_lag:   'BTC 급등 추종',
-  dip_buy:        '급락 반등',
-  price_breakout: '가격 돌파',
-  btc_dump_sell:  'BTC 급락 매도',
-};
-
-function ctSignalTypeChange() {
-  const type = document.getElementById('cs-sig-type')?.value;
-  const params = document.getElementById('cs-sig-params');
-  const buyFields = document.getElementById('cs-sig-buy-fields');
-  if (params) params.innerHTML = SIGNAL_PARAM_UI[type] || '';
-  if (buyFields) buyFields.style.display = type === 'btc_dump_sell' ? 'none' : '';
-}
-
-function ctToggleSignalForm() {
-  const form = document.getElementById('ct-signal-form');
-  if (!form) return;
-  const isHidden = form.style.display === 'none';
-  form.style.display = isHidden ? 'block' : 'none';
-  if (isHidden) ctSignalTypeChange();
-}
-
-function _ctSignalGetParams() {
-  const type = document.getElementById('cs-sig-type')?.value;
-  const params = {};
-  if (type === 'btc_pump_lag') {
-    params.btc_rise_pct = +document.getElementById('cs-p-btc_rise_pct')?.value || 2;
-    params.coin_max_pct = +document.getElementById('cs-p-coin_max_pct')?.value || 1;
-  } else if (type === 'dip_buy') {
-    params.dip_pct = +document.getElementById('cs-p-dip_pct')?.value || 5;
-  } else if (type === 'price_breakout') {
-    params.breakout_price = +document.getElementById('cs-p-breakout_price')?.value || 0;
-  } else if (type === 'btc_dump_sell') {
-    params.btc_drop_pct = +document.getElementById('cs-p-btc_drop_pct')?.value || 3;
-  }
-  return params;
-}
-
-async function ctAddSignalJob() {
-  const msg = document.getElementById('cs-sig-msg');
-  const ticker = (document.getElementById('cs-sig-ticker')?.value || '').trim().toUpperCase();
-  const name   = (document.getElementById('cs-sig-name')?.value || '').trim() || ticker;
-  const type   = document.getElementById('cs-sig-type')?.value;
-  const krw    = +document.getElementById('cs-sig-krw')?.value || 0;
-
-  if (!ticker) { if (msg) msg.innerHTML = '<span style="color:var(--red)">코인 티커를 입력하세요</span>'; return; }
-  const finalTicker = ticker.startsWith('KRW-') ? ticker : `KRW-${ticker}`;
-
-  if (type !== 'btc_dump_sell' && krw < 5000) {
-    if (msg) msg.innerHTML = '<span style="color:var(--red)">매수금액을 5,000원 이상 입력하세요</span>';
-    return;
-  }
-
-  if (msg) msg.innerHTML = '<span style="color:var(--muted)">저장 중...</span>';
-
-  const body = {
-    name, ticker: finalTicker, signal_type: type,
-    params:      _ctSignalGetParams(),
-    krw_amount:  krw,
-    take_pct:    +document.getElementById('cs-sig-take')?.value   || 2,
-    cooldown_min:    +document.getElementById('cs-sig-cooldown')?.value      || 60,
-    max_triggers:    +document.getElementById('cs-sig-max-triggers')?.value  || 0,
-  };
-
-  try {
-    const r = await fetch('/api/coin-signal', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    const d = await r.json();
-    if (r.ok && !d.error) {
-      if (msg) msg.innerHTML = '<span style="color:var(--green)">등록 완료</span>';
-      await ctLoadAll();
-      document.getElementById('ct-signal-form').style.display = 'none';
-    } else {
-      if (msg) msg.innerHTML = `<span style="color:var(--red)">${d.error || '저장 실패'}</span>`;
-    }
-  } catch (e) {
-    if (msg) msg.innerHTML = `<span style="color:var(--red)">오류: ${e.message}</span>`;
-  }
-}
-
-async function ctToggleSignalStatus(id, currentStatus) {
-  const newStatus = currentStatus === 'watching' ? 'paused' : 'watching';
-  try {
-    const r = await fetch(`/api/coin-signal?id=${encodeURIComponent(id)}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: newStatus }),
-    });
-    if (r.ok) await ctLoadAll();
-  } catch (e) { alert('오류: ' + e.message); }
-}
-
-async function ctDeleteSignalJob(id, name) {
-  if (!confirm(`"${name}" 시그널을 삭제하시겠습니까?`)) return;
-  try {
-    const r = await fetch(`/api/coin-signal?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
-    const d = await r.json();
-    if (d.ok) await ctLoadAll();
-    else alert('삭제 실패: ' + (d.error || ''));
-  } catch (e) { alert('오류: ' + e.message); }
-}
-
-// ── 시그널 잡 렌더링 ──────────────────────────────────────
-function ctRenderSignalJobs() {
-  const el = document.getElementById('ct-signal-list');
-  if (!el) return;
-
-  const jobs = Array.isArray(_ctSignalJobs) ? _ctSignalJobs : [];
-  if (!jobs.length) {
-    el.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:8px 0">없음</div>';
-    return;
-  }
-
-  el.innerHTML = jobs.map(j => {
-    const isWatching = j.status === 'watching';
-    const isStopped  = j.status === 'stopped';
-    const statusColor = isWatching ? 'var(--green)' : isStopped ? 'var(--red)' : 'var(--muted)';
-    const statusLabel = isWatching ? '감시중' : isStopped ? '완료' : '일시정지';
-    const typeLabel   = SIGNAL_TYPE_LABELS[j.signal_type] || j.signal_type;
-
-    let paramsText = '';
-    const p = j.params || {};
-    if (j.signal_type === 'btc_pump_lag')
-      paramsText = `BTC +${p.btc_rise_pct||2}% 이상 / 코인 +${p.coin_max_pct||1}% 미만`;
-    else if (j.signal_type === 'dip_buy')
-      paramsText = `고점 대비 -${p.dip_pct||5}% 이상 하락`;
-    else if (j.signal_type === 'price_breakout')
-      paramsText = `돌파가: ${Number(p.breakout_price||0).toLocaleString()}원`;
-    else if (j.signal_type === 'btc_dump_sell')
-      paramsText = `BTC -${p.btc_drop_pct||3}% 이하`;
-
-    const lastTriggered = j.last_triggered
-      ? new Date(j.last_triggered).toLocaleString('ko-KR', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' })
-      : '—';
-
-    return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-        <div>
-          <span style="font-weight:700">${j.name}</span>
-          <span style="color:var(--muted);font-size:11px;margin-left:6px">${j.ticker}</span>
-          <span style="margin-left:8px;font-size:11px;background:var(--bg);padding:2px 7px;border-radius:10px;border:1px solid var(--border)">${typeLabel}</span>
-        </div>
-        <div style="display:flex;gap:6px;align-items:center">
-          <span style="color:${statusColor};font-size:12px;font-weight:600">${statusLabel}</span>
-          ${!isStopped ? `<button onclick="ctToggleSignalStatus('${j.id}','${j.status}')"
-            style="padding:2px 9px;border:1px solid var(--border);border-radius:5px;background:none;font-size:11px;color:var(--muted);cursor:pointer">${isWatching ? '일시정지' : '재개'}</button>` : ''}
-          <button onclick="ctDeleteSignalJob('${j.id}','${j.name}')"
-            style="padding:2px 9px;border:1px solid var(--red);border-radius:5px;background:none;font-size:11px;color:var(--red);cursor:pointer">삭제</button>
-        </div>
-      </div>
-      <div style="font-size:12px;color:var(--muted)">
-        ${paramsText}
-        ${j.signal_type !== 'btc_dump_sell' ? ` | 매수: ${Number(j.krw_amount||0).toLocaleString()}원 | 목표수익: ${j.take_pct}%` : ''}
-        | 쿨다운: ${j.cooldown_min}분
-      </div>
-      <div style="font-size:11px;color:var(--muted);margin-top:4px">
-        트리거: ${j.trigger_count||0}${j.max_triggers > 0 ? '/'+j.max_triggers : ''}회
-        | 마지막: ${lastTriggered}
-      </div>
     </div>`;
   }).join('');
 }

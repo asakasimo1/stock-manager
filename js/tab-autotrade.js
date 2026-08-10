@@ -1050,7 +1050,6 @@ const COIN_FEE = 0.0005;  // 업비트 수수료 0.05%
 
 let _ctBuyJobs    = [];
 let _ctSellJobs   = [];
-let _ctSignalJobs = [];
 let _ctGridJobs   = [];
 let _ctAccount   = null;
 let _ctRefreshTimer = null;
