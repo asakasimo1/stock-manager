@@ -40,7 +40,7 @@ async function initDashboard() {
 }
 
 function renderDashboard(data) {
-  renderTraderTrades(data.trader_trades || []);
+  renderTraderTrades(data.trader_trades || [], data.account_balance || null);
   renderTraderSummary(data.trader_trades || [], data.account_balance || null);
   renderIpoList(data.ipo || []);
   renderCalendar(data);
@@ -126,66 +126,73 @@ let _traderTradesExpanded = false;
 // 금액(원) 표시는 전부 소수점 버림 — 코인 거래는 단가/손익에 소수점이 남는 경우가 있음
 const krw = v => Math.trunc(Number(v) || 0).toLocaleString();
 
-function renderTraderTrades(items) {
+// 매수 건 1줄씩 — 종목(코인명)/거래시각/매수단가/총매수금액/상태(보유중,종료)만 표기.
+// 상태 판단: 현재 실제 보유 종목(주식 account_balance + 코인 /api/coin-account)에
+// 있고, 그 종목의 가장 최근 매수 건이면 "보유중" — 그 외(매도로 종료됐거나 더
+// 최근 매수가 따로 있음)는 "종료".
+async function renderTraderTrades(items, stockAccount) {
   const el = document.getElementById('list-trader-trades');
   if (!el) return;
-  const sorted = [...items].sort((a, b) =>
-    (b.date + b.time).localeCompare(a.date + a.time));
-  if (!sorted.length) {
+
+  const stockHeld = new Set((stockAccount?.holdings || []).map(h => h.ticker));
+  let coinHeld = new Set();
+  try {
+    const r = await fetch('/api/coin-account');
+    if (r.ok) {
+      const coinAcc = await r.json();
+      coinHeld = new Set((coinAcc.holdings || []).map(h => h.ticker));
+    }
+  } catch (_) { /* 코인 잔고 조회 실패해도 주식 보유중 판단은 그대로 진행 */ }
+  const held = new Set([...stockHeld, ...coinHeld]);
+
+  const buys = items
+    .filter(t => t.type === 'buy')
+    .sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time));
+
+  if (!buys.length) {
     el.innerHTML = '<div class="empty-msg">거래 내역이 없습니다</div>';
     return;
   }
 
-  const toShow  = _traderTradesExpanded ? sorted.slice(0, 50) : sorted.slice(0, 10);
-  const hasMore = sorted.length > 10;
+  // 티커별 가장 최근 매수 키(날짜+시각) — 그 매수 건만 "보유중" 후보로 판단
+  const latestBuyKey = {};
+  for (const t of buys) {
+    const key = t.date + t.time;
+    if (!latestBuyKey[t.ticker] || key > latestBuyKey[t.ticker]) latestBuyKey[t.ticker] = key;
+  }
+
+  const toShow  = _traderTradesExpanded ? buys.slice(0, 50) : buys.slice(0, 10);
+  const hasMore = buys.length > 10;
 
   const moreBtn = hasMore ? `
     <div style="text-align:center;padding:6px 0">
-      <button onclick="_traderTradesExpanded=!_traderTradesExpanded;renderTraderTrades(${JSON.stringify(items).replace(/</g,'\\u003c')})"
+      <button onclick="_traderTradesExpanded=!_traderTradesExpanded;renderTraderTrades(${JSON.stringify(items).replace(/</g,'\\u003c')}, _dashData?.account_balance)"
         style="background:none;border:1px solid var(--border);border-radius:8px;padding:5px 18px;font-size:12px;color:var(--muted);cursor:pointer">
-        ${_traderTradesExpanded ? '▲ 접기' : `▼ 더보기 (${sorted.length}건)`}
+        ${_traderTradesExpanded ? '▲ 접기' : `▼ 더보기 (${buys.length}건)`}
       </button>
     </div>` : '';
 
   el.innerHTML = toShow.map(t => {
-    const isBuy  = t.type === 'buy';
-    const badge  = isBuy
-      ? `<span style="background:#dcfce7;color:#166534;border-radius:5px;padding:2px 8px;font-size:11px;font-weight:700">매수</span>`
-      : `<span style="background:#fee2e2;color:#991b1b;border-radius:5px;padding:2px 8px;font-size:11px;font-weight:700">매도</span>`;
-    const reasonHtml = t.reason
-      ? `<span style="font-size:11px;color:var(--muted)">[${t.reason}]</span>` : '';
-
-    // 손익 (매도 시)
-    let pnlHtml = '';
-    if (!isBuy && t.pnl != null) {
-      const up   = t.pnl >= 0;
-      const sign = up ? '+' : '';
-      pnlHtml = `<span style="color:${up?'#16a34a':'#dc2626'};font-size:12px;font-weight:700">
-        손익 ${sign}${krw(t.pnl)}원&nbsp;(${sign}${t.pnl_pct}%)
-      </span>`;
-    }
+    const key    = t.date + t.time;
+    const isOpen = held.has(t.ticker) && latestBuyKey[t.ticker] === key;
+    const statusHtml = isOpen
+      ? `<span style="background:#dcfce7;color:#166534;border-radius:5px;padding:2px 8px;font-size:11px;font-weight:700">보유중</span>`
+      : `<span style="background:#f1f5f9;color:#64748b;border-radius:5px;padding:2px 8px;font-size:11px;font-weight:700">종료</span>`;
 
     return `
-    <div style="display:flex;align-items:flex-start;justify-content:space-between;
+    <div style="display:flex;align-items:center;justify-content:space-between;
                 padding:9px 0;border-bottom:1px solid var(--border)">
       <div style="flex:1;min-width:0">
-        <!-- 종목명 + 매수/매도 뱃지 -->
         <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
-          ${badge}
           <span style="font-weight:700;font-size:13px">${t.name || t.ticker}</span>
           <span style="font-size:11px;color:var(--muted)">${t.ticker}</span>
-          ${reasonHtml}
+          ${statusHtml}
         </div>
-        <!-- 수량 · 단가 · 총금액 -->
-        <div style="font-size:12px;color:var(--fg);margin-bottom:2px">
-          <span style="color:var(--muted)">수량</span> <b>${Number(t.qty).toLocaleString()}주</b>
+        <div style="font-size:12px;color:var(--fg)">
+          <span style="color:var(--muted)">매수단가</span> <b>${krw(t.price)}원</b>
           &nbsp;·&nbsp;
-          <span style="color:var(--muted)">단가</span> <b>${krw(t.price)}원</b>
-          &nbsp;·&nbsp;
-          <span style="color:var(--muted)">금액</span> <b>${krw(t.amount)}원</b>
+          <span style="color:var(--muted)">총매수금액</span> <b>${krw(t.amount)}원</b>
         </div>
-        <!-- 손익 (매도만) -->
-        ${pnlHtml}
       </div>
       <div style="font-size:11px;color:var(--muted);white-space:nowrap;margin-left:10px;text-align:right">
         ${t.date}<br>${t.time}
