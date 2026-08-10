@@ -4,12 +4,10 @@
  * ── 주식 자동매매 잡 (기존 profit-jobs.js 통합) ──
  * GET/POST/DELETE /api/profit-sell   → profit_sell_jobs.json
  * GET/POST/DELETE /api/profit-buy    → profit_buy_jobs.json
- * GET/POST/DELETE /api/profit-cycle  → profit_cycle_jobs.json
  *
  * ── 코인 자동매매 잡 CRUD ──
  * GET/POST/DELETE /api/coin-buy      → coin_buy_jobs.json
  * GET/POST/DELETE /api/coin-sell     → coin_sell_jobs.json
- * GET/POST/DELETE /api/coin-cycle    → coin_cycle_jobs.json
  * GET             /api/coin-account  → coin_account.json
  *
  * ── 코인 실행 엔진 (Vercel 고정 IP → Upbit API 직접 호출) ──
@@ -101,7 +99,6 @@ async function writeGistFiles(gistId, ghToken, filesDict) {
 // ══════════════════════════════════════════════════════════
 async function handleStockJobs(req, res, url, gistId, ghToken) {
   const FILENAME = url.includes('profit-sell')  ? 'profit_sell_jobs.json'
-                 : url.includes('profit-cycle') ? 'profit_cycle_jobs.json'
                  :                                'profit_buy_jobs.json';
 
   if (req.method === 'GET') {
@@ -121,13 +118,12 @@ async function handleStockJobs(req, res, url, gistId, ghToken) {
     if (!ok) return res.status(500).json({ error: '저장 실패' });
 
     const isBuyUrl   = url.includes('profit-buy');
-    const isCycleUrl = url.includes('profit-cycle');
     const isSellUrl  = url.includes('profit-sell');
     const isMarket   = job.condition_type === 'market';
 
     let triggered = false, triggerError = null;
-    if (isSellUrl || ((isBuyUrl || isCycleUrl) && isMarket)) {
-      const jobName = isSellUrl ? 'profit_sell' : 'cycle';
+    if (isSellUrl || (isBuyUrl && isMarket)) {
+      const jobName = isSellUrl ? 'profit_sell' : 'profit_buy';
       try {
         triggered = await triggerGHAction(ghToken, jobName);
         if (!triggered) triggerError = 'workflow_dispatch 실패';
@@ -200,7 +196,6 @@ async function handleCoinJobs(req, res, url, gistId, ghToken) {
   const isAccount = url.includes('coin-account');
   const FILENAME  = isAccount             ? 'coin_account.json'
                   : url.includes('coin-sell')  ? 'coin_sell_jobs.json'
-                  : url.includes('coin-cycle') ? 'coin_cycle_jobs.json'
                   :                              'coin_buy_jobs.json';
 
   if (req.method === 'GET') {
@@ -222,11 +217,10 @@ async function handleCoinJobs(req, res, url, gistId, ghToken) {
 
     const isBuyUrl   = url.includes('coin-buy');
     const isSellUrl  = url.includes('coin-sell');
-    const isCycleUrl = url.includes('coin-cycle');
     const isMarket   = job.condition_type === 'market_krw' || job.condition_type === 'market';
 
     // 즉시 coin-runner 실행 (fire-and-forget)
-    if (isSellUrl || isCycleUrl || (isBuyUrl && isMarket)) {
+    if (isSellUrl || (isBuyUrl && isMarket)) {
       const mode = isBuyUrl ? 'buy' : 'sell';
       triggerCoinRunner(req, mode);
     }
@@ -360,20 +354,17 @@ async function handleCoinRunner(req, res, gistId, ghToken) {
     }
 
     // ── 잡 로드 ────────────────────────────────────────────
-    const [buyJobs, sellJobs, cycleJobs] = await Promise.all([
+    const [buyJobs, sellJobs] = await Promise.all([
       mode !== 'sell' ? readGistFile(gistId, ghToken, 'coin_buy_jobs.json')   : [],
       mode !== 'buy'  ? readGistFile(gistId, ghToken, 'coin_sell_jobs.json')  : [],
-      mode !== 'buy'  ? readGistFile(gistId, ghToken, 'coin_cycle_jobs.json') : [],
     ]);
     const _buy   = Array.isArray(buyJobs)   ? buyJobs   : [];
     const _sell  = Array.isArray(sellJobs)  ? sellJobs  : [];
-    const _cycle = Array.isArray(cycleJobs) ? cycleJobs : [];
 
     // ── 현재가 + 잔고 ──────────────────────────────────────
     const tickers = new Set([
       ..._buy.filter(j => j.status === 'active').map(j => j.ticker),
       ..._sell.filter(j => ['active','submitted'].includes(j.status)).map(j => j.ticker),
-      ..._cycle.filter(j => !['done','cancelled','stopped'].includes(j.status)).map(j => j.ticker),
     ]);
     let prices = {}, holdings = [];
     if (mode !== 'buy') {
@@ -394,7 +385,7 @@ async function handleCoinRunner(req, res, gistId, ghToken) {
       prices = await upbitPrices([...tickers]);
     }
 
-    let bChg = false, sChg = false, cChg = false;
+    let bChg = false, sChg = false;
 
     // ── 자동매도 규칙 ──────────────────────────────────────
     if (mode !== 'buy') {
@@ -464,73 +455,10 @@ async function handleCoinRunner(req, res, gistId, ghToken) {
       }
     }
 
-    // ── 사이클 잡 ──────────────────────────────────────────
-    if (mode !== 'buy') {
-      for (const job of _cycle) {
-        if (['done','cancelled','stopped'].includes(job.status)) continue;
-        const cur = prices[job.ticker]?.price;
-        if (!cur) continue;
-        const phase = job.phase || 'waiting_buy';
-        const takePct = +job.take_pct || 3, rebuyDrop = +job.rebuy_drop || 2, repeatTake = +job.repeat_take || 2;
-        const maxCycles = +job.max_cycles || 0;
-
-        if (phase === 'waiting_buy') {
-          if (job.condition_type === 'limit' && +job.buy_target_price > 0 && cur > +job.buy_target_price) continue;
-          const amt = +job.krw_amount || 0;
-          if (amt < 5000) continue;
-          log(`★ [waiting_buy] ${job.ticker} ${amt.toLocaleString()}원`);
-          try {
-            const r = await upbitOrder(accessKey, secretKey, { market: job.ticker, side: 'bid', ordType: 'price', price: amt });
-            // 실제 수령 수량: 매수수수료 차감 반영
-            const qty = +(amt / cur * (1 - BUY_FEE)).toFixed(8);
-            Object.assign(job, { phase:'holding', buy_price:cur, hold_qty:qty, sell_price:sellTarget(cur, takePct), bought_at:nowKst(), buy_uuid:r.uuid });
-            cChg = true;
-          } catch (e) { log(`사이클 매수 실패: ${e.message}`); }
-
-        } else if (phase === 'holding') {
-          const sellPrice = +job.sell_price || 0;
-          const buyPrice  = +job.buy_price  || 0;
-          // sell_price가 0이거나 수수료 포함 손익분기점 이하면 매도 불가
-          const breakevenPrice = buyPrice > 0 ? buyPrice * (1 + BUY_FEE) / (1 - SELL_FEE) : 0;
-          const effectiveSellPrice = (sellPrice > breakevenPrice) ? sellPrice : (buyPrice > 0 ? sellTarget(buyPrice, takePct) : 0);
-          if (effectiveSellPrice <= 0 || cur < effectiveSellPrice) continue;
-          // sell_price가 잘못 저장된 경우 자동 복구
-          if (effectiveSellPrice !== sellPrice) { job.sell_price = effectiveSellPrice; cChg = true; }
-          const qty = +job.hold_qty || 0;
-          if (!qty) continue;
-          log(`★ [holding] 매도 ${job.ticker} @ ${cur.toLocaleString()}원 (목표: ${effectiveSellPrice.toLocaleString()}원)`);
-          try {
-            const r = await upbitOrder(accessKey, secretKey, { market: job.ticker, side: 'ask', ordType: 'market', volume: qty });
-            const cc = (+job.cycle_count || 0) + 1;
-            job.cycle_count = cc; job.sell_price_exec = cur; job.sold_at = nowKst(); job.sell_uuid = r.uuid;
-            if (maxCycles > 0 && cc >= maxCycles) { job.phase = 'done'; job.status = 'done'; log('최대 사이클 완료'); }
-            else { job.phase = 'waiting_rebuy'; job.rebuy_price = Math.floor(cur * (1 - rebuyDrop / 100)); }
-            cChg = true;
-          } catch (e) { log(`사이클 매도 실패: ${e.message}`); }
-
-        } else if (phase === 'waiting_rebuy') {
-          const rebuyPrice = +job.rebuy_price || 0;
-          // rebuy_price가 0이면 재매수 조건 미충족으로 처리 (잘못된 데이터 보호)
-          if (rebuyPrice <= 0 || cur > rebuyPrice) continue;
-          const amt = +job.krw_amount || 0;
-          if (amt < 5000) continue;
-          log(`★ [waiting_rebuy] ${job.ticker} ${amt.toLocaleString()}원`);
-          try {
-            const r = await upbitOrder(accessKey, secretKey, { market: job.ticker, side: 'bid', ordType: 'price', price: amt });
-            // 실제 수령 수량: 매수수수료 차감 반영
-            const qty = +(amt / cur * (1 - BUY_FEE)).toFixed(8);
-            Object.assign(job, { phase:'holding', buy_price:cur, hold_qty:qty, sell_price:sellTarget(cur, repeatTake), bought_at:nowKst(), buy_uuid:r.uuid });
-            cChg = true;
-          } catch (e) { log(`사이클 재매수 실패: ${e.message}`); }
-        }
-      }
-    }
-
     // ── 변경분 Gist 저장 ─────────────────────────────────
     const toWrite = {};
     if (bChg) toWrite['coin_buy_jobs.json']   = _buy;
     if (sChg) toWrite['coin_sell_jobs.json']  = _sell;
-    if (cChg) toWrite['coin_cycle_jobs.json'] = _cycle;
     if (Object.keys(toWrite).length) {
       const ok = await writeGistFiles(gistId, ghToken, toWrite);
       log(`Gist 저장 ${ok ? '완료' : '실패'}`);
@@ -569,9 +497,6 @@ async function handleCoinSignal(req, res, gistId, ghToken) {
       params:        body.params || {},
       krw_amount:    +body.krw_amount || 0,
       take_pct:      +body.take_pct   || 2.0,
-      rebuy_drop:    +body.rebuy_drop  || 2.0,
-      repeat_take:   +body.repeat_take || 2.0,
-      max_cycles:    +body.max_cycles  || 0,
       cooldown_min:  +body.cooldown_min || 60,
       max_triggers:  +body.max_triggers || 0,
       status:        'watching',
@@ -854,10 +779,9 @@ async function handleCoinDate(req, res, gistId, ghToken) {
 
   const FEE = 0.0005; // 업비트 수수료 0.05% (매수·매도 각각)
 
-  const [buyJobs, sellJobs, cycleJobs, gridJobs, scalpJobs] = await Promise.all([
+  const [buyJobs, sellJobs, gridJobs, scalpJobs] = await Promise.all([
     readGistFile(gistId, ghToken, 'coin_buy_jobs.json'),
     readGistFile(gistId, ghToken, 'coin_sell_jobs.json'),
-    readGistFile(gistId, ghToken, 'coin_cycle_jobs.json'),
     readGistFile(gistId, ghToken, 'coin_grid_jobs.json'),
     readGistFile(gistId, ghToken, 'scalp_coin_jobs.json'),
   ]);
@@ -891,35 +815,6 @@ async function handleCoinDate(req, res, gistId, ghToken) {
                name: j.name || j.ticker,
                ticker: j.ticker, qty, buyPrice, sellPrice,
                amount: Math.round(sellPrice * qty), fee, profit };
-    });
-
-  // ── 사이클잡 당일 매도 → buy_price 기반 실현손익
-  const cycleSells = (Array.isArray(cycleJobs) ? cycleJobs : [])
-    .filter(j => j.sold_at?.slice(0, 10) === targetDate && j.sell_price_exec && j.hold_qty)
-    .map(j => {
-      const qty       = j.hold_qty;
-      const sellPrice = j.sell_price_exec;
-      const buyPrice  = j.buy_price || 0;
-      const sellNet   = sellPrice * qty * (1 - FEE);
-      const buyCost   = buyPrice  * qty * (1 + FEE);
-      // buy_price=0이면 수익 계산 불가 → null로 처리
-      const profit    = buyPrice > 0 ? Math.round(sellNet - buyCost) : null;
-      const fee       = Math.round((sellPrice + buyPrice) * qty * FEE);
-      return { time: j.sold_at.slice(11, 16),
-               buyTime: (j.bought_at || '').slice(11, 16) || null,
-               name: j.name || j.ticker,
-               ticker: j.ticker, qty, buyPrice, sellPrice,
-               amount: Math.round(sellPrice * qty), fee, profit };
-    });
-
-  // ── 사이클잡 당일 매수 (아직 미매도인 것만)
-  const cycleBuys = (Array.isArray(cycleJobs) ? cycleJobs : [])
-    .filter(j => j.bought_at?.slice(0, 10) === targetDate && j.buy_price && j.hold_qty && !j.sold_at)
-    .map(j => {
-      const amount = Math.round((j.buy_price || 0) * j.hold_qty);
-      return { time: j.bought_at.slice(11, 16), name: j.name || j.ticker,
-               ticker: j.ticker, qty: j.hold_qty, buyPrice: j.buy_price,
-               amount, fee: Math.round(amount * FEE), profit: null };
     });
 
   // ── 코인 그리드 당일 체결 내역 (trade_history 배열)
@@ -963,8 +858,8 @@ async function handleCoinDate(req, res, gistId, ghToken) {
       }));
   });
 
-  const allBuys  = [...buys,  ...cycleBuys ].sort((a, b) => a.time.localeCompare(b.time));
-  const allSells = [...sells, ...cycleSells, ...gridSells, ...scalpSells].sort((a, b) => a.time.localeCompare(b.time));
+  const allBuys  = [...buys].sort((a, b) => a.time.localeCompare(b.time));
+  const allSells = [...sells, ...gridSells, ...scalpSells].sort((a, b) => a.time.localeCompare(b.time));
 
   // 실현손익 = 당일 체결된 매도의 (매도 - 매수) 손익 합계
   const netProfit = Math.round(allSells.reduce((s, o) => s + (o.profit || 0), 0));

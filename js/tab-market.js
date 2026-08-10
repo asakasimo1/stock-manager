@@ -167,8 +167,6 @@ const AT_SELL_FEE = 0.00015 + 0.0018;
 
 let _atJobs  = [];
 let _abJobs  = [];
-let _acJobs  = [];   // cycle jobs
-let _acEditTicker = null; // 수정 모드 중인 ticker (null = 신규 등록)
 let _atAccount = null;
 let _atRefreshTimer = null;
 let _atPriceTimer = null;
