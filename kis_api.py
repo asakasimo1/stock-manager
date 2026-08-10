@@ -41,6 +41,11 @@ BASE_URL = (
     "https://openapi.koreainvestment.com:9443"        # 실계좌
 )
 
+# 매수/매도 수수료+세금 — 모든 손익률/손익금액 계산은 이 상수를 통해 수수료를
+# 포함해서 산출해야 함(2026-08-10: 사용자 요청으로 전면 수수료 반영 전환).
+BUY_FEE  = 0.00015                 # 매수 수수료 0.015%
+SELL_FEE = 0.00015 + 0.0018        # 매도 수수료 0.015% + 증권거래세 0.18%
+
 TOKEN_FILE  = Path(".token_cache.json")   # 토큰 로컬 캐시 (git 무시)
 _token_lock = threading.Lock()            # 병렬 토큰 갱신 방지 (ThreadPoolExecutor 대응)
 
@@ -500,13 +505,21 @@ def get_balance() -> dict:
         qty = int(item.get("hldg_qty", 0))
         if qty <= 0:
             continue
+        avg_price  = int(float(item.get("pchs_avg_pric", 0)))
+        eval_price = int(item.get("prpr", 0))
+        # KIS가 주는 evlu_pfls_rt(평가손익율)는 수수료/세금 미반영 단순 시세차익률이라
+        # 여기서 직접 수수료 포함 손익률로 재계산함(매수수수료+매도수수료+거래세 반영).
+        cost     = avg_price * qty * (1 + BUY_FEE)
+        net_eval = eval_price * qty * (1 - SELL_FEE)
+        pnl_pct  = (net_eval - cost) / cost * 100 if cost > 0 else 0.0
         holdings.append({
             "ticker":         item.get("pdno"),
             "name":           item.get("prdt_name"),
             "qty":            qty,
-            "avg_price":      int(float(item.get("pchs_avg_pric", 0))),
-            "eval_price":     int(item.get("prpr", 0)),
-            "pnl_pct":        float(item.get("evlu_pfls_rt", 0)),
+            "avg_price":      avg_price,
+            "eval_price":     eval_price,
+            "pnl_pct":        round(pnl_pct, 2),
+            "pnl":            round(net_eval - cost),
             # 전일대비 증감(원) — 당일손익 계산용 (누적손익인 pnl_pct와 다름)
             "bfdy_close_diff": int(float(item.get("bfdy_cprs_icdc", 0))),
             # 실제 매도가능수량 — 그리드 등 다른 미체결 주문이 일부를 잠그고 있으면

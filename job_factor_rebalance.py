@@ -89,8 +89,9 @@ def main():
         try:
             cur_price = price_map.get(ticker) or int(kis_api.get_price(ticker)["stck_prpr"])
             result     = kis_api.place_order(ticker, "SELL", pos["qty"])
-            pnl        = (cur_price - pos["buy_price"]) * pos["qty"]
-            pnl_pct    = (cur_price - pos["buy_price"]) / pos["buy_price"] * 100
+            cost       = pos["buy_price"] * (1 + kis_api.BUY_FEE)
+            pnl        = (cur_price * (1 - kis_api.SELL_FEE) - cost) * pos["qty"]
+            pnl_pct    = (cur_price * (1 - kis_api.SELL_FEE) - cost) / cost * 100
             pnl_total += pnl
             sold_tickers.append(ticker)
 

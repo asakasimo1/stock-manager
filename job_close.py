@@ -19,11 +19,6 @@ logger = logging.getLogger(__name__)
 STRATEGY_NAME = os.getenv("STRATEGY", "optimized")
 CFG, _PRESET  = load_strategy(STRATEGY_NAME)
 
-# 매도 시 증권거래세+수수료 등 왕복 비용 추정치 (기본 0.3%) — 이보다 수익률이
-# 높아야 "수수료 제외 실질 수익"으로 보고 마감 강제 익절 대상에 포함시킨다.
-# 실제 계좌 수수료율에 맞춰 GH Secret CLOSE_PROFIT_FEE_PCT로 조정 가능.
-CLOSE_PROFIT_FEE_PCT = float(os.getenv("CLOSE_PROFIT_FEE_PCT", "0.003"))
-
 
 def main():
     logger.info("=== 마감 청산 (15:20) ===")
@@ -54,11 +49,13 @@ def main():
             logger.error("%s 현재가 조회 실패: %s", ticker, e)
             continue
 
-        pnl_pct = (cur_price - pos["buy_price"]) / pos["buy_price"]
+        # 매수+매도 수수료·증권거래세 포함 순손익률 — 근사치 버퍼가 아니라 실제 왕복비용을 그대로 계산
+        cost    = pos["buy_price"] * (1 + kis_api.BUY_FEE)
+        net_pnl_pct = ((cur_price * (1 - kis_api.SELL_FEE)) - cost) / cost
 
         if hold >= CFG.hold_days:
             reason, emoji = "기간청산", "🏁"
-        elif pnl_pct > CLOSE_PROFIT_FEE_PCT:
+        elif net_pnl_pct > 0:
             # 보유기간은 남았지만, 수수료 제외 실질 수익이 나 있으면 장마감 전 강제 익절
             reason, emoji = "마감익절", "💰"
         else:
@@ -66,8 +63,8 @@ def main():
 
         try:
             result      = kis_api.place_order(ticker, "SELL", pos["qty"])
-            pnl         = (cur_price - pos["buy_price"]) * pos["qty"]
-            pnl_pct_100 = pnl_pct * 100
+            pnl         = (cur_price * (1 - kis_api.SELL_FEE) - cost) * pos["qty"]
+            pnl_pct_100 = net_pnl_pct * 100
             daily_pnl  += pnl
             state_db.delete_position(ticker)
             state_db.set_meta("daily_pnl", daily_pnl)

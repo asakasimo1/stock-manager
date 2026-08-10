@@ -179,7 +179,8 @@ def auto_sell_by_rule():
                                 ticker, sell_qty, qty)
 
             result = kis_api.place_order(ticker, "SELL", sell_qty, order_type="market")
-            pnl = (cur_price - h["avg_price"]) * sell_qty
+            pnl = (cur_price * sell_qty * (1 - SELL_FEE_RATE)
+                   - h["avg_price"] * sell_qty * (1 + BUY_FEE_RATE))
             notify.send(
                 f"{emoji} <b>자동매도 [{reason}]</b>  {name} ({ticker})\n"
                 f"  {sell_qty}주 @ {cur_price:,}원  손익: <b>{pnl:+,}원 ({pnl_pct:+.2f}%)</b>\n"

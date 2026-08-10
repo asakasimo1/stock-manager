@@ -140,6 +140,7 @@ def main():
                     "avg_price":  h["avg_price"],
                     "eval_price": h["eval_price"],
                     "pnl_pct":    round(h["pnl_pct"], 2),
+                    "pnl":        h.get("pnl", 0),  # 수수료+세금 포함 평가손익(원) — kis_api.get_balance()에서 계산됨
                     "eval_amt":   h["eval_price"] * h["qty"],
                     "buy_amt":    h["avg_price"] * h["qty"],
                 }

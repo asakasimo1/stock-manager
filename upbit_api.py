@@ -312,8 +312,11 @@ def get_balance() -> dict:
         avg_buy = a["avg_buy"]
         cur_price   = prices.get(ticker, avg_buy)
         eval_amount = qty * cur_price
+        # pnl/pnl_pct는 매수+매도 수수료를 모두 포함한 순손익 기준으로 계산
+        # (eval_amount 자체는 순수 평가금액 표시용이라 수수료 미반영 그대로 둠)
         cost        = qty * avg_buy * (1 + BUY_FEE)
-        pnl         = eval_amount - cost
+        net_eval    = eval_amount * (1 - SELL_FEE)
+        pnl         = net_eval - cost
         pnl_pct     = (pnl / cost * 100) if cost > 0 else 0.0
 
         holdings.append({

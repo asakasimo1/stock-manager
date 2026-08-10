@@ -28,10 +28,12 @@ BUY_PRICE  = 4960          # 평균 매수단가
 QTY        = 1
 TARGET_NET = 50            # 목표 순이익 (원)
 
+BUY_FEE_RATE  = 0.00015            # 매수수수료
 SELL_FEE_RATE = 0.00015 + 0.0018   # 매도수수료 + 증권거래세
+BUY_COST = BUY_PRICE * (1 + BUY_FEE_RATE)  # 매수수수료 포함 실매입단가
 
 # 순이익 50원을 위한 최소 매도가
-TARGET_PRICE = int((BUY_PRICE + TARGET_NET) / (1 - SELL_FEE_RATE)) + 1
+TARGET_PRICE = int((BUY_COST + TARGET_NET) / (1 - SELL_FEE_RATE)) + 1
 
 KST            = timezone(timedelta(hours=9))
 GITHUB_ACTIONS = os.getenv("GITHUB_ACTIONS") == "true"
@@ -50,7 +52,7 @@ def check_and_sell() -> bool:
 
     info      = kis_api.get_price(TICKER)
     cur_price = int(info["stck_prpr"])
-    net_pnl   = cur_price * (1 - SELL_FEE_RATE) - BUY_PRICE
+    net_pnl   = cur_price * (1 - SELL_FEE_RATE) - BUY_COST
 
     logger.info("현재가 %d원  예상순이익 %+.0f원  (목표: +%d원)",
                 cur_price, net_pnl, TARGET_NET)
