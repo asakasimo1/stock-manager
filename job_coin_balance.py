@@ -45,6 +45,21 @@ def _reconcile_trades():
         if detail["executed_volume"] <= 0:
             continue
         market = detail["market"] or o["market"]
+
+        # created_at(체결 실제 시각)을 안 넘기면 log_trade()가 "지금(기록 시점)"으로
+        # 찍어서 실제와 다른 시각으로 보임(2026-08-10 실측: 09시대 체결이 12시대로
+        # 잘못 표시된 원인 — job_balance.py와 동일한 버그를 코인 쪽도 갖고 있었음).
+        trade_date = trade_time = None
+        try:
+            dt = datetime.fromisoformat(o.get("created_at", ""))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            dt = dt.astimezone(KST)
+            trade_date = dt.strftime("%Y-%m-%d")
+            trade_time = dt.strftime("%H:%M")
+        except Exception as e:
+            logger.warning("체결시각 파싱 실패(%s) — 기록시점으로 대체: %s", uid, e)
+
         gist_writer.log_trade(
             ticker=market,
             name=upbit_api.COIN_NAMES.get(market, market),
@@ -52,6 +67,8 @@ def _reconcile_trades():
             price=detail["avg_price"],
             qty=detail["executed_volume"],
             order_no=uid,
+            trade_date=trade_date,
+            trade_time=trade_time,
         )
         new_count += 1
 

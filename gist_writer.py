@@ -192,16 +192,22 @@ def log_trade(
     pnl_pct: float = None,
     reason: str = None,  # "손절" | "익절" | "기간청산" | None(buy)
     order_no: str = None,
+    trade_date: str = None,   # "YYYY-MM-DD" — 미지정 시 현재시각(기존 동작)
+    trade_time: str = None,   # "HH:MM" — 미지정 시 현재시각(기존 동작)
 ):
-    """거래 내역을 버퍼에 추가. flush_trades()를 호출해야 Gist에 저장됩니다."""
+    """거래 내역을 버퍼에 추가. flush_trades()를 호출해야 Gist에 저장됩니다.
+    trade_date/trade_time: 체결 통합기록(reconcile) 등 "지금 막 알게 됐지만 실제
+    체결은 과거"인 경우, 실제 체결시각을 넘겨야 함 — 안 넘기면 기록 시점(현재시각)이
+    찍혀서 나중에 조회할 때 실제와 다른 시각으로 보임(2026-08-10 실측: 09시대 체결이
+    12시대 거래로 잘못 표시됨)."""
     if not GIST_ID or not GH_TOKEN:
         return
 
     now = _now_kst()
     _pending_trades.append({
         "id":       int(now.timestamp() * 1000),
-        "date":     now.strftime("%Y-%m-%d"),
-        "time":     now.strftime("%H:%M"),
+        "date":     trade_date or now.strftime("%Y-%m-%d"),
+        "time":     trade_time or now.strftime("%H:%M"),
         "type":     trade_type,
         "ticker":   ticker,
         "name":     name,

@@ -71,11 +71,17 @@ def _reconcile_trades():
     existing = gist_writer._read_trades()
     known_order_nos = {t.get("order_no") for t in existing if t.get("order_no")}
 
+    today_str = datetime.now(KST).strftime("%Y-%m-%d")
     new_count = 0
     for ex in executions:
         order_no = ex.get("order_no")
         if not order_no or order_no in known_order_nos:
             continue
+        # ex["time"]은 HHMMSS(체결 실제 시각) — 이걸 안 넘기면 log_trade()가
+        # "지금(기록 시점)"으로 찍어서, 나중에 조회할 때 실제 체결시각과 다르게
+        # 보임(2026-08-10 실측: 09시대 체결이 12시대 거래로 표시되는 버그 원인).
+        raw_time = ex.get("time", "")
+        trade_time = f"{raw_time[0:2]}:{raw_time[2:4]}" if len(raw_time) >= 4 else None
         gist_writer.log_trade(
             ticker=ex["ticker"],
             name=ex["name"],
@@ -83,6 +89,8 @@ def _reconcile_trades():
             price=ex["price"],
             qty=ex["qty"],
             order_no=order_no,
+            trade_date=today_str,
+            trade_time=trade_time,
         )
         new_count += 1
 
