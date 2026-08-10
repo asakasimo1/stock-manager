@@ -19,7 +19,6 @@ load_dotenv()
 
 import job_coin_buy
 import job_coin_sell
-import job_coin_signal
 import job_coin_grid
 import job_coin_balance
 
@@ -51,7 +50,6 @@ def main():
     while True:
         try:
             logger.info("[%s] 잡 체크 시작", now_kst())
-            job_coin_signal.main()
             job_coin_grid.main()
             job_coin_buy.main()
             job_coin_sell.main()

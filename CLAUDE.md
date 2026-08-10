@@ -19,7 +19,7 @@
 
 | 서비스 | 관리 | 실행 파일 | 역할 | 주기 |
 |--------|------|-----------|------|------|
-| `coin-daemon.service` | systemd | `daemon_coin.py` | 코인 매수/매도/그리드/시그널/잔고 | 30초, 24/7 |
+| `coin-daemon.service` | systemd | `daemon_coin.py` | 코인 매수/매도/그리드/잔고 | 30초, 24/7 |
 | `stock-daemon.service` | systemd | `daemon_stock.py` | 주식 매수잡/수익매도/잔고갱신 | 30초, 08:00~20:00 KST 평일 |
 
 ```bash
