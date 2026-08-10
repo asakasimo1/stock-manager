@@ -405,6 +405,60 @@ def place_order(
 # ─────────────────────────────────────────
 # 주문 상태 조회
 # ─────────────────────────────────────────
+def get_closed_orders(state: str = "done", limit: int = 100) -> list:
+    """완료된 주문 목록 조회 (전체 마켓 대상, market 파라미터 생략).
+    거래내역 통합 기록(reconcile)용 — 어떤 잡(그리드/사이클/스캘핑)이 냈든,
+    심지어 업비트 앱에서 수동으로 낸 주문이든 전부 포함된다.
+    반환: [{uuid, market, side, created_at}, ...] (실제 체결분만, executed_volume>0)"""
+    params = {"state": state, "limit": limit, "order_by": "desc"}
+    resp = _session.get(
+        f"{BASE_URL}/orders",
+        params=params,
+        headers=_auth_header(params),
+        timeout=10,
+    )
+    resp.raise_for_status()
+    return [
+        {
+            "uuid":       o.get("uuid", ""),
+            "market":     o.get("market", ""),
+            "side":       o.get("side", ""),   # bid=매수 | ask=매도
+            "created_at": o.get("created_at", ""),
+        }
+        for o in resp.json()
+        if float(o.get("executed_volume") or 0) > 0
+    ]
+
+
+def get_order_detail(order_uuid: str) -> dict:
+    """주문 상세 조회 — trades 배열 기반으로 실제 체결 평균단가를 계산.
+    (get_order()의 avg_buy_price 필드는 매수 주문 기준이라 매도 주문엔 그대로
+    쓸 수 없어 거래내역 기록용으로 별도 분리)"""
+    params = {"uuid": order_uuid}
+    r = _session.get(
+        f"{BASE_URL}/order",
+        params=params,
+        headers=_auth_header(params),
+        timeout=10,
+    )
+    r.raise_for_status()
+    data = r.json()
+    trades = data.get("trades") or []
+    executed_volume = float(data.get("executed_volume") or 0)
+    if trades:
+        total_cost = sum(float(t.get("price", 0)) * float(t.get("volume", 0)) for t in trades)
+        avg_price = total_cost / executed_volume if executed_volume > 0 else 0.0
+    else:
+        avg_price = float(data.get("price") or 0)
+    return {
+        "uuid":             data.get("uuid", ""),
+        "market":           data.get("market", ""),
+        "side":             data.get("side", ""),
+        "executed_volume":  executed_volume,
+        "avg_price":        avg_price,
+    }
+
+
 def get_order(order_uuid: str) -> dict:
     """주문 상태 조회"""
     params = {"uuid": order_uuid}
