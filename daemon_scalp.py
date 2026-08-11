@@ -1,7 +1,8 @@
 """
 초단타(스캘핑) 통합 데몬 (Oracle VM 상시 실행) — 기존 daemon_coin/daemon_stock과 분리된 별도 프로세스
 - job_scalp_coin  : 5초마다 실행 (24/7)
-- job_scalp_stock : 10초마다 실행 (장중에만, kis_api.is_any_market_open() 게이트는 job 내부에서 처리)
+- job_scalp_stock : 5초마다 실행 (장중에만, kis_api.is_any_market_open() 게이트는 job 내부에서 처리)
+  (2026-08-12: 10초→5초로 단축 — 신호~매수 지연 축소 목적, DISCOVERY_INTERVAL_SEC도 함께 단축)
 
 실행:
   python daemon_scalp.py
@@ -21,7 +22,7 @@ import job_scalp_stock
 
 KST = timezone(timedelta(hours=9))
 COIN_INTERVAL  = 5   # 초
-STOCK_INTERVAL = 10  # 초
+STOCK_INTERVAL = 5   # 초
 TICK           = 5   # 루프 기본 틱 (COIN_INTERVAL과 동일해야 함)
 
 logging.basicConfig(

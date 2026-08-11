@@ -1,5 +1,5 @@
 """
-국내주식 초단타(스캘핑) 잡 — daemon_scalp.py 에서 10초 주기(장중에만)로 실행
+국내주식 초단타(스캘핑) 잡 — daemon_scalp.py 에서 5초 주기(장중에만)로 실행
 Gist scalp_stock_jobs.json 에서 잡 읽기 → 모멘텀 진입/청산 판단 → KIS 시장가 주문 → 상태 갱신
 Gist scalp_control.json 의 stock_enabled=false 이면 신규 진입 중단 + 보유 포지션 즉시 청산
 Gist scalp_auto_config.json 의 stock.enabled=true 이면 KIS 등락률 순위에서 후보를 watching 잡으로 자동 생성
@@ -33,7 +33,10 @@ SELL_FEE = 0.00195
 
 MAX_CONCURRENT_POSITIONS = 3  # 주식 스캘핑 동시 보유 종목 상한 (하드 리밋)
 
-DISCOVERY_INTERVAL_SEC = 30  # 자동발굴 스캔 주기 하한 — 등락률 순위 조회·Gist 쓰기 빈도 제한
+DISCOVERY_INTERVAL_SEC = 15  # 자동발굴 스캔 주기 하한 — 등락률 순위 조회·Gist 쓰기 빈도 제한
+# (2026-08-12: 30초→15초로 단축 — 신호 발생~매수 사이 지연이 너무 길어 모멘텀이
+#  이미 꺾인 뒤에 진입하는 경우가 많았음. entry_confirm_cycles/strong_signal_multiplier는
+#  건드리지 않음 — "신중하게 확인 후 진입"은 유지하고 "포착 자체가 느린" 부분만 개선)
 _last_discover_at = 0.0
 
 
