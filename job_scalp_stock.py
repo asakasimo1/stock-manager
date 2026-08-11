@@ -40,8 +40,16 @@ _last_discover_at = 0.0
 def _time_based_stop_loss_pct(auto_cfg: dict) -> float:
     """09:00~10:00(거래량 많은 개장 직후)는 변동성이 커서 손절폭을 넉넉하게,
     그 외 시간대는 상대적으로 타이트하게. 잡 발굴(진입) 시점 기준으로 한 번
-    정해지면 그 포지션이 살아있는 동안 유지됨(보유 중 시각 경과로 재조정 안 함)."""
+    정해지면 그 포지션이 살아있는 동안 유지됨(보유 중 시각 경과로 재조정 안 함).
+
+    NXT 프리마켓(08:00~08:50)은 예전엔 이 분기에 안 걸려서 quiet_hour(타이트한 손절폭)가
+    적용됐는데, 실제로는 유동성이 얕고 시장가 주문도 안 돼서(지정가만 가능) 09~10시
+    정규장보다 오히려 변동성이 거친 시간대였음. 손절폭을 quiet_hour의 2배로 넓게 잡는
+    별도 버킷을 추가함(2026-08-12, 오늘 손실 6건 중 4건이 프리마켓 실측 후)."""
     now = datetime.now(KST).time()
+    if kis_api._is_nxt_premarket():
+        quiet = float(auto_cfg.get("stop_loss_pct_quiet_hour", 1.0))
+        return float(auto_cfg.get("stop_loss_pct_premarket", quiet * 2))
     if _dtime(9, 0) <= now < _dtime(10, 0):
         return float(auto_cfg.get("stop_loss_pct_active_hour", 1.5))
     return float(auto_cfg.get("stop_loss_pct_quiet_hour", 1.0))
