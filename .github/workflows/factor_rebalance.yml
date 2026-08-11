@@ -15,8 +15,8 @@ env:
   KIS_APP_SECRET:        ${{ secrets.KIS_APP_SECRET }}
   KIS_ACCOUNT_NO:        ${{ secrets.KIS_ACCOUNT_NO }}
   PAPER_TRADE:           ${{ secrets.PAPER_TRADE }}
-  SUPABASE_URL:          ${{ secrets.SUPABASE_URL }}
-  SUPABASE_KEY:          ${{ secrets.SUPABASE_KEY }}
+  GIST_ID:               ${{ secrets.GIST_ID }}
+  GH_TOKEN:              ${{ secrets.GH_TOKEN }}
   MAX_FACTOR_POSITIONS:  ${{ secrets.MAX_FACTOR_POSITIONS }}
   FACTOR_ORDER_AMOUNT:   ${{ secrets.FACTOR_ORDER_AMOUNT }}
   TELEGRAM_BOT_TOKEN:    ${{ secrets.TELEGRAM_BOT_TOKEN }}

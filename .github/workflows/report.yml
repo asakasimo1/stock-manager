@@ -13,8 +13,6 @@ env:
   KIS_ACCOUNT_NO:        ${{ secrets.KIS_ACCOUNT_NO }}
   PAPER_TRADE:           ${{ secrets.PAPER_TRADE }}
   STRATEGY:              ${{ secrets.STRATEGY }}
-  SUPABASE_URL:          ${{ secrets.SUPABASE_URL }}
-  SUPABASE_KEY:          ${{ secrets.SUPABASE_KEY }}
   TELEGRAM_BOT_TOKEN:    ${{ secrets.TELEGRAM_BOT_TOKEN }}
   TELEGRAM_CHAT_ID:      ${{ secrets.TELEGRAM_CHAT_ID }}
   GIST_ID:               ${{ secrets.GIST_ID }}

@@ -1,6 +1,6 @@
 """
 Job 1 — 신호 생성 (08:50 장전 / 10:15·13:15 장중)
-모멘텀 + 반등 포착 통합 시그널을 Supabase watchlist에 저장
+모멘텀 + 반등 포착 통합 시그널을 state_db watchlist에 저장
 """
 
 import logging

@@ -39,8 +39,6 @@ env:
   KIS_ACCOUNT_NO:        ${{ secrets.KIS_ACCOUNT_NO }}
   PAPER_TRADE:           ${{ secrets.PAPER_TRADE }}
   STRATEGY:              ${{ secrets.STRATEGY }}
-  SUPABASE_URL:          ${{ secrets.SUPABASE_URL }}
-  SUPABASE_KEY:          ${{ secrets.SUPABASE_KEY }}
   MAX_ORDER_AMOUNT:      ${{ secrets.MAX_ORDER_AMOUNT }}
   MAX_DAILY_LOSS:        ${{ secrets.MAX_DAILY_LOSS }}
   TELEGRAM_BOT_TOKEN:    ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -201,7 +199,7 @@ jobs:
       - run: pip install -r requirements.txt
       - run: python job_coin_sell.py
 
-  # ── Supabase 포지션 동기화 (수동) ──────────
+  # ── state_db 포지션 동기화 (수동) ──────────
   sync_positions:
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'sync_positions'
     runs-on: ubuntu-latest
