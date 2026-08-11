@@ -92,8 +92,37 @@ def calc_target_price(buy_price: int, qty: int,
         return int(target_sell / (1 - SELL_FEE_RATE)) + 1
 
 
+def _own_managed_tickers() -> set:
+    """저희 자동매매(조건부 매수잡/그리드/초단타)가 현재 사서 관리 중인 종목만 추림.
+    2026-08-11 실측: KIS 계좌 전체를 대상으로 자동손절을 걸었더니, 수동으로(또는
+    출처를 알 수 없는 경로로) 산 종목(파인엠텍 등)까지 저희 시스템이 임의로
+    손절해버리는 문제가 있었음 — 사용자 요청으로 auto_sell_by_rule()의 대상을
+    "저희가 직접 산 종목"으로만 한정한다."""
+    tickers: set = set()
+    try:
+        for j in gist_writer._read_gist_file("profit_buy_jobs.json") or []:
+            if j.get("status") == "done" and j.get("ticker"):
+                tickers.add(j["ticker"])
+    except Exception as e:
+        logger.warning("profit_buy_jobs.json 조회 실패(자동손절 대상 판단): %s", e)
+    try:
+        for j in gist_writer._read_gist_file("stock_grid_jobs.json") or []:
+            if j.get("status") in ("active", "stopping") and j.get("ticker"):
+                tickers.add(j["ticker"])
+    except Exception as e:
+        logger.warning("stock_grid_jobs.json 조회 실패(자동손절 대상 판단): %s", e)
+    try:
+        for j in gist_writer._read_gist_file("scalp_stock_jobs.json") or []:
+            if j.get("phase") == "holding" and j.get("ticker"):
+                tickers.add(j["ticker"])
+    except Exception as e:
+        logger.warning("scalp_stock_jobs.json 조회 실패(자동손절 대상 판단): %s", e)
+    return tickers
+
+
 def auto_sell_by_rule():
     """보유 종목 자동매도 규칙 체크 (KRX 정규 09:00~15:30, 5분 1회 제한)
+    저희 자동매매 시스템이 직접 매수한 종목만 대상으로 한다(수동/외부 매수 종목 제외).
     시간 기반 익절:
       09:00~11:00 (장 첫 2시간): +10% — 급등 시 빠르게 실현
       11:00 이후:               +6%  — 완만한 수익 실현
@@ -132,8 +161,12 @@ def auto_sell_by_rule():
         if stale not in held_tickers:
             _peak_pnl.pop(stale, None)
 
+    own_tickers = _own_managed_tickers()
+
     for h in bal["holdings"]:
         ticker  = h["ticker"]
+        if ticker not in own_tickers:
+            continue  # 저희 시스템이 산 종목이 아니면 자동손절/익절 대상에서 제외
         pnl_pct = h["pnl_pct"]
         peak    = max(_peak_pnl.get(ticker, pnl_pct), pnl_pct)
         _peak_pnl[ticker] = peak
