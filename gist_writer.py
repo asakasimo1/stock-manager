@@ -8,6 +8,7 @@ stock_analyzer 대시보드의 '거래 내역' 탭에 표시됩니다.
 """
 import json
 import os
+import sys
 import time
 import logging
 import requests
@@ -44,8 +45,46 @@ _GIST_CACHE_TTL  = 30  # seconds
 
 # ─────────────────────────────────────────
 # 거래 내역 버퍼 (프로세스 내 누적 후 flush_trades()로 일괄 저장)
+# Gist 쓰기 한도(403) 소진 중에 데몬이 재시작되면 메모리에만 있던 버퍼가
+# 통째로 날아가는 문제(2026-08-11 실측)가 있어서, append할 때마다 디스크에도
+# 같이 써서 재시작해도 복구되게 함. 데몬(stock/coin/scalp)마다 별도 프로세스라
+# 파일명에 실행 스크립트 이름을 넣어 서로 덮어쓰지 않게 분리한다.
 # ─────────────────────────────────────────
 _pending_trades: list = []
+
+def _pending_buffer_file() -> Path:
+    try:
+        stem = Path(sys.argv[0]).stem or "unknown"
+    except Exception:
+        stem = "unknown"
+    return Path(f"/tmp/.gist_pending_trades_{stem}.json")
+
+_PENDING_TRADES_FILE = _pending_buffer_file()
+
+
+def _save_pending_trades():
+    try:
+        _PENDING_TRADES_FILE.write_text(
+            json.dumps(_pending_trades, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+    except Exception as e:
+        logger.warning("[Gist] 대기 버퍼 파일 저장 실패: %s", e)
+
+
+def _load_pending_trades():
+    """프로세스 시작 시, 이전 실행에서 Gist 저장에 끝내 실패해 남아있던 버퍼를 복구."""
+    if not _PENDING_TRADES_FILE.exists():
+        return
+    try:
+        data = json.loads(_PENDING_TRADES_FILE.read_text(encoding="utf-8"))
+        if isinstance(data, list) and data:
+            _pending_trades.extend(data)
+            logger.info("[Gist] 이전 세션에서 저장 못한 거래 버퍼 %d건 복구", len(data))
+    except Exception as e:
+        logger.warning("[Gist] 대기 버퍼 파일 읽기 실패: %s", e)
+
+
+_load_pending_trades()
 
 
 def _headers():
@@ -217,6 +256,7 @@ def log_trade(
         "reason":   reason,
         "order_no": order_no,
     })
+    _save_pending_trades()
     logger.info("[Gist] 거래 버퍼에 추가: %s %s %d주 (버퍼 %d건)", trade_type, ticker, qty, len(_pending_trades))
 
 
@@ -236,6 +276,7 @@ def flush_trades():
     ok = _write_trades(records[:MAX_HISTORY])
     if ok:
         _pending_trades.clear()
+        _save_pending_trades()  # 디스크 버퍼 파일도 비움 — 다음 시작 시 잘못 복구되지 않도록
         logger.info("[Gist] flush_trades 완료 (%d건)", count)
     else:
-        logger.error("[Gist] 거래 내역 저장 실패 — 버퍼 유지, 다음 사이클에 재시도 (%d건)", count)
+        logger.error("[Gist] 거래 내역 저장 실패 — 버퍼 유지(디스크에도 보존됨), 다음 사이클에 재시도 (%d건)", count)
