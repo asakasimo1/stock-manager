@@ -1,5 +1,5 @@
 """
-국내주식 초단타(스캘핑) 잡 — daemon_scalp.py 에서 10초 주기(장중에만)로 실행
+국내주식 초단타(스캘핑) 잡 — daemon_scalp.py 에서 5초 주기(장중에만)로 실행
 Gist scalp_stock_jobs.json 에서 잡 읽기 → 모멘텀 진입/청산 판단 → KIS 시장가 주문 → 상태 갱신
 Gist scalp_control.json 의 stock_enabled=false 이면 신규 진입 중단 + 보유 포지션 즉시 청산
 Gist scalp_auto_config.json 의 stock.enabled=true 이면 KIS 등락률 순위에서 후보를 watching 잡으로 자동 생성
@@ -33,15 +33,26 @@ SELL_FEE = 0.00195
 
 MAX_CONCURRENT_POSITIONS = 3  # 주식 스캘핑 동시 보유 종목 상한 (하드 리밋)
 
-DISCOVERY_INTERVAL_SEC = 30  # 자동발굴 스캔 주기 하한 — 등락률 순위 조회·Gist 쓰기 빈도 제한
+DISCOVERY_INTERVAL_SEC = 15  # 자동발굴 스캔 주기 하한 — 등락률 순위 조회·Gist 쓰기 빈도 제한
+# (2026-08-12: 30초→15초로 단축 — 신호 발생~매수 사이 지연이 너무 길어 모멘텀이
+#  이미 꺾인 뒤에 진입하는 경우가 많았음. entry_confirm_cycles/strong_signal_multiplier는
+#  건드리지 않음 — "신중하게 확인 후 진입"은 유지하고 "포착 자체가 느린" 부분만 개선)
 _last_discover_at = 0.0
 
 
 def _time_based_stop_loss_pct(auto_cfg: dict) -> float:
     """09:00~10:00(거래량 많은 개장 직후)는 변동성이 커서 손절폭을 넉넉하게,
     그 외 시간대는 상대적으로 타이트하게. 잡 발굴(진입) 시점 기준으로 한 번
-    정해지면 그 포지션이 살아있는 동안 유지됨(보유 중 시각 경과로 재조정 안 함)."""
+    정해지면 그 포지션이 살아있는 동안 유지됨(보유 중 시각 경과로 재조정 안 함).
+
+    NXT 프리마켓(08:00~08:50)은 예전엔 이 분기에 안 걸려서 quiet_hour(타이트한 손절폭)가
+    적용됐는데, 실제로는 유동성이 얕고 시장가 주문도 안 돼서(지정가만 가능) 09~10시
+    정규장보다 오히려 변동성이 거친 시간대였음. 손절폭을 quiet_hour의 2배로 넓게 잡는
+    별도 버킷을 추가함(2026-08-12, 오늘 손실 6건 중 4건이 프리마켓 실측 후)."""
     now = datetime.now(KST).time()
+    if kis_api._is_nxt_premarket():
+        quiet = float(auto_cfg.get("stop_loss_pct_quiet_hour", 1.0))
+        return float(auto_cfg.get("stop_loss_pct_premarket", quiet * 2))
     if _dtime(9, 0) <= now < _dtime(10, 0):
         return float(auto_cfg.get("stop_loss_pct_active_hour", 1.5))
     return float(auto_cfg.get("stop_loss_pct_quiet_hour", 1.0))
