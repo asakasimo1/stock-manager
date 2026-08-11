@@ -8,7 +8,7 @@ Job — 멀티팩터 월간 리밸런싱
   4. 결과 텔레그램 알림
 
 단기 봇(job_buy/monitor)과 완전 분리:
-  - 별도 Supabase 테이블 (factor_positions, factor_watchlist)
+  - 별도 state_db 저장소 (factor_positions, factor_watchlist)
   - 손절/익절 없음 — 월간 리밸런싱만
 """
 
@@ -58,7 +58,7 @@ def main():
 
     new_picks = {row["ticker"]: row for _, row in top_df.iterrows()}
 
-    # Supabase 저장
+    # state_db 저장
     state_db.set_factor_watchlist(top_df.to_dict("records"))
 
     # ── 2. 현재 팩터 포지션 조회 ─────────────

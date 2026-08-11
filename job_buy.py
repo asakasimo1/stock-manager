@@ -1,6 +1,6 @@
 """
 Job 2 — 09:05 매수 실행
-Supabase watchlist를 읽어 매수 주문 후 positions에 저장
+state_db watchlist를 읽어 매수 주문 후 positions에 저장
 """
 
 import os, time, logging

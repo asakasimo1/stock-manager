@@ -17,9 +17,9 @@ logger = logging.getLogger(__name__)
 
 
 def _sync_positions(holdings: list):
-    """KIS 잔고 기준으로 Supabase positions 동기화
-    - KIS에 없는 종목 → Supabase에서 삭제 (매도 완료)
-    - KIS에 있는데 Supabase에 없는 종목 → 추가 (avg_price 기준 tp/sl 계산)
+    """KIS 잔고 기준으로 state_db positions 동기화
+    - KIS에 없는 종목 → state_db에서 삭제 (매도 완료)
+    - KIS에 있는데 state_db에 없는 종목 → 추가 (avg_price 기준 tp/sl 계산)
     """
     from strategy import load_strategy
     cfg, _ = load_strategy(os.getenv("STRATEGY", "optimized"))
@@ -157,7 +157,7 @@ def main():
         try:
             _sync_positions(bal["holdings"])
         except Exception as e:
-            logger.warning("포지션 동기화 건너뜀 (Supabase 미설정): %s", e)
+            logger.warning("포지션 동기화 건너뜀: %s", e)
         try:
             _reconcile_trades()
         except Exception as e:
