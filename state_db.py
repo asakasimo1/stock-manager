@@ -7,11 +7,13 @@ trading_meta: daily_pnl, initial_cash, bot_active
 """
 
 import os
+import logging
 from datetime import date, datetime, timezone, timedelta
 from dotenv import load_dotenv
 from supabase import create_client, Client
 
 load_dotenv()
+logger = logging.getLogger(__name__)
 
 _client: Client = None
 
@@ -101,17 +103,30 @@ def set_watchlist(candidates: list):
 
 # ─────────────────────────────────────────
 # 메타 (daily_pnl, initial_cash, bot_active)
+# Supabase 프로젝트가 죽어있거나(DNS 소멸 등) 미설정이어도 리포트 등 메타 조회/저장이
+# 실패하면 안 되므로(2026-08-11 report.yml 크래시 실측 — Supabase 프로젝트 자체가
+# 없어짐), 메타는 best-effort로 처리하고 실패 시 기본값 반환/조용히 무시한다.
+# positions/watchlist/factor_positions는 실제 매매 판단에 쓰이므로 여기 대상에서
+# 제외 — 잘못 비어있는 값을 반환하면 팩터 리밸런싱 등이 중복매수할 위험이 있음.
 # ─────────────────────────────────────────
 def get_meta(key: str, default=None):
-    rows = get_client().table("trading_meta").select("value").eq("key", key).execute().data
-    return rows[0]["value"] if rows else default
+    try:
+        rows = get_client().table("trading_meta").select("value").eq("key", key).execute().data
+        return rows[0]["value"] if rows else default
+    except Exception as e:
+        logger.warning("[state_db] get_meta(%s) 실패 — 기본값 사용: %s", key, e)
+        return default
 
 
 def get_meta_multi(keys: list, defaults: dict = None) -> dict:
     """여러 키를 한 번의 쿼리로 조회 — get_meta() 다중 호출 대체"""
-    rows = (get_client().table("trading_meta")
-            .select("key,value").in_("key", keys).execute().data)
-    result = {r["key"]: r["value"] for r in rows}
+    try:
+        rows = (get_client().table("trading_meta")
+                .select("key,value").in_("key", keys).execute().data)
+        result = {r["key"]: r["value"] for r in rows}
+    except Exception as e:
+        logger.warning("[state_db] get_meta_multi(%s) 실패 — 기본값 사용: %s", keys, e)
+        result = {}
     if defaults:
         for k, v in defaults.items():
             result.setdefault(k, v)
@@ -119,15 +134,21 @@ def get_meta_multi(keys: list, defaults: dict = None) -> dict:
 
 
 def set_meta(key: str, value):
-    get_client().table("trading_meta").upsert(
-        {"key": key, "value": value}
-    ).execute()
+    try:
+        get_client().table("trading_meta").upsert(
+            {"key": key, "value": value}
+        ).execute()
+    except Exception as e:
+        logger.warning("[state_db] set_meta(%s) 실패 — 무시: %s", key, e)
 
 
 def set_meta_multi(data: dict):
     """여러 키를 한 번의 upsert로 저장 — set_meta() 다중 호출 대체"""
-    rows = [{"key": k, "value": v} for k, v in data.items()]
-    get_client().table("trading_meta").upsert(rows).execute()
+    try:
+        rows = [{"key": k, "value": v} for k, v in data.items()]
+        get_client().table("trading_meta").upsert(rows).execute()
+    except Exception as e:
+        logger.warning("[state_db] set_meta_multi(%s) 실패 — 무시: %s", list(data.keys()), e)
 
 
 # ─────────────────────────────────────────
