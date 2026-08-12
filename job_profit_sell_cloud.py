@@ -120,6 +120,30 @@ def _own_managed_tickers() -> set:
     return tickers
 
 
+def _notify_untracked_holdings(holdings: list, own_tickers: set):
+    """계좌에는 있는데 우리 잡 시스템(조건부매수/그리드/초단타) 어디에도 없는 종목 —
+    즉 시스템이 아닌 경로로(수동 MTS 주문 등) 매수된 종목이 새로 나타나면 텔레그램 알림.
+    2026-08-12 사용자 요청 — 예전에 파인엠텍/한솔아이원스/신영증권처럼 출처를 알 수
+    없는 매수가 반복돼서, 이런 종목은 자동손절 대상도 아니니(own_tickers 스코프 밖)
+    조용히 방치되지 않도록 발견 즉시 알림. 같은 종목 계속 보유 중이면 재알림 안 하고,
+    한 번 없어졌다가 다시 생기면 다시 알림."""
+    untracked = {h["ticker"]: h for h in holdings if h["ticker"] not in own_tickers}
+    if not untracked:
+        gist_writer._write_gist({"untracked_holdings_notified.json": []})
+        return
+    already = set(gist_writer._read_gist_file("untracked_holdings_notified.json") or [])
+    new_tickers = set(untracked) - already
+    if new_tickers:
+        lines = ["⚠️ <b>시스템이 아닌 경로로 매수된 종목 발견</b>"]
+        for t in sorted(new_tickers):
+            h = untracked[t]
+            lines.append(f"  • {h['name']}({t}) {h['qty']}주 @ {h['avg_price']:,}원")
+        lines.append("\n조건부매수/그리드/초단타 어디에도 등록 안 된 종목이라 자동손절·익절 대상이 아닙니다.")
+        notify.send("\n".join(lines))
+        logger.warning("추적 안 되는 보유종목 알림 발송: %s", new_tickers)
+    gist_writer._write_gist({"untracked_holdings_notified.json": sorted(untracked.keys())})
+
+
 def auto_sell_by_rule():
     """보유 종목 자동매도 규칙 체크 (KRX 정규 09:00~15:30, 5분 1회 제한)
     저희 자동매매 시스템이 직접 매수한 종목만 대상으로 한다(수동/외부 매수 종목 제외).
@@ -162,6 +186,11 @@ def auto_sell_by_rule():
             _peak_pnl.pop(stale, None)
 
     own_tickers = _own_managed_tickers()
+
+    try:
+        _notify_untracked_holdings(bal["holdings"], own_tickers)
+    except Exception as e:
+        logger.warning("추적 안 되는 보유종목 알림 실패: %s", e)
 
     for h in bal["holdings"]:
         ticker  = h["ticker"]
