@@ -332,7 +332,17 @@ def _force_close(job: dict, cur_price: int, reason: str) -> None:
                                pnl_pct=pnl_pct, reason=reason, order_no=result.get("order_no", ""))
         logger.info("★ [%s] 강제청산 %s %d주 @ %d원  손익 %s원", reason, ticker, qty, cur_price, f"{pnl:+,.0f}")
     except Exception as e:
-        logger.error("%s 강제청산 실패: %s", ticker, e)
+        if scalp_engine.is_phantom_position_error(e):
+            logger.warning("%s 강제청산 실패 — 실제 계좌에 없는 포지션으로 판단, 내부 상태 초기화: %s", ticker, e)
+            scalp_engine.clear_peak_pnl(ticker)
+            job["phase"] = "watching"
+            job["buy_price"] = 0
+            job["buy_qty"] = 0
+            job["entered_at"] = 0
+            if job.get("source") == "auto":
+                job["status"] = "done"
+        else:
+            logger.error("%s 강제청산 실패: %s", ticker, e)
 
 
 def _close_stale_auto_watching(jobs: list) -> bool:
@@ -451,7 +461,18 @@ def main():
                     logger.info("★ [%s] %s %d주 @ %d원  손익 %s원(%.2f%%)",
                                 reason, ticker, qty, cur_price, f"{pnl:+,.0f}", pnl_pct)
                 except Exception as e:
-                    logger.error("%s 청산 실패: %s", ticker, e)
+                    if scalp_engine.is_phantom_position_error(e):
+                        logger.warning("%s 청산 실패 — 실제 계좌에 없는 포지션으로 판단, 내부 상태 초기화: %s", ticker, e)
+                        job["phase"] = "watching"
+                        job["buy_price"] = 0
+                        job["buy_qty"] = 0
+                        job["entered_at"] = 0
+                        if job.get("source") == "auto":
+                            job["status"] = "done"
+                        changed = True
+                        scalp_engine.clear_peak_pnl(ticker)
+                    else:
+                        logger.error("%s 청산 실패: %s", ticker, e)
             else:
                 logger.info("  %s(%s) 보유중 @ %d원 (진입 %d원)", name, ticker, cur_price, int(buy_price))
             continue

@@ -329,7 +329,18 @@ def _force_close(job: dict, cur_price: float, reason: str) -> None:
         logger.info("★ [%s] 강제청산 %s %.8f개 @ %s원  손익 %s원  UUID:%s",
                     reason, ticker, qty, f"{cur_price:,.0f}", f"{pnl:+,.0f}", result.get("uuid", ""))
     except Exception as e:
-        logger.error("%s 강제청산 실패: %s", ticker, e)
+        if scalp_engine.is_phantom_position_error(e):
+            logger.warning("%s 강제청산 실패 — 실제 계좌에 없는 포지션으로 판단, 내부 상태 초기화: %s", ticker, e)
+            scalp_engine.clear_peak_pnl(ticker)
+            job["phase"] = "watching"
+            job["buy_price"] = 0
+            job["buy_qty"] = 0
+            job["entered_at"] = 0
+            job["buy_uuid"] = ""
+            if job.get("source") == "auto":
+                job["status"] = "done"
+        else:
+            logger.error("%s 강제청산 실패: %s", ticker, e)
 
 
 def main():
@@ -450,7 +461,19 @@ def main():
                     logger.info("★ [%s] %s %.8f개 @ %s원  손익 %s원(%.2f%%)  UUID:%s",
                                 reason, ticker, qty, f"{cur_price:,.0f}", f"{pnl:+,.0f}", pnl_pct, result.get("uuid", ""))
                 except Exception as e:
-                    logger.error("%s 청산 실패: %s", ticker, e)
+                    if scalp_engine.is_phantom_position_error(e):
+                        logger.warning("%s 청산 실패 — 실제 계좌에 없는 포지션으로 판단, 내부 상태 초기화: %s", ticker, e)
+                        job["phase"] = "watching"
+                        job["buy_price"] = 0
+                        job["buy_qty"] = 0
+                        job["entered_at"] = 0
+                        job["buy_uuid"] = ""
+                        if job.get("source") == "auto":
+                            job["status"] = "done"
+                        changed = True
+                        scalp_engine.clear_peak_pnl(ticker)
+                    else:
+                        logger.error("%s 청산 실패: %s", ticker, e)
             else:
                 logger.info("  %s(%s) 보유중 @ %s원 (진입 %s원)", name, ticker,
                             f"{cur_price:,.0f}", f"{buy_price:,.0f}")
