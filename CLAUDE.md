@@ -101,3 +101,25 @@ sudo systemctl restart coin-daemon
 2. **크론 활성화 전**: 위 "크론 비활성화" 표와 대조 — 중복 확인 필수
 3. **daemon 파일 수정 후**: `sudo systemctl restart <daemon>` 필수
 4. **GHA self-hosted 잡**: Oracle VM에서 실행됨 — daemon과 동일 코드 실행 위험
+
+---
+
+## 운영 로그 (Gist 직접수정 · VM 수동조치 — git log에 안 남는 것들)
+
+**코드 변경은 git 커밋 메시지에 남으니 `git log`로 확인하면 됨.** 이 표는
+**Gist 파일을 스크립트로 직접 PATCH했거나, 정식 배포 절차 없이 VM에서 수동으로
+뭔가 처리한 경우**만 기록한다 — 다른 머신(Mac/Windows)에서 작업을 이어받는
+세션이 git pull만으로는 놓치는 변경사항을 알 수 있도록 하기 위함
+(2026-08-12: Mac 세션과 Windows 세션이 같은 버그를 동시에 각자 고쳐서 병합
+충돌이 났던 사례가 있었음 — 코드는 git으로 해결됐지만, Gist/VM 직접 조치는
+이런 로그가 없으면 서로 알 방법이 없음).
+
+**작업 시작 시**: `git log`뿐 아니라 이 표도 확인할 것. 아래 항목이 이미
+반영된 걸로 보이면(예: Gist 조회해서 확인) 중복 조치하지 말 것.
+
+**새 항목 추가 형식**: `[YYYY-MM-DD HH:MM KST] 파일/대상 — 내용 (관련 커밋 있으면 해시)`
+
+- [2026-08-12 09:57] `scalp_auto_config.json` (Gist) — `test_fixed_qty_until`을 2026-08-14로 연장 (모니터링 기간 중 1주씩만 매수)
+- [2026-08-12 09:57] `scalp_auto_config.json` (Gist) — `stop_loss_pct_premarket` 3.6 추가 (NXT 프리마켓 전용 손절폭, quiet_hour×2). 관련: `a697edd`
+- [2026-08-12 11:31] `scalp_stock_jobs.json` (Gist) — 유령 포지션 2건(148780 비큐AI, 226320 잇츠한불) `phase=watching`/`status=done`으로 수동 초기화. 근본 원인 수정: `205757e`
+- [2026-08-12 14:1x] `job_profit_sell_cloud.py` — VM `stock-daemon` scp 배포 + 재시작 (git push `b3c9ad1` 이후)
