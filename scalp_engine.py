@@ -137,6 +137,21 @@ def fmt_opt(val: float | None, fmt: str = "{:+.2f}") -> str:
     return "N/A" if val is None else fmt.format(val)
 
 
+def is_phantom_position_error(e: Exception) -> bool:
+    """매도 주문 실패가 '실제로는 보유하고 있지 않은 수량'이라서 거부된 것인지 판별.
+    잡 내부 상태(phase=holding)와 실제 거래소 잔고가 어긋나 있으면(다른 시스템이
+    이미 팔았거나 체결이 잘못 기록된 경우 등) should_exit()가 계속 True를 반환하고
+    같은 매도 주문이 영원히 실패하는 무한 재시도 루프가 됨 — 2026-08-11~12일 실측:
+    148780(비큐AI) 6286회, 226320(잇츠한불) 4432회 연속 실패, KRW-CHZ 등 코인도 동일
+    패턴 확인. 이 에러 유형이면 호출부가 재시도 대신 내부 상태를 즉시 정리해야 한다."""
+    msg = str(e)
+    return (
+        "주문 가능한 수량을 초과" in msg      # KIS(주식): 보유 수량보다 많이 팔려 함
+        or "insufficient_funds_ask" in msg    # Upbit(코인): 매도 가능 잔고 부족 에러 코드
+        or ("주문 가능한 금액" in msg and "부족" in msg)  # Upbit 에러 메시지 문구
+    )
+
+
 def reset(ticker: str = None) -> None:
     if ticker:
         _price_hist.pop(ticker, None)
