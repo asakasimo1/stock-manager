@@ -75,3 +75,24 @@ vercel --prod
 - `api/coin.js`의 `handleCoinRunner`는 **보조 수단** (Oracle VM 다운 시 앱에서 수동 트리거용)
 - 자동매매 로직 버그는 **stock-trader 저장소의 Python 코드**에서 수정해야 함
 - Vercel Hobby 플랜 → 1분 미만 cron 불가 (Oracle VM daemon이 대체)
+
+---
+
+## 운영 로그 (Gist 직접수정 · Vercel 별칭 재지정 등 — git log에 안 남는 것들)
+
+**코드 변경은 git 커밋 메시지에 남으니 `git log`로 확인.** 이 표는 **Gist를
+스크립트로 직접 수정했거나, `vercel alias set` 등 git에 안 남는 수동 조치를
+한 경우**만 기록 — 다른 머신(Mac/Windows) 세션이 git pull만으로는 놓치는
+변경사항을 알 수 있도록 하기 위함(stock-trader 저장소에서 Mac/Windows 세션이
+같은 버그를 동시에 각자 고쳐서 병합 충돌 났던 사례가 있어, 이 저장소도 동일한
+이유로 로그를 둠).
+
+**참고**: `hsk-stockmanager.vercel.app`는 수동 별칭이라 새 배포마다 자동으로
+안 따라감 — 캐노니컬 도메인(`stock-analyzer-nu-brown.vercel.app`)에 배포된 뒤
+`vercel alias set stock-analyzer-nu-brown.vercel.app hsk-stockmanager.vercel.app`
+로 다시 지정해야 함.
+
+**새 항목 추가 형식**: `[YYYY-MM-DD HH:MM KST] 대상 — 내용 (관련 커밋 있으면 해시)`
+
+- [2026-08-12] `hsk-stockmanager.vercel.app` — `tab-autotrade.js` 자동완성 수정
+  배포(`755a67a`) 후 최신 배포로 별칭 재지정.
