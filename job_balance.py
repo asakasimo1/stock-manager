@@ -125,6 +125,12 @@ def main():
         bfdy_total_eval = bal.get("bfdy_total_eval", 0)
         day_ret = round(daily_pnl / bfdy_total_eval * 100, 2) if bfdy_total_eval else 0
 
+        try:
+            pending_orders = kis_api.get_pending_orders()
+        except Exception as e:
+            logger.warning("미체결 주문 조회 실패: %s", e)
+            pending_orders = []
+
         now_kst = datetime.now(KST).strftime("%Y-%m-%d %H:%M")
         account_data = {
             "updated_at": now_kst,
@@ -146,10 +152,11 @@ def main():
                 }
                 for h in bal["holdings"]
             ],
+            "pending_orders": pending_orders,
         }
         ok = gist_writer._write_gist({"account_balance.json": account_data})
-        logger.info("잔고 Gist 업데이트 %s — 보유 %d종목  당일손익 %s원 (%+.2f%%)",
-                    "완료" if ok else "실패", len(bal["holdings"]), f"{daily_pnl:+,.0f}", day_ret)
+        logger.info("잔고 Gist 업데이트 %s — 보유 %d종목  당일손익 %s원 (%+.2f%%)  미체결 %d건",
+                    "완료" if ok else "실패", len(bal["holdings"]), f"{daily_pnl:+,.0f}", day_ret, len(pending_orders))
         for h in bal["holdings"]:
             logger.info("  %s %s  %d주  평균 %d원  현재 %d원  손익 %+.2f%%",
                         h["ticker"], h["name"], h["qty"],
