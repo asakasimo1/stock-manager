@@ -33,10 +33,11 @@ SELL_FEE = 0.00195
 
 MAX_CONCURRENT_POSITIONS = 3  # 주식 스캘핑 동시 보유 종목 상한 (하드 리밋)
 
-DISCOVERY_INTERVAL_SEC = 15  # 자동발굴 스캔 주기 하한 — 등락률 순위 조회·Gist 쓰기 빈도 제한
-# (2026-08-12: 30초→15초로 단축 — 신호 발생~매수 사이 지연이 너무 길어 모멘텀이
-#  이미 꺾인 뒤에 진입하는 경우가 많았음. entry_confirm_cycles/strong_signal_multiplier는
-#  건드리지 않음 — "신중하게 확인 후 진입"은 유지하고 "포착 자체가 느린" 부분만 개선)
+DISCOVERY_INTERVAL_SEC = 5  # 자동발굴 스캔 주기 하한 — 등락률 순위 조회·Gist 쓰기 빈도 제한
+# (2026-08-12: 30초→15초로 단축. 2026-08-13: NHN(181710) 사례 분석 후 15초→5초로
+#  추가 단축 — 코인 스캔 주기(5초)와 동일하게 맞춤. discovery_momentum_sec(60초 룩백)와
+#  entry_confirm_cycles/strong_signal_multiplier는 사용자 요청으로 그대로 유지 —
+#  "포착 스캔 자체가 느린" 부분만 더 개선, 신호 품질/확인절차는 안 건드림)
 _last_discover_at = 0.0
 
 
