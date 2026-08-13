@@ -136,7 +136,11 @@ def main():
             elif amount > 0:
                 order_qty = amount // cur_price
                 if order_qty < 1:
-                    logger.warning("%s 금액 %d원으로 현재가 %d원 1주 매수 불가", name, amount, cur_price)
+                    logger.warning("%s 금액 %d원으로 현재가 %d원 1주 매수 불가 — 잡 취소", name, amount, cur_price)
+                    job["status"]      = "skipped"
+                    job["skip_reason"] = f"예산 부족 (금액 {amount:,}원 < 현재가 {cur_price:,}원)"
+                    job["executed_at"] = now_kst()
+                    changed = True
                     continue
             else:
                 logger.warning("%s 수량/금액 미설정", name)
@@ -188,6 +192,15 @@ def main():
 
         except Exception as e:
             logger.error("%s(%s) 처리 실패: %s", name, ticker, e)
+            # 예수금 부족은 재시도해도 동일하게 실패함 — active로 두면 다음 사이클마다
+            # 같은 주문이 영원히 재시도되는 무한 루프가 됨 (2026-08-13 실측:
+            # 204270 등에서 30초 간격 연속 실패). 잡을 즉시 종료시켜 루프 차단.
+            if "주문가능금액" in str(e) and "초과" in str(e):
+                logger.warning("⛔ 예수금 부족 — %s(%s) 잡 취소 (무한 재시도 방지)", name, ticker)
+                job["status"]      = "skipped"
+                job["skip_reason"] = "예수금 부족"
+                job["executed_at"] = now_kst()
+                changed = True
 
     if changed:
         ok = gist_writer._write_gist({"profit_buy_jobs.json": jobs})
