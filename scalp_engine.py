@@ -88,6 +88,28 @@ def volume_surge_ratio(ticker: str, recent_sec: float = 20, baseline_sec: float 
     return recent_rate / baseline_rate
 
 
+def recent_volume_abs(ticker: str, window_sec: float = 120, now: float = None) -> float | None:
+    """최근 window_sec 동안 실제로 체결된 거래량(절대값, 비율 아님).
+    극단적 거래량 급증 판정 시 volume_surge_ratio()의 상대 비율만으로는 원래 거래가
+    거의 없던 종목의 오탐(2주→10주도 "5배")을 못 걸러서, 10일 평균 거래량 기반 절대
+    기준치와 비교하는 용도로 추가(2026-08-13 사용자 요청)."""
+    now = now if now is not None else time.time()
+    hist = _volume_hist.get(ticker)
+    if not hist or len(hist) < 2:
+        return None
+    latest_v = hist[-1][1]
+    cutoff = now - window_sec
+    base_v = None
+    for t, v in hist:
+        if t <= cutoff:
+            base_v = v
+        else:
+            break
+    if base_v is None:
+        return None
+    return latest_v - base_v
+
+
 def momentum_pct(ticker: str, lookback_sec: float, now: float = None) -> float | None:
     """lookback_sec 이전 대비 현재까지의 가격 변화율(%). 관측 기간 부족 시 None."""
     now = now if now is not None else time.time()
@@ -173,6 +195,7 @@ def should_enter(
     cur_price: float = 0.0,
     tick_size: float = 0.0,
     ticker: str | None = None,
+    extreme_volume_baseline_2min: float | None = None,
 ) -> tuple[bool, str]:
     """
     params:
@@ -184,11 +207,22 @@ def should_enter(
       strong_signal_multiplier — 모멘텀·거래량 둘 다 각자 임계치의 이 배수(기본 2.0배) 이상이면
                                "이미 충분히 강한 신호"로 보고 확인 절차 없이 즉시 진입.
                                애매한 신호만 confirm_cycles로 걸러내고, 확실한 신호는 놓치지 않기 위함
+      extreme_volume_surge_ratio — 0보다 크면, volume_surge(비율)가 이 배수 이상일 때 모멘텀
+                               확인 절차(confirm_cycles)를 생략하고 즉시 진입 (기본 0=비활성).
+                               발굴 룩백(60초)·확인절차는 그대로 두되, "거래량이 매우 급증하는
+                               경우"만 예외로 빠르게 태우기 위함(2026-08-13 사용자 요청).
+                               extreme_volume_baseline_2min이 함께 주어지면, 최근 2분간
+                               실제(절대) 거래량도 그 기준치의 같은 배수 이상이어야 통과 —
+                               원래 거래가 거의 없던 종목이 2주→10주처럼 "비율상 5배"로만
+                               보이는 오탐을 절대 기준치로 걸러냄
     volume_surge: scalp_engine.volume_surge_ratio() 결과 — min_volume_surge_ratio 검사 시에만 사용
     cur_price/tick_size: 호가 노이즈 보정용 — 저가 코인/종목에서 1틱 등락만으로 모멘텀 조건이
       충족되는 것을 막기 위해 entry_momentum_pct를 tick_aware_floor로 자동 상향 (둘 다 필요,
       하나라도 0이면 보정 없이 설정값 그대로 사용)
     ticker: entry_confirm_cycles 연속 확인 상태를 추적할 키. None이면 확인 절차 없이 즉시 판단(하위호환).
+    extreme_volume_baseline_2min: 호출부가 kis_api.get_avg_daily_volume()로 미리 조회해서
+      "10일 평균 일거래량 ÷ 하루 2분 구간 수"로 정규화해 캐싱해둔 절대 기준치.
+      None이면 절대기준 검사 없이 extreme_volume_surge_ratio(비율)만으로 판단.
     """
     entry_th_cfg = float(params.get("entry_momentum_pct", 0.4))
     entry_th = tick_aware_floor(cur_price, tick_size, entry_th_cfg)
@@ -225,6 +259,16 @@ def should_enter(
         if momentum_strong and volume_strong:
             _entry_confirm.pop(ticker, None)
             return True, base_reason + " (강한 신호 — 확인 절차 생략)"
+
+    extreme_ratio = float(params.get("extreme_volume_surge_ratio", 0) or 0)
+    if extreme_ratio > 0 and volume_surge is not None and volume_surge >= extreme_ratio:
+        abs_ok = True
+        if extreme_volume_baseline_2min is not None and extreme_volume_baseline_2min > 0:
+            recent_abs = recent_volume_abs(ticker, window_sec=120) if ticker is not None else None
+            abs_ok = recent_abs is not None and recent_abs >= extreme_volume_baseline_2min * extreme_ratio
+        if abs_ok:
+            _entry_confirm.pop(ticker, None)
+            return True, base_reason + f" (거래량 급증 {volume_surge:.2f}배 — 즉시 진입)"
 
     count = _entry_confirm.get(ticker, 0) + 1
     if count < confirm_cycles:

@@ -229,7 +229,22 @@ def _auto_discover(jobs: list, auto_cfg: dict, stock_enabled: bool, now_epoch: f
             filtered.append(c)
         picked = filtered
 
+    # 거래량 급증 즉시진입(2026-08-13 사용자 요청) — 기능 켜져 있을 때만 10일 평균
+    # 거래량을 조회해서 "2분 단위 정규화 기준치"를 잡마다 캐싱. 원래 거래가 거의
+    # 없던 종목이 짧은 구간 비율만으로 "N배 급증"처럼 보이는 오탐을 막기 위한
+    # 절대 기준치 — should_enter()의 extreme_volume_baseline_2min으로 전달됨.
+    extreme_vol_ratio_cfg = float(auto_cfg.get("extreme_volume_surge_ratio", 0) or 0)
+    _TWO_MIN_WINDOWS_PER_DAY = 195  # KRX 정규장 09:00~15:30 = 390분 ÷ 2분
+
     for c in picked:
+        extreme_vol_baseline = 0
+        if extreme_vol_ratio_cfg > 0:
+            try:
+                avg_daily_vol = kis_api.get_avg_daily_volume(c["ticker"])
+                if avg_daily_vol:
+                    extreme_vol_baseline = avg_daily_vol / _TWO_MIN_WINDOWS_PER_DAY
+            except Exception as e:
+                logger.warning("%s 10일평균거래량 조회 실패(절대기준 없이 진행): %s", c["ticker"], e)
         jobs.append({
             "id":                 f"auto-{c['ticker']}-{int(now_epoch)}",
             "ticker":             c["ticker"],
@@ -255,6 +270,8 @@ def _auto_discover(jobs: list, auto_cfg: dict, stock_enabled: bool, now_epoch: f
             "max_daily_loss_krw": max_loss,
             "watch_timeout_sec":  auto_cfg.get("watch_timeout_sec", 300),
             "min_volume_surge_ratio": min_vol_surge,
+            "extreme_volume_surge_ratio": extreme_vol_ratio_cfg,
+            "extreme_volume_baseline_2min": extreme_vol_baseline,
             "discovered_at":      now_epoch,
             "buy_price": 0, "buy_qty": 0, "entered_at": 0,
             "trades_today": 0, "realized_pnl_today": 0, "stats_date": today,
@@ -496,7 +513,8 @@ def main():
         vol_surge = scalp_engine.volume_surge_ratio(ticker, now=now_epoch)
         should, reason = scalp_engine.should_enter(momentum, today_chg, job, volume_surge=vol_surge,
                                                     cur_price=cur_price, tick_size=kis_api.price_unit(cur_price),
-                                                    ticker=ticker)
+                                                    ticker=ticker,
+                                                    extreme_volume_baseline_2min=job.get("extreme_volume_baseline_2min") or None)
         if not should:
             logger.info("  %s(%s) 대기 — %s", name, ticker, reason)
             continue

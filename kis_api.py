@@ -409,6 +409,45 @@ def get_price(ticker: str) -> dict:
     return data["output"]
 
 
+def get_avg_daily_volume(ticker: str, days: int = 10) -> float | None:
+    """최근 days거래일의 일별 거래량 평균.
+    스캘핑 극단적 거래량 급증 판정(2026-08-13 사용자 요청)의 절대 기준치로 사용 —
+    원래 거래가 거의 없던 종목(예: 2분 평균 2주)이 짧은 구간 비율만으로 "5배 급증"
+    (2주→10주)처럼 보이는 오탐을 막기 위해, 10일 평균 거래량을 2분 단위로 정규화한
+    값 대비로도 급증 여부를 다시 확인한다. 조회 실패 시 None(호출부는 이 조건을
+    건너뛰고 기존 비율 기준만 적용)."""
+    tr_id = "FHKST03010100"
+    today = datetime.now(_KST).strftime("%Y%m%d")
+    start = (datetime.now(_KST) - timedelta(days=days * 2 + 5)).strftime("%Y%m%d")  # 주말/휴장 감안 여유
+    try:
+        resp = _api_get(
+            f"{BASE_URL}/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice",
+            headers=_headers(tr_id),
+            params={
+                "fid_cond_mrkt_div_code": "J",
+                "fid_input_iscd": ticker,
+                "fid_input_date_1": start,
+                "fid_input_date_2": today,
+                "fid_period_div_code": "D",
+                "fid_org_adj_prc": "1",
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("rt_cd") != "0":
+            logger.warning("일별거래량 조회 실패(%s): %s", ticker, data.get("msg1"))
+            return None
+        rows = data.get("output2", [])[:days]
+        vols = [int(r["acml_vol"]) for r in rows if r.get("acml_vol")]
+        if not vols:
+            return None
+        return sum(vols) / len(vols)
+    except Exception as e:
+        logger.warning("일별거래량 조회 예외(%s): %s", ticker, e)
+        return None
+
+
 def get_spread_pct(ticker: str) -> float | None:
     """매수/매도 1호가 스프레드(%) 조회 — 슬리피지 우려 종목 배제용.
     get_price()와 동일하게 NXT 시간대엔 NX 시세 우선, 실패 시 KRX(J)로 폴백.
