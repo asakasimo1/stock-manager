@@ -408,6 +408,32 @@ def place_order(
 # ─────────────────────────────────────────
 # 주문 상태 조회
 # ─────────────────────────────────────────
+def get_pending_orders(market: str = None) -> list:
+    """미체결(wait) 주문 목록 조회. market 생략 시 전체 마켓 대상.
+    반환: [{uuid, market, side(BUY/SELL), price, qty, remaining_qty}, ...]"""
+    params = {"state": "wait", "order_by": "desc"}
+    if market:
+        params["market"] = market
+    resp = _session.get(
+        f"{BASE_URL}/orders",
+        params=params,
+        headers=_auth_header(params),
+        timeout=10,
+    )
+    resp.raise_for_status()
+    return [
+        {
+            "uuid":          o.get("uuid", ""),
+            "market":        o.get("market", ""),
+            "side":          "BUY" if o.get("side") == "bid" else "SELL",
+            "price":         float(o.get("price") or 0),
+            "qty":           float(o.get("volume") or 0),
+            "remaining_qty": float(o.get("remaining_volume") or 0),
+        }
+        for o in resp.json()
+    ]
+
+
 def get_closed_orders(state: str = "done", limit: int = 100) -> list:
     """완료된 주문 목록 조회 (전체 마켓 대상, market 파라미터 생략).
     거래내역 통합 기록(reconcile)용 — 어떤 잡(그리드/스캘핑)이 냈든,

@@ -80,10 +80,15 @@ def _reconcile_trades():
 def run():
     try:
         bal = upbit_api.get_balance()
+        try:
+            bal["pending_orders"] = upbit_api.get_pending_orders()
+        except Exception as e:
+            logger.warning("미체결 주문 조회 실패: %s", e)
+            bal["pending_orders"] = []
         ok  = gist_writer._write_gist({"coin_account.json": bal})
-        logger.info("코인 잔고 Gist 업데이트 %s — KRW %s원  보유 %d종",
+        logger.info("코인 잔고 Gist 업데이트 %s — KRW %s원  보유 %d종  미체결 %d건",
                     "완료" if ok else "실패",
-                    f"{bal['krw']:,.0f}", len(bal['holdings']))
+                    f"{bal['krw']:,.0f}", len(bal['holdings']), len(bal.get("pending_orders", [])))
     except Exception as e:
         logger.error("코인 잔고 업데이트 실패: %s", e)
 
