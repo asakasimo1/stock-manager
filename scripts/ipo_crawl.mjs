@@ -229,13 +229,25 @@ async function readGistIpo() {
   return f ? JSON.parse(f.content || '[]') : [];
 }
 async function writeGistIpo(data) {
-  const r = await fetch(`https://api.github.com/gists/${GIST_ID}`, {
-    method: 'PATCH',
-    headers: { Authorization: `Bearer ${GH_TOKEN}`, Accept: 'application/vnd.github+json',
-               'Content-Type': 'application/json', 'User-Agent': 'ipo-crawl' },
-    body: JSON.stringify({ files: { 'ipo.json': { content: JSON.stringify(data, null, 2) } } }),
-  });
-  if (!r.ok) throw new Error(`Gist write error: ${r.status}`);
+  const body = JSON.stringify({ files: { 'ipo.json': { content: JSON.stringify(data, null, 2) } } });
+  // gist_update API는 core(5000/시간)와 별개로 100회/시간 한도가 있고, 같은 GIST_ID를
+  // stock-trader VM 데몬(그리드/스캘핑/매수 잡)들이 상태 변경 시마다 계속 써서 소진되기
+  // 쉬움 (2026-08-13 실측: 403). 짧게 재시도해서 일시적 소진은 넘긴다.
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const r = await fetch(`https://api.github.com/gists/${GIST_ID}`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${GH_TOKEN}`, Accept: 'application/vnd.github+json',
+                 'Content-Type': 'application/json', 'User-Agent': 'ipo-crawl' },
+      body,
+    });
+    if (r.ok) return;
+    if (r.status === 403 && attempt < 3) {
+      console.warn(`[IPO] Gist 쓰기 403 (${attempt}회차) — ${attempt * 20}초 후 재시도`);
+      await new Promise(res => setTimeout(res, attempt * 20000));
+      continue;
+    }
+    throw new Error(`Gist write error: ${r.status}`);
+  }
 }
 
 // ── JSONBin 읽기/쓰기 ────────────────────────────────────────
