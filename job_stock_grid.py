@@ -373,6 +373,70 @@ def process_grid(job: dict, cur_price: int = None) -> bool:
     return changed
 
 
+def _stop_loss_top_grid(job: dict) -> bool:
+    """하단 이탈 시 예수금 < krw_per_grid(격자 1개 매수 가능 금액)인 경우에만
+    sell_waiting 격자 중 level이 가장 높은 것 1개를 시장가 손절.
+    코인 그리드(job_coin_grid.py)의 동일 로직을 KIS 계좌 기준으로 이식
+    (2026-08-13 사용자 요청 — 범위 이탈 시 손절 없이 계속 물량만 쌓이던 문제).
+    Gist 저장이 필요한 변경 발생 시 True 반환."""
+    ticker = job["ticker"]
+    grids = job.get("grids", [])
+    candidates = sorted(
+        [g for g in grids if g.get("state") == "sell_waiting"],
+        key=lambda g: -float(g["level"])
+    )
+    if not candidates:
+        return False
+
+    krw_per_grid = float(job.get("krw_per_grid", 0))
+    try:
+        bal = kis_api.get_balance()
+        cash = bal.get("cash", 0)
+        if cash >= krw_per_grid:
+            logger.info("손절 스킵: 예수금 %s원 ≥ 격자당 %s원 (매수 가능)",
+                        f"{cash:,.0f}", f"{krw_per_grid:,.0f}")
+            return False
+        logger.info("손절 진행: 예수금 %s원 < 격자당 %s원 (잔고 부족)",
+                    f"{cash:,.0f}", f"{krw_per_grid:,.0f}")
+    except Exception as e:
+        logger.warning("손절 전 잔고 조회 실패 — 손절 보류: %s", e)
+        return False
+
+    grid     = candidates[0]
+    level    = float(grid["level"])
+    order_no = grid.get("order_no", "")
+    org_no   = grid.get("org_no", "")
+    qty      = int(grid.get("qty", 0))
+
+    # 기존 매도 지정가 주문 취소 — 실패 시 이중 매도 방지를 위해 손절 보류
+    if order_no:
+        try:
+            kis_api.cancel_order(order_no, org_no)
+            grid["order_no"] = ""
+            grid["org_no"]   = ""
+        except Exception as e:
+            logger.warning("손절: 기존 매도 취소 실패 → 손절 보류 (이중 매도 방지) %s원: %s",
+                           f"{level:,.0f}", e)
+            return False
+
+    if qty <= 0:
+        grid.update(state="idle", order_no="", org_no="", qty=0)
+        return True
+
+    try:
+        kis_api.place_order(ticker, "SELL", qty, order_type="market")
+        buy_price = grid.get("last_buy_price", 0)
+        job["trade_count"] = job.get("trade_count", 0) + 1
+        grid.update(state="idle", order_no="", org_no="", qty=0)
+        logger.info("▼ 손절 매도: %s %d주 (매수가 %s원 / 격자 %s원)",
+                    ticker, qty, f"{buy_price:,.0f}", f"{level:,.0f}")
+        return True
+    except Exception as e:
+        logger.error("손절 매도 실패 %s원: %s", f"{level:,.0f}", e)
+        grid.update(state="idle", order_no="", org_no="")
+        return False
+
+
 def _check_out_of_range(job: dict, cur_price: int) -> bool:
     lower = float(job.get("lower_price", 0))
     upper = float(job.get("upper_price", float("inf")))
@@ -412,6 +476,14 @@ def _check_out_of_range(job: dict, cur_price: int) -> bool:
             elapsed = 0
         market_open = kis_api.is_any_market_open()
         if elapsed >= auto_min and market_open:
+            is_below = cur_price < lower
+            # 하단 이탈 + 손절 옵션 ON(명시적으로 False가 아니면 기본 활성) + 잔고 부족
+            # 이면 재초기화 전에 최상단 보유물량 1개 먼저 손절 — 예수금 없이 계속
+            # 아래로만 물량이 쌓이는 것을 방지(2026-08-13 사용자 요청)
+            if is_below and job.get("stop_loss_on_escape") is not False and _stop_loss_top_grid(job):
+                logger.info("그리드 손절 후 다음 사이클에 재초기화 시도: %s", name)
+                return True  # 이번 사이클은 손절만, 다음 사이클에 reinit
+
             n_each = 5
             step = 1 + float(job.get("grid_pct", 1.5)) / 100
             nl = kis_api.round_price(cur_price / step ** n_each)
