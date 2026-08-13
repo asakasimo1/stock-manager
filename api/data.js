@@ -36,6 +36,26 @@ async function getKisToken(appKey, appSecret) {
   return _tokenCache.token;
 }
 
+async function getKisPendingOrders(token, appKey, appSecret, cano, acntPrdtCd) {
+  const params = new URLSearchParams({
+    CANO: cano, ACNT_PRDT_CD: acntPrdtCd,
+    CTX_AREA_FK200: '', CTX_AREA_NK200: '',
+    INQR_DVSN_1: '0', INQR_DVSN_2: '0',
+  });
+  const trId = KIS_BASE.includes('vts') ? 'VTTC8036R' : 'TTTC8036R';
+  const r = await fetch(`${KIS_BASE}/uapi/domestic-stock/v1/trading/inquire-psbl-rvsecncl?${params}`, {
+    headers: { 'content-type': 'application/json; charset=utf-8', authorization: `Bearer ${token}`, appkey: appKey, appsecret: appSecret, tr_id: trId, custtype: 'P' },
+  });
+  if (!r.ok) return [];
+  const data = await r.json();
+  if (data.rt_cd !== '0') return [];
+  return (data.output || []).map(o => ({
+    ticker: o.pdno, name: o.prdt_name,
+    side: o.sll_buy_dvsn_cd === '02' ? 'BUY' : 'SELL',
+    qty: Number(o.ord_qty || 0), filled: Number(o.tot_ccld_qty || 0), price: Number(o.ord_unpr || 0),
+  }));
+}
+
 async function updateGist(gistId, ghToken, ghHeaders, data) {
   try {
     await fetch(`https://api.github.com/gists/${gistId}`, {
@@ -196,6 +216,8 @@ export default async function handler(req, res) {
         }
       } catch (_) { /* 실현손익 집계 실패해도 미실현분은 반환 */ }
       const dayPnl = Math.round(unrealizedDay + realizedToday);
+      let pendingOrders = [];
+      try { pendingOrders = await getKisPendingOrders(token, appKey, appSecret, cano, acntPrdtCd); } catch (_) {}
       const account_balance = {
         updated_at: updatedAt,
         cash: Number(summary.dnca_tot_amt || 0),
@@ -203,6 +225,7 @@ export default async function handler(req, res) {
         day_pnl: dayPnl,
         day_ret: bfdyTotalEval ? Number((dayPnl / bfdyTotalEval * 100).toFixed(2)) : 0,
         holdings,
+        pending_orders: pendingOrders,
       };
       if (gistId && ghToken) updateGist(gistId, ghToken, ghHeaders, account_balance);
       res.setHeader('Cache-Control', 'no-store');

@@ -1,5 +1,10 @@
 /**
- * Vercel API — KIS 실시간 잔고 조회
+ * ⚠️ 미사용 파일 — vercel.json이 "/api/kis-balance(.*)"를 이 파일이 아니라
+ * api/data.js(mode=kisbalance)로 라우팅하고 있어(2026-08-14 확인) 실제로는
+ * 절대 실행되지 않는 죽은 코드다. 진짜 KIS 실시간 잔고 로직은 data.js의
+ * mode==='kisbalance' 분기에 있음 — 여길 고치지 말고 그쪽을 고칠 것.
+ *
+ * Vercel API — KIS 실시간 잔고 조회 (미사용)
  * GET /api/kis-balance → { account_balance }
  * - 총평가금액, 예수금, 보유종목 실시간 반환
  * - 조회 후 Gist account_balance.json 자동 업데이트
