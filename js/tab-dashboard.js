@@ -229,23 +229,27 @@ function _pairTrades(items) {
 }
 
 // 보유중 항목의 미실현 손익 계산용 현재가 조회(주식: account_balance, 코인: /api/coin-account, 30초 캐시)
-let _dashCoinHoldings   = null;
+// 업비트 계좌 요약 카드(renderTraderSummary)도 같은 캐시를 공유해서 중복 호출을 피함.
+let _dashCoinAccount   = null;
 let _dashCoinHoldingsTs = 0;
 let _lastTraderAccountBalance = null;
-async function _fetchCoinHoldingsCached() {
+async function _fetchCoinAccountCached() {
   const now = Date.now();
-  if (_dashCoinHoldings && (now - _dashCoinHoldingsTs) < 30000) return _dashCoinHoldings;
+  if (_dashCoinAccount && (now - _dashCoinHoldingsTs) < 30000) return _dashCoinAccount;
   try {
     const r = await fetch('/api/coin-account');
     if (r.ok) {
-      const d = await r.json();
-      _dashCoinHoldings   = d.holdings || [];
+      _dashCoinAccount   = await r.json();
       _dashCoinHoldingsTs = now;
     }
   } catch (e) {
     console.warn('코인 잔고 조회 실패:', e.message);
   }
-  return _dashCoinHoldings || [];
+  return _dashCoinAccount;
+}
+async function _fetchCoinHoldingsCached() {
+  const d = await _fetchCoinAccountCached();
+  return d?.holdings || [];
 }
 
 async function renderTraderTrades(items, accountBalance) {
@@ -558,7 +562,7 @@ function _renderIpoList() {
 }
 
 // ── 매매 현황 (stock_trader 거래 내역 + 계좌 잔액) ────────
-function renderTraderSummary(trades, account) {
+async function renderTraderSummary(trades, account) {
   const wrap = document.getElementById('trader-summary-wrap');
   if (!wrap) return;
 
@@ -604,7 +608,58 @@ function renderTraderSummary(trades, account) {
           📌 보유 ${account.holdings.length}종목 — 상세는 🤖 자동 주식매매 탭에서 확인
         </div>`;
     }
-    accountHtml += `<hr style="border:none;border-top:1px solid var(--border);margin:0 0 16px">`;
+  }
+
+  // ── 업비트 계좌 섹션 ────────────────────────────────────
+  // 코인은 KIS의 bfdy_close_diff(전일 종가) 같은 "당일" 기준값이 없어서
+  // "당일 손익/수익률" 대신 보유 코인 기준 평가손익(미실현)을 표시함 — 실제로
+  // 있지도 않은 당일 기준값을 그럴듯하게 보여주면 오해를 유발하기 때문.
+  const coinAccount = await _fetchCoinAccountCached();
+  let coinHtml = '';
+  if (coinAccount) {
+    const holdings      = coinAccount.holdings || [];
+    const holdingsEval  = holdings.reduce((s, h) => s + (h.eval_amount || 0), 0);
+    const totalEval     = (coinAccount.krw || 0) + holdingsEval;
+    const totalPnl      = holdings.reduce((s, h) => s + (h.pnl || 0), 0);
+    const totalCost     = holdingsEval - totalPnl;
+    const pnlPct        = totalCost > 0 ? (totalPnl / totalCost * 100) : 0;
+    const pnlColor      = totalPnl >= 0 ? '#16a34a' : '#dc2626';
+    const updLabel      = coinAccount.updated_at
+      ? `<span style="font-size:11px;color:var(--muted);margin-left:6px">${coinAccount.updated_at} 기준</span>` : '';
+
+    coinHtml += `
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:10px">
+        <span style="font-size:12px;font-weight:700">🪙 업비트 계좌</span>${updLabel}
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:16px">
+        <div style="background:var(--surface2,#1e2d45);border-radius:10px;padding:12px;text-align:center">
+          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">총 평가금액</div>
+          <div style="font-size:16px;font-weight:700;color:#ffffff">${krw(totalEval)}<span style="font-size:11px;color:var(--muted)">원</span></div>
+        </div>
+        <div style="background:var(--surface2,#1e2d45);border-radius:10px;padding:12px;text-align:center">
+          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">예수금 (현금)</div>
+          <div style="font-size:16px;font-weight:700;color:#ffffff">${krw(coinAccount.krw)}<span style="font-size:11px;color:var(--muted)">원</span></div>
+        </div>
+        <div style="background:var(--surface2,#1e2d45);border-radius:10px;padding:12px;text-align:center">
+          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">평가손익 (보유코인)</div>
+          <div style="font-size:16px;font-weight:700;color:${pnlColor}">${sg(totalPnl)}${krw(totalPnl)}<span style="font-size:11px">원</span></div>
+        </div>
+        <div style="background:var(--surface2,#1e2d45);border-radius:10px;padding:12px;text-align:center">
+          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">평가수익률</div>
+          <div style="font-size:20px;font-weight:700;color:${pnlColor}">${sg(pnlPct)}${pnlPct.toFixed(2)}<span style="font-size:13px;color:var(--muted)">%</span></div>
+        </div>
+      </div>`;
+
+    if (holdings.length) {
+      coinHtml += `
+        <div style="font-size:12px;color:var(--muted);margin-bottom:16px">
+          📌 보유 ${holdings.length}종목 — 상세는 🪙 자동코인매매 탭에서 확인
+        </div>`;
+    }
+  }
+
+  if (accountHtml || coinHtml) {
+    accountHtml += coinHtml + `<hr style="border:none;border-top:1px solid var(--border);margin:0 0 16px">`;
   }
 
   if (!trades.length) {
