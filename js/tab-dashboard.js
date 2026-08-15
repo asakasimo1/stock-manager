@@ -137,7 +137,19 @@ function _renderBriefing() {
 }
 
 // ── 거래 내역 (stock_trader 실거래) ─────────────────────
-let _traderTradesExpanded = false;
+// 페이지당 건수. 코인+주식 파일 분리 이후 표시 대상이 최대 200건까지 늘 수
+// 있어(2026-08-15) "더보기"로 한 번에 50건까지만 펼치던 방식 대신 페이지네이션으로 변경.
+const TRADER_TRADES_PAGE_SIZE = 10;
+let _traderTradesPage  = 0;
+let _traderTradesItems = [];  // 페이지 이동 시 재사용 — onclick 속성에 큰 JSON을 직접 넣지 않기 위함
+                               // (예전 방식: 거래내역에 "가 포함되면 onclick 속성이 그 지점에서
+                               // 잘려 핸들러 전체가 깨지고 버튼이 아무 반응도 안 하던 버그가 있었음
+                               // — 2026-08-15 "더보기 눌러도 아무것도 안 나옴" 리포트로 발견)
+
+function _traderTradesGoPage(delta) {
+  _traderTradesPage += delta;
+  renderTraderTrades(_traderTradesItems);
+}
 
 // 금액(원) 표시는 전부 소수점 버림 — 코인 거래는 단가/손익에 소수점이 남는 경우가 있음
 const krw = v => Math.trunc(Number(v) || 0).toLocaleString();
@@ -240,6 +252,8 @@ async function renderTraderTrades(items, accountBalance) {
   const el = document.getElementById('list-trader-trades');
   if (!el) return;
 
+  _traderTradesItems = items;
+
   if (accountBalance) _lastTraderAccountBalance = accountBalance;
   else accountBalance = _lastTraderAccountBalance;
 
@@ -256,14 +270,21 @@ async function renderTraderTrades(items, accountBalance) {
     for (const h of await _fetchCoinHoldingsCached()) priceMap[h.ticker] = h.cur_price;
   }
 
-  const toShow  = _traderTradesExpanded ? pairs.slice(0, 50) : pairs.slice(0, 10);
-  const hasMore = pairs.length > 10;
+  const totalPages = Math.max(1, Math.ceil(pairs.length / TRADER_TRADES_PAGE_SIZE));
+  _traderTradesPage = Math.min(Math.max(_traderTradesPage, 0), totalPages - 1);
+  const start  = _traderTradesPage * TRADER_TRADES_PAGE_SIZE;
+  const toShow = pairs.slice(start, start + TRADER_TRADES_PAGE_SIZE);
 
-  const moreBtn = hasMore ? `
-    <div style="text-align:center;padding:6px 0">
-      <button onclick="_traderTradesExpanded=!_traderTradesExpanded;renderTraderTrades(${JSON.stringify(items).replace(/</g,'\\u003c')})"
-        style="background:none;border:1px solid var(--border);border-radius:8px;padding:5px 18px;font-size:12px;color:var(--muted);cursor:pointer">
-        ${_traderTradesExpanded ? '▲ 접기' : `▼ 더보기 (${pairs.length}건)`}
+  const pageBtn = totalPages > 1 ? `
+    <div style="display:flex;align-items:center;justify-content:center;gap:12px;padding:8px 0">
+      <button onclick="_traderTradesGoPage(-1)" ${_traderTradesPage === 0 ? 'disabled' : ''}
+        style="background:none;border:1px solid var(--border);border-radius:8px;padding:5px 14px;font-size:12px;color:var(--muted);cursor:pointer;opacity:${_traderTradesPage === 0 ? '0.4' : '1'}">
+        ◀ 이전
+      </button>
+      <span style="font-size:12px;color:var(--muted)">${_traderTradesPage + 1} / ${totalPages}페이지 (총 ${pairs.length}건)</span>
+      <button onclick="_traderTradesGoPage(1)" ${_traderTradesPage >= totalPages - 1 ? 'disabled' : ''}
+        style="background:none;border:1px solid var(--border);border-radius:8px;padding:5px 14px;font-size:12px;color:var(--muted);cursor:pointer;opacity:${_traderTradesPage >= totalPages - 1 ? '0.4' : '1'}">
+        다음 ▶
       </button>
     </div>` : '';
 
@@ -314,7 +335,7 @@ async function renderTraderTrades(items, accountBalance) {
         ${p.buy.date}<br>${p.buy.time}
       </div>
     </div>`;
-  }).join('') + moreBtn;
+  }).join('') + pageBtn;
 }
 
 // ── 공모주 구글 캘린더 연동 ───────────────────────────────
