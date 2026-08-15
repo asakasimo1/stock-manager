@@ -123,3 +123,4 @@ sudo systemctl restart coin-daemon
 - [2026-08-12 09:57] `scalp_auto_config.json` (Gist) — `stop_loss_pct_premarket` 3.6 추가 (NXT 프리마켓 전용 손절폭, quiet_hour×2). 관련: `a697edd`
 - [2026-08-12 11:31] `scalp_stock_jobs.json` (Gist) — 유령 포지션 2건(148780 비큐AI, 226320 잇츠한불) `phase=watching`/`status=done`으로 수동 초기화. 근본 원인 수정: `205757e`
 - [2026-08-12 14:1x] `job_profit_sell_cloud.py` — VM `stock-daemon` scp 배포 + 재시작 (git push `b3c9ad1` 이후)
+- [2026-08-15 09:3x] `trader_trades.json` → `trader_trades_coin.json`/`trader_trades_stock.json` — `migrate_trader_trades.py` VM 실행으로 기존 100건(전부 코인) 분리 이관 + `backfill_stock_trades.py 20260813 20260814`로 파일분리 이전 누락된 주식 체결 82건 백필. 관련: `35817f8`, `04ccaa4`
