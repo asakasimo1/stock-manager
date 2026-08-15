@@ -140,15 +140,19 @@ function _renderBriefing() {
 // 페이지당 건수. 코인+주식 파일 분리 이후 표시 대상이 최대 200건까지 늘 수
 // 있어(2026-08-15) "더보기"로 한 번에 50건까지만 펼치던 방식 대신 페이지네이션으로 변경.
 const TRADER_TRADES_PAGE_SIZE = 10;
-let _traderTradesPage  = 0;
-let _traderTradesItems = [];  // 페이지 이동 시 재사용 — onclick 속성에 큰 JSON을 직접 넣지 않기 위함
-                               // (예전 방식: 거래내역에 "가 포함되면 onclick 속성이 그 지점에서
-                               // 잘려 핸들러 전체가 깨지고 버튼이 아무 반응도 안 하던 버그가 있었음
-                               // — 2026-08-15 "더보기 눌러도 아무것도 안 나옴" 리포트로 발견)
+// key: 'all'(모바일 통합 목록) / 'coin' / 'stock'(PC 분리 목록, 2026-08-15 추가) —
+// 각자 독립적인 페이지 상태를 가짐. items는 페이지 이동 시 재사용 — onclick 속성에 큰
+// JSON을 직접 넣지 않기 위함(예전 방식: 거래내역에 "가 포함되면 onclick 속성이 그
+// 지점에서 잘려 핸들러 전체가 깨지고 버튼이 아무 반응도 안 하던 버그가 있었음).
+const _traderTradesState = {
+  all:   { page: 0, items: [], elId: 'list-trader-trades' },
+  coin:  { page: 0, items: [], elId: 'list-trader-trades-coin' },
+  stock: { page: 0, items: [], elId: 'list-trader-trades-stock' },
+};
 
-function _traderTradesGoPage(delta) {
-  _traderTradesPage += delta;
-  renderTraderTrades(_traderTradesItems);
+function _traderTradesGoPage(key, delta) {
+  _traderTradesState[key].page += delta;
+  _renderTraderTradesList(key, _lastTraderTradesPriceMap);
 }
 
 // 금액(원) 표시는 전부 소수점 버림 — 코인 거래는 단가/손익에 소수점이 남는 경우가 있음
@@ -265,94 +269,110 @@ async function _ensureAutoTradeJobsLoaded() {
   }
 }
 
-async function renderTraderTrades(items, accountBalance) {
-  const el = document.getElementById('list-trader-trades');
-  if (!el) return;
+function _tradePairHtml(p, priceMap) {
+  const isOpen = !p.sell;
+  const statusHtml = isOpen
+    ? `<span style="background:#dcfce7;color:#166534;border-radius:5px;padding:2px 8px;font-size:11px;font-weight:700">보유중</span>`
+    : `<span style="background:#f1f5f9;color:#64748b;border-radius:5px;padding:2px 8px;font-size:11px;font-weight:700">종료</span>`;
 
-  _traderTradesItems = items;
+  // 왼쪽 세로선: 수익 초록 / 손실 빨강. 보유중이라도 현재가를 알면 평가손익 기준으로 색상 표시
+  let barColor = 'var(--border)';
+  let amountHtml;
+  if (isOpen) {
+    const curPrice = priceMap[p.ticker];
+    if (curPrice != null) {
+      const curAmount = Math.round(curPrice * p.buy.qty);
+      const { pnl } = _netPnl(p.ticker, p.buy.amount, curAmount);
+      const up  = pnl >= 0;
+      barColor  = up ? '#16a34a' : '#dc2626';
+      const pnlStr = `${up ? '+' : ''}${krw(pnl)}원`;
+      amountHtml = `${krw(p.buy.amount)}원 → <b style="color:${barColor}">${krw(curAmount)}원</b>
+        &nbsp;<span style="color:${barColor};font-size:11px;font-weight:700">(${pnlStr} 평가)</span>`;
+    } else {
+      amountHtml = `<b>${krw(p.buy.amount)}원</b>`;
+    }
+  } else {
+    const pnl = p.netPnl;
+    const up  = pnl >= 0;
+    barColor  = up ? '#16a34a' : '#dc2626';
+    const pnlStr = `${up ? '+' : ''}${krw(pnl)}원`;
+    amountHtml = `${krw(p.buy.amount)}원 → <b style="color:${barColor}">${krw(p.sell.amount)}원</b>
+      &nbsp;<span style="color:${barColor};font-size:11px;font-weight:700">(${pnlStr})</span>`;
+  }
 
-  if (accountBalance) _lastTraderAccountBalance = accountBalance;
-  else accountBalance = _lastTraderAccountBalance;
+  return `
+  <div style="display:flex;align-items:center;justify-content:space-between;
+              padding:9px 0 9px 10px;border-bottom:1px solid var(--border);
+              border-left:3px solid ${barColor}">
+    <div style="flex:1;min-width:0">
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+        <span style="font-weight:700;font-size:13px">${p.name || p.ticker}</span>
+        <span style="font-size:11px;color:var(--muted)">${p.ticker}</span>
+        ${statusHtml}
+      </div>
+      <div style="font-size:12px;color:var(--fg)">${amountHtml}</div>
+    </div>
+    <div style="font-size:11px;color:var(--muted);white-space:nowrap;margin-left:10px;text-align:right">
+      ${p.buy.date}<br>${p.buy.time}
+    </div>
+  </div>`;
+}
 
-  const pairs = _pairTrades(items);
+function _renderTraderTradesList(key, priceMap) {
+  const st = _traderTradesState[key];
+  const el = document.getElementById(st.elId);
+  if (!el) return;  // PC 전용/모바일 전용 목록은 반대 화면에서 DOM 자체가 없을 수 있음
+
+  const pairs = _pairTrades(st.items);
   if (!pairs.length) {
     el.innerHTML = '<div class="empty-msg">거래 내역이 없습니다</div>';
     return;
   }
 
-  // 보유중(미체결) 항목이 있으면 현재가를 조회해서 평가손익을 함께 표시
+  const totalPages = Math.max(1, Math.ceil(pairs.length / TRADER_TRADES_PAGE_SIZE));
+  st.page = Math.min(Math.max(st.page, 0), totalPages - 1);
+  const start  = st.page * TRADER_TRADES_PAGE_SIZE;
+  const toShow = pairs.slice(start, start + TRADER_TRADES_PAGE_SIZE);
+
+  const pageBtn = totalPages > 1 ? `
+    <div style="display:flex;align-items:center;justify-content:center;gap:12px;padding:8px 0">
+      <button onclick="_traderTradesGoPage('${key}',-1)" ${st.page === 0 ? 'disabled' : ''}
+        style="background:none;border:1px solid var(--border);border-radius:8px;padding:5px 14px;font-size:12px;color:var(--muted);cursor:pointer;opacity:${st.page === 0 ? '0.4' : '1'}">
+        ◀ 이전
+      </button>
+      <span style="font-size:12px;color:var(--muted)">${st.page + 1} / ${totalPages}페이지 (총 ${pairs.length}건)</span>
+      <button onclick="_traderTradesGoPage('${key}',1)" ${st.page >= totalPages - 1 ? 'disabled' : ''}
+        style="background:none;border:1px solid var(--border);border-radius:8px;padding:5px 14px;font-size:12px;color:var(--muted);cursor:pointer;opacity:${st.page >= totalPages - 1 ? '0.4' : '1'}">
+        다음 ▶
+      </button>
+    </div>` : '';
+
+  el.innerHTML = toShow.map(p => _tradePairHtml(p, priceMap)).join('') + pageBtn;
+}
+
+let _lastTraderTradesPriceMap = {};
+
+async function renderTraderTrades(items, accountBalance) {
+  _traderTradesState.all.items   = items;
+  _traderTradesState.coin.items  = items.filter(t => _isCoinTicker(t.ticker));
+  _traderTradesState.stock.items = items.filter(t => !_isCoinTicker(t.ticker));
+
+  if (accountBalance) _lastTraderAccountBalance = accountBalance;
+  else accountBalance = _lastTraderAccountBalance;
+
+  // 보유중(미체결) 항목이 있으면 현재가를 조회해서 평가손익을 함께 표시 — 세 목록이
+  // 공유하는 계산이라 한 번만 수행(코인/주식 나눠서 각자 조회하면 API 호출이 불필요하게 늘어남)
+  const pairs = _pairTrades(items);
   let priceMap = {};
   if (pairs.some(p => !p.sell)) {
     for (const h of (accountBalance?.holdings || [])) priceMap[h.ticker] = h.eval_price;
     for (const h of await _fetchCoinHoldingsCached()) priceMap[h.ticker] = h.cur_price;
   }
+  _lastTraderTradesPriceMap = priceMap;
 
-  const totalPages = Math.max(1, Math.ceil(pairs.length / TRADER_TRADES_PAGE_SIZE));
-  _traderTradesPage = Math.min(Math.max(_traderTradesPage, 0), totalPages - 1);
-  const start  = _traderTradesPage * TRADER_TRADES_PAGE_SIZE;
-  const toShow = pairs.slice(start, start + TRADER_TRADES_PAGE_SIZE);
-
-  const pageBtn = totalPages > 1 ? `
-    <div style="display:flex;align-items:center;justify-content:center;gap:12px;padding:8px 0">
-      <button onclick="_traderTradesGoPage(-1)" ${_traderTradesPage === 0 ? 'disabled' : ''}
-        style="background:none;border:1px solid var(--border);border-radius:8px;padding:5px 14px;font-size:12px;color:var(--muted);cursor:pointer;opacity:${_traderTradesPage === 0 ? '0.4' : '1'}">
-        ◀ 이전
-      </button>
-      <span style="font-size:12px;color:var(--muted)">${_traderTradesPage + 1} / ${totalPages}페이지 (총 ${pairs.length}건)</span>
-      <button onclick="_traderTradesGoPage(1)" ${_traderTradesPage >= totalPages - 1 ? 'disabled' : ''}
-        style="background:none;border:1px solid var(--border);border-radius:8px;padding:5px 14px;font-size:12px;color:var(--muted);cursor:pointer;opacity:${_traderTradesPage >= totalPages - 1 ? '0.4' : '1'}">
-        다음 ▶
-      </button>
-    </div>` : '';
-
-  el.innerHTML = toShow.map(p => {
-    const isOpen = !p.sell;
-    const statusHtml = isOpen
-      ? `<span style="background:#dcfce7;color:#166534;border-radius:5px;padding:2px 8px;font-size:11px;font-weight:700">보유중</span>`
-      : `<span style="background:#f1f5f9;color:#64748b;border-radius:5px;padding:2px 8px;font-size:11px;font-weight:700">종료</span>`;
-
-    // 왼쪽 세로선: 수익 초록 / 손실 빨강. 보유중이라도 현재가를 알면 평가손익 기준으로 색상 표시
-    let barColor = 'var(--border)';
-    let amountHtml;
-    if (isOpen) {
-      const curPrice = priceMap[p.ticker];
-      if (curPrice != null) {
-        const curAmount = Math.round(curPrice * p.buy.qty);
-        const { pnl } = _netPnl(p.ticker, p.buy.amount, curAmount);
-        const up  = pnl >= 0;
-        barColor  = up ? '#16a34a' : '#dc2626';
-        const pnlStr = `${up ? '+' : ''}${krw(pnl)}원`;
-        amountHtml = `${krw(p.buy.amount)}원 → <b style="color:${barColor}">${krw(curAmount)}원</b>
-          &nbsp;<span style="color:${barColor};font-size:11px;font-weight:700">(${pnlStr} 평가)</span>`;
-      } else {
-        amountHtml = `<b>${krw(p.buy.amount)}원</b>`;
-      }
-    } else {
-      const pnl = p.netPnl;
-      const up  = pnl >= 0;
-      barColor  = up ? '#16a34a' : '#dc2626';
-      const pnlStr = `${up ? '+' : ''}${krw(pnl)}원`;
-      amountHtml = `${krw(p.buy.amount)}원 → <b style="color:${barColor}">${krw(p.sell.amount)}원</b>
-        &nbsp;<span style="color:${barColor};font-size:11px;font-weight:700">(${pnlStr})</span>`;
-    }
-
-    return `
-    <div style="display:flex;align-items:center;justify-content:space-between;
-                padding:9px 0 9px 10px;border-bottom:1px solid var(--border);
-                border-left:3px solid ${barColor}">
-      <div style="flex:1;min-width:0">
-        <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
-          <span style="font-weight:700;font-size:13px">${p.name || p.ticker}</span>
-          <span style="font-size:11px;color:var(--muted)">${p.ticker}</span>
-          ${statusHtml}
-        </div>
-        <div style="font-size:12px;color:var(--fg)">${amountHtml}</div>
-      </div>
-      <div style="font-size:11px;color:var(--muted);white-space:nowrap;margin-left:10px;text-align:right">
-        ${p.buy.date}<br>${p.buy.time}
-      </div>
-    </div>`;
-  }).join('') + pageBtn;
+  _renderTraderTradesList('all', priceMap);
+  _renderTraderTradesList('coin', priceMap);
+  _renderTraderTradesList('stock', priceMap);
 }
 
 // ── 공모주 구글 캘린더 연동 ───────────────────────────────

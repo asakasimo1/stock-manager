@@ -761,11 +761,27 @@
     </div>
   </div>
 
-  <!-- 시스템 트레이딩 내역 -->
-  <div class="card">
+  <!-- 시스템 트레이딩 내역 (모바일: 코인+주식 통합 한 목록) -->
+  <div class="card mobile-only">
     <div class="card-title">🤖 시스템 트레이딩 내역</div>
     <div class="result-list" id="list-trader-trades">
       <div class="empty-msg">로딩 중...</div>
+    </div>
+  </div>
+
+  <!-- 시스템 트레이딩 내역 (PC: 코인/주식 분리) -->
+  <div class="dash-full pc-only" style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+    <div class="card">
+      <div class="card-title">🪙 코인 거래내역</div>
+      <div class="result-list" id="list-trader-trades-coin">
+        <div class="empty-msg">로딩 중...</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">📈 주식 거래내역</div>
+      <div class="result-list" id="list-trader-trades-stock">
+        <div class="empty-msg">로딩 중...</div>
+      </div>
     </div>
   </div>
 
