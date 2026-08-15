@@ -725,8 +725,13 @@ async function renderTraderSummary(trades, account) {
   const totalPnl  = closed.reduce((s, p) => s + p.netPnl, 0);
   const wins      = closed.filter(p => p.netPnl > 0).length;
   const winRate   = closed.length ? Math.round(wins / closed.length * 100) : null;
-  const avgPnlPct = closed.length
-    ? (closed.reduce((s, p) => s + p.netPnlPct, 0) / closed.length).toFixed(2)
+  // 거래별 %의 단순평균은 금액을 무시해서, 소액 거래의 큰 %손실 몇 건이 대형 거래의
+  // 이익을 압도해 버려 "누적 실현손익은 플러스인데 평균 수익률은 마이너스"로 서로
+  // 모순돼 보이는 경우가 있었음(2026-08-15 지적으로 발견). 금액가중 평균(총손익÷총매수금액)으로
+  // 바꿔서 항상 누적 실현손익과 부호가 일치하도록 함.
+  const totalBuyAmt = closed.reduce((s, p) => s + p.buy.amount, 0);
+  const avgPnlPct = closed.length && totalBuyAmt > 0
+    ? (totalPnl / totalBuyAmt * 100).toFixed(2)
     : null;
 
   const periodBtns = TRADER_STATS_PERIODS.map(p => `
