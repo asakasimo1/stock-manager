@@ -43,7 +43,10 @@ async function getKisToken(appKey, appSecret) {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ grant_type: 'client_credentials', appkey: appKey, appsecret: appSecret }),
   });
-  if (!r.ok) throw new Error(`KIS 토큰 발급 실패: ${r.status}`);
+  if (!r.ok) {
+    const errText = await r.text().catch(() => '');
+    throw new Error(`KIS 토큰 발급 실패: ${r.status} ${errText}`);
+  }
   const d = await r.json();
   _tokenCache = { token: d.access_token, expires: now + (d.expires_in ? d.expires_in * 1000 : 86_400_000), base: _kisBase };
   return _tokenCache.token;
