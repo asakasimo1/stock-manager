@@ -252,6 +252,19 @@ async function _fetchCoinHoldingsCached() {
   return d?.holdings || [];
 }
 
+// 자동 주식매매 탭의 _atJobs/_agJobs/_asJobs(매도잡/그리드/스캘핑)를 대시보드에서도
+// 로드해서 atCalcDayProfit()을 그대로 재사용하기 위함 — 그 탭을 아직 한 번도
+// 안 열었으면 배열이 비어 있어 당일손익이 항상 0으로 나오므로 여기서 미리 채워둠.
+let _atJobsLoadTs = 0;
+async function _ensureAutoTradeJobsLoaded() {
+  const now = Date.now();
+  if (now - _atJobsLoadTs < 30000) return;
+  _atJobsLoadTs = now;
+  if (typeof atLoadAll === 'function') {
+    try { await atLoadAll(); } catch (e) { console.warn('자동매매 데이터 로드 실패:', e.message); }
+  }
+}
+
 async function renderTraderTrades(items, accountBalance) {
   const el = document.getElementById('list-trader-trades');
   if (!el) return;
@@ -574,8 +587,20 @@ async function renderTraderSummary(trades, account) {
   if (account) {
     const updLabel = account.updated_at
       ? `<span style="font-size:11px;color:var(--muted);margin-left:6px">${account.updated_at} 기준</span>` : '';
-    const dayPnlColor = (account.day_pnl || 0) >= 0 ? '#16a34a' : '#dc2626';
-    const dayRetColor = (account.day_ret || 0) >= 0 ? '#16a34a' : '#dc2626';
+
+    // 당일 손익은 tab-autotrade.js "일별 수익 현황"과 동일한 계산식(atCalcDayProfit —
+    // 매도잡+그리드+스캘핑 실현손익 합계)을 그대로 사용해서 자동 주식매매 탭에
+    // 표시되는 숫자와 항상 일치하도록 함. 계산 대상 날짜는 "오늘"이 아니라
+    // account.updated_at의 날짜 — job_balance.py가 평일 08~20시에만 도는 구조라
+    // 주말/공휴일엔 updated_at이 마지막 거래일에 멈춰 있고, 그 날짜를 그대로 쓰면
+    // "거래 없는 날인데 0원"으로 오해되는 대신 마지막 거래일 손익이 자연스럽게 표시됨.
+    await _ensureAutoTradeJobsLoaded();
+    const dayDateStr = (account.updated_at || '').slice(0, 10) || new Date().toISOString().slice(0, 10);
+    const dayData = (typeof atCalcDayProfit === 'function') ? atCalcDayProfit(dayDateStr) : null;
+    const dayPnl  = dayData ? dayData.netProfit : (account.day_pnl || 0);
+    const dayRet  = account.total_eval > 0 ? (dayPnl / account.total_eval * 100) : 0;
+    const dayPnlColor = dayPnl >= 0 ? '#16a34a' : '#dc2626';
+    const dayRetColor = dayRet >= 0 ? '#16a34a' : '#dc2626';
 
     // 계좌 요약 카드
     accountHtml += `
@@ -593,11 +618,11 @@ async function renderTraderSummary(trades, account) {
         </div>
         <div style="background:var(--surface2,#1e2d45);border-radius:10px;padding:12px;text-align:center">
           <div style="font-size:11px;color:var(--muted);margin-bottom:4px">당일 손익</div>
-          <div style="font-size:16px;font-weight:700;color:${dayPnlColor}">${sg(account.day_pnl)}${krw(account.day_pnl)}<span style="font-size:11px">원</span></div>
+          <div style="font-size:16px;font-weight:700;color:${dayPnlColor}">${sg(dayPnl)}${krw(dayPnl)}<span style="font-size:11px">원</span></div>
         </div>
         <div style="background:var(--surface2,#1e2d45);border-radius:10px;padding:12px;text-align:center">
           <div style="font-size:11px;color:var(--muted);margin-bottom:4px">당일 수익률</div>
-          <div style="font-size:20px;font-weight:700;color:${dayRetColor}">${sg(account.day_ret||0)}${account.day_ret ?? '—'}<span style="font-size:13px;color:var(--muted)">%</span></div>
+          <div style="font-size:20px;font-weight:700;color:${dayRetColor}">${sg(dayRet)}${dayRet.toFixed(2)}<span style="font-size:13px;color:var(--muted)">%</span></div>
         </div>
       </div>`;
 
@@ -611,19 +636,23 @@ async function renderTraderSummary(trades, account) {
   }
 
   // ── 업비트 계좌 섹션 ────────────────────────────────────
-  // 코인은 KIS의 bfdy_close_diff(전일 종가) 같은 "당일" 기준값이 없어서
-  // "당일 손익/수익률" 대신 보유 코인 기준 평가손익(미실현)을 표시함 — 실제로
-  // 있지도 않은 당일 기준값을 그럴듯하게 보여주면 오해를 유발하기 때문.
-  const coinAccount = await _fetchCoinAccountCached();
+  // 당일 손익은 tab-cointrade.js "일별 수익 현황"과 동일하게 /api/coin-today의
+  // netProfit(당일 체결된 매도 전체의 실현손익 합계 — 스캘핑/그리드/일반매도
+  // 통합)을 그대로 사용. KIS처럼 보유종목 평가변동까지 섞진 않지만, 코인은
+  // bfdy_close_diff 같은 전일 종가 기준값이 따로 없어 실현손익만으로 표시.
+  const [coinAccount, coinToday] = await Promise.all([
+    _fetchCoinAccountCached(),
+    ctFetchDay(null).catch(() => null),
+  ]);
   let coinHtml = '';
   if (coinAccount) {
-    const holdings      = coinAccount.holdings || [];
-    const holdingsEval  = holdings.reduce((s, h) => s + (h.eval_amount || 0), 0);
+    const holdings     = coinAccount.holdings || [];
+    const holdingsEval = holdings.reduce((s, h) => s + (h.eval_amount || 0), 0);
     const totalEval     = (coinAccount.krw || 0) + holdingsEval;
-    const totalPnl      = holdings.reduce((s, h) => s + (h.pnl || 0), 0);
-    const totalCost     = holdingsEval - totalPnl;
-    const pnlPct        = totalCost > 0 ? (totalPnl / totalCost * 100) : 0;
-    const pnlColor      = totalPnl >= 0 ? '#16a34a' : '#dc2626';
+    const dayPnl        = coinToday?.netProfit || 0;
+    const dayRet        = totalEval > 0 ? (dayPnl / totalEval * 100) : 0;
+    const dayPnlColor   = dayPnl >= 0 ? '#16a34a' : '#dc2626';
+    const dayRetColor   = dayRet >= 0 ? '#16a34a' : '#dc2626';
     const updLabel      = coinAccount.updated_at
       ? `<span style="font-size:11px;color:var(--muted);margin-left:6px">${coinAccount.updated_at} 기준</span>` : '';
 
@@ -641,12 +670,12 @@ async function renderTraderSummary(trades, account) {
           <div style="font-size:16px;font-weight:700;color:#ffffff">${krw(coinAccount.krw)}<span style="font-size:11px;color:var(--muted)">원</span></div>
         </div>
         <div style="background:var(--surface2,#1e2d45);border-radius:10px;padding:12px;text-align:center">
-          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">평가손익 (보유코인)</div>
-          <div style="font-size:16px;font-weight:700;color:${pnlColor}">${sg(totalPnl)}${krw(totalPnl)}<span style="font-size:11px">원</span></div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">당일 손익</div>
+          <div style="font-size:16px;font-weight:700;color:${dayPnlColor}">${sg(dayPnl)}${krw(dayPnl)}<span style="font-size:11px">원</span></div>
         </div>
         <div style="background:var(--surface2,#1e2d45);border-radius:10px;padding:12px;text-align:center">
-          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">평가수익률</div>
-          <div style="font-size:20px;font-weight:700;color:${pnlColor}">${sg(pnlPct)}${pnlPct.toFixed(2)}<span style="font-size:13px;color:var(--muted)">%</span></div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">당일 수익률</div>
+          <div style="font-size:20px;font-weight:700;color:${dayRetColor}">${sg(dayRet)}${dayRet.toFixed(2)}<span style="font-size:13px;color:var(--muted)">%</span></div>
         </div>
       </div>`;
 
