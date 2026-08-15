@@ -65,9 +65,13 @@ Oracle VM 코드 저장소: `github.com/asakasimo1/stock-trader`
 
 ### Vercel 배포
 
+**`vercel --prod`를 직접 쓰지 말고 반드시 `./deploy.sh`를 쓸 것** —
+`hsk-stockmanager.vercel.app` 별칭을 최신 배포로 자동 재지정해줌
+(안 하면 이 별칭만 며칠씩 뒤처짐, 2026-08-15 발견).
+
 ```bash
 cd /Users/macbook/projects/stock-manager/frontend
-vercel --prod
+./deploy.sh
 ```
 
 ### 주의
@@ -88,9 +92,10 @@ vercel --prod
 이유로 로그를 둠).
 
 **참고**: `hsk-stockmanager.vercel.app`는 수동 별칭이라 새 배포마다 자동으로
-안 따라감 — 캐노니컬 도메인(`stock-analyzer-nu-brown.vercel.app`)에 배포된 뒤
-`vercel alias set stock-analyzer-nu-brown.vercel.app hsk-stockmanager.vercel.app`
-로 다시 지정해야 함.
+안 따라감 — 2026-08-15부터 `./deploy.sh`가 배포 직후 자동으로 재지정해주므로
+**반드시 `./deploy.sh`로 배포할 것**(`vercel --prod` 직접 실행 금지). 그 전에
+수동 배포했다면 `vercel alias set <최신배포URL> hsk-stockmanager.vercel.app`로
+직접 재지정.
 
 **새 항목 추가 형식**: `[YYYY-MM-DD HH:MM KST] 대상 — 내용 (관련 커밋 있으면 해시)`
 
