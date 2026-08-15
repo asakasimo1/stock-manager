@@ -575,9 +575,24 @@ function _renderIpoList() {
 }
 
 // ── 매매 현황 (stock_trader 거래 내역 + 계좌 잔액) ────────
+const TRADER_STATS_PERIODS = [
+  { days: 1,   label: '1일' },
+  { days: 7,   label: '7일' },
+  { days: 30,  label: '30일' },
+  { days: 365, label: '1년' },
+];
+let _traderStatsPeriodDays  = 1;
+let _lastTraderSummaryTrades = [];
+
+function _setTraderStatsPeriod(days) {
+  _traderStatsPeriodDays = days;
+  renderTraderSummary(_lastTraderSummaryTrades, _lastTraderAccountBalance);
+}
+
 async function renderTraderSummary(trades, account) {
   const wrap = document.getElementById('trader-summary-wrap');
   if (!wrap) return;
+  _lastTraderSummaryTrades = trades;
 
   const c  = v => v >= 0 ? '#16a34a' : '#dc2626';
   const sg = v => v >= 0 ? '+' : '';
@@ -697,7 +712,16 @@ async function renderTraderSummary(trades, account) {
   }
 
   // ── 종결된 거래 손익 집계 (매수→매도 lot 매칭 + 수수료 포함 손익 기준) ──
-  const closed    = _pairTrades(trades).filter(p => p.sell);
+  // 기간 선택(1/7/30/365일, KST 캘린더 기준, 오늘 포함) — 시장별로 저장 상한이
+  // 같은 100건이어도 코인은 초단타라 최근 며칠 치만 남고 주식은 몇 주~몇 달
+  // 치가 남아서, 기간 필터 없이 그냥 합치면 두 시장의 "누적" 기간이 서로 달라
+  // 비교가 안 되는 문제가 있었음(2026-08-15 지적으로 발견) — 버튼으로 기간을
+  // 명시적으로 고정해서 항상 같은 창으로 비교되게 함.
+  const kstNowStats    = new Date(Date.now() + 9 * 3600000);
+  const cutoffDateStats = new Date(kstNowStats); cutoffDateStats.setUTCDate(cutoffDateStats.getUTCDate() - (_traderStatsPeriodDays - 1));
+  const cutoffStrStats  = cutoffDateStats.toISOString().slice(0, 10);
+
+  const closed    = _pairTrades(trades).filter(p => p.sell && p.sell.date >= cutoffStrStats);
   const totalPnl  = closed.reduce((s, p) => s + p.netPnl, 0);
   const wins      = closed.filter(p => p.netPnl > 0).length;
   const winRate   = closed.length ? Math.round(wins / closed.length * 100) : null;
@@ -705,9 +729,20 @@ async function renderTraderSummary(trades, account) {
     ? (closed.reduce((s, p) => s + p.netPnlPct, 0) / closed.length).toFixed(2)
     : null;
 
+  const periodBtns = TRADER_STATS_PERIODS.map(p => `
+    <button onclick="_setTraderStatsPeriod(${p.days})"
+      style="background:${p.days === _traderStatsPeriodDays ? 'var(--primary)' : 'none'};
+             color:${p.days === _traderStatsPeriodDays ? '#fff' : 'var(--muted)'};
+             border:1px solid ${p.days === _traderStatsPeriodDays ? 'var(--primary)' : 'var(--border)'};
+             border-radius:6px;padding:3px 10px;font-size:11px;cursor:pointer">${p.label}</button>
+  `).join('');
+
   // ── 거래 통계 카드 ─────────────────────────────────────
   const statsHtml = `
-    <div style="font-size:12px;font-weight:700;color:var(--fg);margin-bottom:8px">📊 시스템 트레이딩 통계</div>
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:8px">
+      <div style="font-size:12px;font-weight:700;color:var(--fg)">📊 시스템 트레이딩 통계 (최근 ${TRADER_STATS_PERIODS.find(p => p.days === _traderStatsPeriodDays)?.label ?? _traderStatsPeriodDays + '일'})</div>
+      <div style="display:flex;gap:6px">${periodBtns}</div>
+    </div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:16px">
       <div style="background:var(--surface2,#1e2d45);border-radius:10px;padding:12px;text-align:center">
         <div style="font-size:11px;color:var(--muted);margin-bottom:4px">총 거래</div>
