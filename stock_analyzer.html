@@ -4,14 +4,21 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Stock-manager</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%233D5AFE'/><text x='50' y='68' text-anchor='middle' font-size='52'>%F0%9F%93%8A</text></svg>">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect x='8' y='45' width='22' height='47' rx='6' fill='%233b82f6'/><rect x='39' y='28' width='22' height='64' rx='6' fill='%238b5cf6'/><rect x='70' y='8' width='22' height='84' rx='6' fill='%23ec4899'/></svg>">
 <link href="https://fonts.googleapis.com/css2?family=Pretendard:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="css/main.css">
 </head>
 <body>
 
 <header>
-  <div class="logo" onclick="switchTab('dashboard')" style="cursor:pointer" title="대시보드로 이동">📊 Stock-<em>manager</em></div>
+  <div class="logo" onclick="switchTab('dashboard')" style="cursor:pointer;display:flex;align-items:center;gap:8px" title="대시보드로 이동">
+    <svg width="22" height="22" viewBox="0 0 100 100" style="flex-shrink:0">
+      <rect x="8" y="45" width="22" height="47" rx="6" fill="#3b82f6"/>
+      <rect x="39" y="28" width="22" height="64" rx="6" fill="#8b5cf6"/>
+      <rect x="70" y="8" width="22" height="84" rx="6" fill="#ec4899"/>
+    </svg>
+    <span>Stock-<em>manager</em></span>
+  </div>
   <div class="header-spacer"></div>
   <button class="settings-btn" onclick="openSettingsWithAuth()" title="설정">⚙️</button>
 </header>
