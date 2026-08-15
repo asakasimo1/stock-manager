@@ -26,6 +26,21 @@ const REAL_BASE  = 'https://openapi.koreainvestment.com:9443';
 const PAPER_BASE = 'https://openapivts.koreainvestment.com:29443';
 let _kisBase = (process.env.PAPER_TRADE || '').toLowerCase() === 'true' ? PAPER_BASE : REAL_BASE;
 
+// 코인 스캘핑처럼 체결 빈도가 훨씬 높은 시장이 공유 이력(구 trader_trades.json,
+// 상한 100건)을 며칠 만에 다 채워서 주식 체결이 통째로 밀려나 사라지던 문제
+// (2026-08-15, 8/13~14 주식 체결 82건 유실 실측) — 백엔드(gist_writer.py)가
+// 시장별 파일(trader_trades_coin.json / trader_trades_stock.json)로 분리 저장하도록
+// 바뀌어서, 여기서도 두 파일을 합쳐 기존 단일 배열 형태로 프론트에 내려준다.
+function _mergeTrades(files) {
+  const coin  = JSON.parse((files['trader_trades_coin.json']  || {}).content || '[]');
+  const stock = JSON.parse((files['trader_trades_stock.json'] || {}).content || '[]');
+  return [...coin, ...stock].sort((a, b) => {
+    const ka = `${a.date || ''} ${a.time || ''}`;
+    const kb = `${b.date || ''} ${b.time || ''}`;
+    return kb.localeCompare(ka);
+  });
+}
+
 function _isKisDomainMismatch(text) {
   return typeof text === 'string' && (text.includes('EGW02004') || text.includes('모의투자 앱키') || text.includes('실전투자 앱키'));
 }
@@ -301,8 +316,7 @@ export default async function handler(req, res) {
         gist = await r.json();
         _gistCache = gist; _gistCacheAt = now;
       }
-      const file = (gist.files || {})['trader_trades.json'];
-      const data = file ? JSON.parse(file.content || '[]') : [];
+      const data = _mergeTrades(gist.files || {});
       res.setHeader('Cache-Control', 'no-store');
       return res.status(200).json({ trader_trades: data });
     } catch (e) {
@@ -350,10 +364,10 @@ export default async function handler(req, res) {
         if (key === 'signals.json')          result.signals          = data || [];
         if (key === 'ipo.json')              result.ipo              = data || [];
         if (key === 'portfolio_meta.json')   result.portfolio_meta   = data || {};
-        if (key === 'trader_trades.json')    result.trader_trades    = data || [];
         if (key === 'account_balance.json')  result.account_balance  = data || null;
       } catch (_) {}
     }
+    result.trader_trades = _mergeTrades(files);
     // JSONBin portfolio_meta 오버레이 (Gist 쓰기 권한 없는 경우 대비)
     try {
       const jbKey   = process.env.JSONBIN_KEY;
