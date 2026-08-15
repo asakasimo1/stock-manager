@@ -4,6 +4,7 @@ KIS API에서 현재 잔고를 조회하여 Gist account_balance.json 업데이�
 """
 import logging
 import os
+import time
 from datetime import datetime, timezone, timedelta, date
 from dotenv import load_dotenv
 import kis_api
@@ -14,6 +15,26 @@ load_dotenv()
 KST = timezone(timedelta(hours=9))
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
+
+
+def _get_balance_with_retry(tries: int = 3, delay: float = 2.0) -> dict:
+    """KIS 잔고 조회 — 세션 레벨 재시도(kis_api._retry, total=3/backoff=0.3)로도
+    흡수 못 하는 좀 더 긴 서버측 장애(500 연쇄, 커넥션 리셋 등)에 대비해 한 단계
+    더 재시도. 실측(2026-06~08월 daemon_stock.log): '잔고 갱신 실패' 381건 —
+    실패 시 그냥 넘어가고 다음 사이클(최대 1분 뒤)까지 대시보드가 그대로
+    멈춰있던 게 "시스템 트레이딩 내역이 실시간으로 안 나온다"는 반복 피드백의
+    원인이었음(2026-08-15). 여기서 몇 초 더 기다려서라도 성공률을 높이는 게,
+    daemon_stock 사이클 하나를 통째로 놓치고 다음 분까지 기다리는 것보다 낫다."""
+    last_err = None
+    for attempt in range(tries):
+        try:
+            return kis_api.get_balance()
+        except Exception as e:
+            last_err = e
+            if attempt < tries - 1:
+                logger.warning("잔고 조회 실패(%d/%d) — %.0f초 후 재시도: %s", attempt + 1, tries, delay, e)
+                time.sleep(delay)
+    raise last_err
 
 
 def _sync_positions(holdings: list):
@@ -102,7 +123,7 @@ def _reconcile_trades():
 def main():
     logger.info("잔고 조회 시작")
     try:
-        bal = kis_api.get_balance()
+        bal = _get_balance_with_retry()
         # 당일손익 = (보유종목의 전일종가 대비 평가변동) + (오늘 완료된 그리드
         # 매매 실현손익). 총자산평가금액 단순 비교(전일 대비) 방식은 당일
         # 입출금까지 손익으로 잡아버리는 문제가 있어(실측: 10만원 입금이

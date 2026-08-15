@@ -88,7 +88,7 @@ sudo systemctl restart coin-daemon
 | `job_coin_sell.py` | daemon_coin + 수동 GHA | 코인 매도 |
 | `job_profit_buy_cloud.py` | stock-daemon | 주식 조건부 매수 |
 | `job_profit_sell_cloud.py` | stock-daemon | 주식 수익매도 (auto_sell은 KRX 09:00~15:30만) |
-| `job_balance.py` | stock-daemon (5분마다) + 수동 GHA | KIS 잔고 Gist 갱신 |
+| `job_balance.py` | stock-daemon (1분마다, `BALANCE_EVERY=2`×30초) + 수동 GHA | KIS 잔고 Gist 갱신. 실패 시 내부 3회 재시도(2026-08-15 추가) |
 | `job_signals.py` | GHA signals | 매수 신호 생성 |
 | `job_buy.py` | GHA buy | 신호 기반 매수 |
 | `job_close.py` | GHA close | 마감 청산 |
