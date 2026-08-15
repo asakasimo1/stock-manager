@@ -89,7 +89,7 @@ def _reconcile_trades():
     if not executions:
         return
 
-    existing = gist_writer._read_trades()
+    existing = gist_writer._read_trades("stock")
     known_order_nos = {t.get("order_no") for t in existing if t.get("order_no")}
 
     today_str = datetime.now(KST).strftime("%Y-%m-%d")

@@ -26,8 +26,15 @@ _KST = timezone(timedelta(hours=9))
 GIST_ID  = os.environ.get("GIST_ID", "")
 GH_TOKEN = os.environ.get("GH_TOKEN", "")
 
-FILENAME     = "trader_trades.json"
-MAX_HISTORY  = 100   # 최대 보관 건수
+# 코인/주식을 같은 trader_trades.json 하나로 공유했을 때, 최근 5초 폴링으로
+# 훨씬 자주 체결되는 코인 스캘핑이 MAX_HISTORY(100건) 슬롯을 거의 다 채워버려서
+# 주식 거래가 기록되자마자 며칠 안에 밀려나 대시보드에서 통째로 사라지는 문제가
+# 있었음(2026-08-15, 8/13~14 주식 체결 82건이 며칠 만에 전부 유실됨 실측).
+# 시장별로 파일을 분리해서 한쪽 거래량이 다른 쪽을 밀어내지 못하게 함.
+FILENAME_COIN  = "trader_trades_coin.json"
+FILENAME_STOCK = "trader_trades_stock.json"
+FILENAME       = "trader_trades.json"  # 구 파일 — 1회 마이그레이션 소스로만 사용, 더 이상 쓰지 않음
+MAX_HISTORY  = 100   # 시장별 최대 보관 건수
 
 # ─────────────────────────────────────────
 # 공유 HTTP 세션 (TLS 연결 재활용)
@@ -135,27 +142,37 @@ def _invalidate_gist_cache():
         pass
 
 
-def _read_trades() -> list:
+def _market_of(ticker: str) -> str:
+    return "coin" if str(ticker or "").startswith("KRW-") else "stock"
+
+
+def _trades_filename(market: str) -> str:
+    return FILENAME_COIN if market == "coin" else FILENAME_STOCK
+
+
+def _read_trades(market: str) -> list:
     if not GIST_ID or not GH_TOKEN:
         return []
     try:
         files = _fetch_gist_raw().get("files", {})
-        if FILENAME in files:
-            return json.loads(files[FILENAME].get("content", "[]"))
+        fname = _trades_filename(market)
+        if fname in files:
+            return json.loads(files[fname].get("content", "[]"))
     except Exception as e:
-        logger.warning("[Gist] 거래 내역 읽기 실패: %s", e)
+        logger.warning("[Gist] 거래 내역 읽기 실패(%s): %s", market, e)
     return []
 
 
-def _write_trades(records: list):
+def _write_trades(records: list, market: str):
     # _write_gist()의 409(동시쓰기 충돌) 재시도 로직을 그대로 재사용 — 예전엔 이 함수가
     # 별도로 PATCH를 직접 호출해서 재시도가 없었고, 그 때문에 스캘핑/그리드 등 여러
     # 데몬이 동시에 Gist에 쓰는 순간 매도 체결 기록(trader_trades.json)이 조용히
     # 유실돼 대시보드 "시스템 트레이딩 내역"에서 이미 판 종목이 계속 "보유중"으로
     # 잘못 나오는 원인이 됐음(2026-08-11 다수 종목 실측).
-    ok = _write_gist({FILENAME: records})
+    fname = _trades_filename(market)
+    ok = _write_gist({fname: records})
     if ok:
-        logger.info("[Gist] 거래 내역 저장 완료 (총 %d건)", len(records))
+        logger.info("[Gist] 거래 내역 저장 완료(%s, %s): 총 %d건", market, fname, len(records))
     return ok
 
 
@@ -261,22 +278,34 @@ def log_trade(
 
 
 def flush_trades():
-    """버퍼에 쌓인 거래 내역을 Gist에 일괄 저장 (GET 1회 + PATCH 1회).
+    """버퍼에 쌓인 거래 내역을 시장별(코인/주식) 파일에 나눠서 Gist에 저장.
     거래가 없으면 아무것도 하지 않습니다.
-    저장이 끝내 실패하면(재시도 3회 소진) 버퍼를 비우지 않고 남겨둬서 다음
+    한 프로세스는 보통 한 시장만 거래하므로 대부분 1회 GET+PATCH로 끝나고,
+    드물게 같은 flush 사이클에 코인+주식이 섞여 있으면 시장별로 각각 처리.
+    저장이 끝내 실패하면(재시도 3회 소진) 그 시장 분만 버퍼에 남겨둬서 다음
     flush_trades() 호출(다음 폴링 사이클) 때 다시 시도함 — 여기서 무조건
     clear()하면 매도 체결 기록 자체가 통째로 유실돼 버림."""
     if not _pending_trades:
         return
     count = len(_pending_trades)
-    logger.info("[Gist] 거래 내역 %d건 일괄 저장 시작", count)
-    records = _read_trades()
-    for trade in reversed(_pending_trades):   # 최신 순 유지
-        records.insert(0, trade)
-    ok = _write_trades(records[:MAX_HISTORY])
-    if ok:
-        _pending_trades.clear()
-        _save_pending_trades()  # 디스크 버퍼 파일도 비움 — 다음 시작 시 잘못 복구되지 않도록
+    by_market: dict[str, list] = {}
+    for trade in _pending_trades:
+        by_market.setdefault(_market_of(trade.get("ticker")), []).append(trade)
+
+    logger.info("[Gist] 거래 내역 %d건 일괄 저장 시작 (%s)",
+                count, {m: len(v) for m, v in by_market.items()})
+
+    still_pending = []
+    for market, trades in by_market.items():
+        records = _read_trades(market)
+        for trade in reversed(trades):   # 최신 순 유지
+            records.insert(0, trade)
+        ok = _write_trades(records[:MAX_HISTORY], market)
+        if not ok:
+            logger.error("[Gist] 거래 내역 저장 실패(%s) — 버퍼 유지, 다음 사이클에 재시도 (%d건)", market, len(trades))
+            still_pending.extend(trades)
+
+    _pending_trades[:] = still_pending
+    _save_pending_trades()
+    if not still_pending:
         logger.info("[Gist] flush_trades 완료 (%d건)", count)
-    else:
-        logger.error("[Gist] 거래 내역 저장 실패 — 버퍼 유지(디스크에도 보존됨), 다음 사이클에 재시도 (%d건)", count)

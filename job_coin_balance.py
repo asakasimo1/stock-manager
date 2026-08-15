@@ -29,7 +29,7 @@ def _reconcile_trades():
     if not orders:
         return
 
-    existing = gist_writer._read_trades()
+    existing = gist_writer._read_trades("coin")
     known = {t.get("order_no") for t in existing if t.get("order_no")}
 
     new_count = 0
