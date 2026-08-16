@@ -122,5 +122,11 @@ sudo systemctl restart coin-daemon
 - [2026-08-12 09:57] `scalp_auto_config.json` (Gist) — `test_fixed_qty_until`을 2026-08-14로 연장 (모니터링 기간 중 1주씩만 매수)
 - [2026-08-12 09:57] `scalp_auto_config.json` (Gist) — `stop_loss_pct_premarket` 3.6 추가 (NXT 프리마켓 전용 손절폭, quiet_hour×2). 관련: `a697edd`
 - [2026-08-12 11:31] `scalp_stock_jobs.json` (Gist) — 유령 포지션 2건(148780 비큐AI, 226320 잇츠한불) `phase=watching`/`status=done`으로 수동 초기화. 근본 원인 수정: `205757e`
+- [2026-08-16 10:2x] `scalp_auto_config.json` (Gist) — coin.min_volume_surge_ratio
+  1.2→1.1, coin.max_day_chg_pct 5→7 (완화). 코인 자동발굴 빈도가 8/15~16
+  이틀 연속 낮아서(8/15 20시간 공백, 8/16 오전 중 1건뿐) 사용자 승인 후
+  테스트로 완화. 코드/킬스위치는 이상 없음 확인됨 — 순수 시장조건 필터가
+  너무 빡빡했을 가능성 테스트. position_size(20,000원/건)는 변경 안 함.
+  며칠 관찰 후 발굴 빈도·승률 재점검 필요.
 - [2026-08-12 14:1x] `job_profit_sell_cloud.py` — VM `stock-daemon` scp 배포 + 재시작 (git push `b3c9ad1` 이후)
 - [2026-08-15 09:3x] `trader_trades.json` → `trader_trades_coin.json`/`trader_trades_stock.json` — `migrate_trader_trades.py` VM 실행으로 기존 100건(전부 코인) 분리 이관 + `backfill_stock_trades.py 20260813 20260814`로 파일분리 이전 누락된 주식 체결 82건 백필. 관련: `35817f8`, `04ccaa4`
