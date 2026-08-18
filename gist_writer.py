@@ -205,7 +205,14 @@ def _write_gist(files_dict: dict) -> bool:
     그냥 실패 처리하면, 매도 체결 등으로 이미 바뀐 잡 상태(phase/buy_qty 등)가
     Gist엔 저장되지 않은 채 유실돼서 "매도됐는데 화면엔 계속 보유중"인 유령
     포지션이 생김(2026-08-10 대동스틸 048470 실측). 409는 대개 순간적인 충돌이라
-    짧게 대기 후 재시도하면 대부분 성공하므로, 여기서 최대 3회 재시도한다."""
+    짧게 대기 후 재시도하면 대부분 성공하므로, 여기서 최대 3회 재시도한다.
+
+    2026-08-18 추가 — 409뿐 아니라 403(GitHub API rate limit)도 같은 이유로
+    재시도해야 함. 매수 체결 직후 이 저장이 403으로 실패하면 방금 산 포지션이
+    holding 상태로 기록 안 돼서 자동매도(auto_sell_by_rule) 대상에서 완전히
+    빠져버리는 사고가 실측됨(코리아써키트 007810 — 매수 후 4일간 익절 로직이
+    전혀 작동 안 하고 방치됨). 403은 secondary rate limit인 경우가 많아 409보다
+    긴 대기가 필요해 백오프를 더 크게 잡는다."""
     if not GIST_ID or not GH_TOKEN:
         logger.warning("[Gist] GIST_ID 또는 GH_TOKEN 미설정 — 저장 건너뜀")
         return False
@@ -230,9 +237,14 @@ def _write_gist(files_dict: dict) -> bool:
             if r.status_code == 409 and attempt < 2:
                 time.sleep(0.5 * (attempt + 1))
                 continue
+            if r.status_code == 403 and attempt < 2:
+                time.sleep(3.0 * (attempt + 1))
+                continue
         except Exception as e:
             logger.warning("[Gist] 저장 예외: %s", e)
         break
+    logger.error("[Gist] 저장 최종 실패(재시도 소진): %s — 호출부가 별도 복구 처리 필요",
+                 list(files_dict.keys()))
     return False
 
 
