@@ -357,12 +357,26 @@ def main():
 
                 if order_filled:
                     reason_label = "수동 완료 처리" if force_done else "미체결 목록 미존재 → 체결 확인"
+                    # 2026-08-18 추가 — 여기서 sell_price를 안 채워서 대시보드
+                    # 일별 수익현황(tab-autotrade.js atCalcDayProfit)이
+                    # sell_price||exec_price||target_price||0 순으로 읽다가
+                    # 전부 비어 있으면 0원으로 떨어져, 매도가 0원인 것처럼 계산돼
+                    # "손절 -전액" 으로 잘못 표시되는 문제가 있었음(실측: 코리아써키트
+                    # 007810 — 실제 67,400원 익절인데 -59,109원 손절로 표시).
+                    # 실제 평균체결가를 최우선으로 쓰고, 조회 실패 시에만 지정가로 근사.
+                    try:
+                        fills = kis_api.get_daily_executions()
+                        fill = next((f for f in fills if f.get("order_no") == order_no), None)
+                        job["sell_price"] = fill["price"] if fill and fill.get("price") else target_price
+                    except Exception as e:
+                        logger.warning("%s(%s) 체결가 조회 실패, 지정가로 근사: %s", name, ticker, e)
+                        job["sell_price"] = target_price
                     job["status"]      = "done"
                     job["executed_at"] = datetime.now(KST).strftime("%Y-%m-%d %H:%M")
                     job["force_done"]  = False
                     changed = True
-                    logger.info("✅ %s(%s) 지정가 주문 체결 완료 처리 [%s]  주문번호: %s",
-                                name, ticker, reason_label, order_no)
+                    logger.info("✅ %s(%s) 지정가 주문 체결 완료 처리 [%s]  체결가 %s원  주문번호: %s",
+                                name, ticker, reason_label, job["sell_price"], order_no)
                     notify.send(
                         f"✅ <b>지정가 매도 체결 확인</b>  {name} ({ticker})\n"
                         f"  주문번호: {order_no}\n"
