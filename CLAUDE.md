@@ -130,3 +130,15 @@ sudo systemctl restart coin-daemon
   며칠 관찰 후 발굴 빈도·승률 재점검 필요.
 - [2026-08-12 14:1x] `job_profit_sell_cloud.py` — VM `stock-daemon` scp 배포 + 재시작 (git push `b3c9ad1` 이후)
 - [2026-08-15 09:3x] `trader_trades.json` → `trader_trades_coin.json`/`trader_trades_stock.json` — `migrate_trader_trades.py` VM 실행으로 기존 100건(전부 코인) 분리 이관 + `backfill_stock_trades.py 20260813 20260814`로 파일분리 이전 누락된 주식 체결 82건 백필. 관련: `35817f8`, `04ccaa4`
+- [2026-08-20 21:xx] **초단타 잡상태 유실 재시도스팸 + 체결 중복기록 버그**(Mac 세션) —
+  비트맥스(377030) 급락손절 후 15분간 34회 재시도 스팸 실측(청산 자체는 성공,
+  KIS 계좌 잔고로 확인함 — 금전 피해 없음). 원인 2가지: (1) `job_scalp_stock.py`/
+  `job_scalp_coin.py`의 `main()` 끝 잡 리스트 저장이 실패 여부 확인을 안 해서
+  Gist 동시쓰기 충돌(409/403) 시 방금 청산한 상태가 유실 → 다음 사이클이 낡은
+  상태로 재시도. (2) `job_balance.py`의 체결 중복확인이 여러 데몬 공유 30초
+  캐시 때문에 같은 체결을 12번 중복 기록(`trader_trades_stock.json` 100건
+  슬롯 중 11개를 헛되이 차지). 코드 수정: `3a2c14b`(재시도+에러로그 추가,
+  캐시우회+pending버퍼 대조). **Gist `trader_trades_stock.json`의 기존 중복행
+  11개는 스크립트로 직접 삭제**(git 비대상 — 실제 체결행 1개는 보존).
+  내일 Win PC 세션은 이 커밋이 이미 VM에 배포·재시작까지 완료됐다는 전제로
+  시작할 것 (`sudo systemctl restart scalp-daemon stock-daemon` 완료됨).
