@@ -943,7 +943,10 @@ async function loadDivRecords() {
   renderDivHistory();
 }
 
+let _divNetManuallyEdited = false;  // 세후 입력란을 사용자가 직접 고쳤는지 추적 (아래 calcDivPreview 주석 참고)
+
 function openDivModal(etfId) {
+  _divNetManuallyEdited = false;
   // ETF 콤보박스 채우기
   const sel = document.getElementById('dv-etf-select');
   sel.innerHTML = '<option value="">ETF를 선택하세요</option>' +
@@ -1016,15 +1019,22 @@ function calcDivPreview() {
   document.getElementById('dv-gross-val').textContent       = gross.toLocaleString() + '원';
   document.getElementById('dv-net-estimated').textContent   = estimated.toLocaleString() + '원';
 
-  // 실제 수령액 기본값 세팅 (이미 입력된 값 있으면 유지)
+  // 실제 수령액 기본값 세팅 — 세전 금액을 입력하는 동안 매 키 입력마다 이 함수가
+  // 다시 실행되는데, 예전엔 "!netInput.value"로 자동입력 여부를 판단해서 세전에
+  // "3000"을 입력하면 첫 글자 "3" 입력 시점에 세후가 3으로 자동 채워지고, 그 뒤
+  // "0"들을 계속 입력해도 netInput.value가 이미 "3"(비어있지 않음)이라 더 이상
+  // 갱신이 안 되는 버그가 있었음(2026-08-20 실측). 사용자가 세후 칸을 "직접"
+  // 고쳤는지 여부(_divNetManuallyEdited)로 판단하도록 수정 — 세전을 계속 입력하는
+  // 동안은 세후가 계속 따라가고, 사용자가 세후 칸에 직접 타이핑한 뒤부터만 멈춘다.
   const netInput = document.getElementById('dv-net-input');
-  if (!netInput.value) netInput.value = estimated;
+  if (!_divNetManuallyEdited) netInput.value = estimated;
 
   updateTaxRateInfo(gross);
   preview.style.display = 'block';
 }
 
 function onNetInputChange() {
+  _divNetManuallyEdited = true;
   const gross = parseFloat(document.getElementById('dv-gross-input').value) || 0;
   updateTaxRateInfo(gross);
 }
