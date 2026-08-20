@@ -280,6 +280,12 @@ def process_grid(job: dict) -> bool:
                 avg_price = order["avg_price"] or level
                 _buy_time = datetime.now(KST).strftime("%H:%M")
                 grid.update(coin_qty=coin_qty, last_buy_price=avg_price, buy_uuid="", buy_time=_buy_time)
+                # 2026-08-21 — 그리드가 실제로 매수 체결한 수량만 누적하는 장부.
+                # _sync_orphan_coins()가 계좌 잔고 전체가 아니라 이 장부를 기준으로
+                # "고아 코인"을 판단하도록 해서, 사용자가 같은 코인을 업비트에서 직접
+                # 매매한 수량까지 그리드가 건드리지 않게 하기 위함(아래 _sync_orphan_coins
+                # 주석 참고).
+                job["grid_owned_qty"] = round(job.get("grid_owned_qty", 0) + coin_qty, 8)
 
                 # 상위 격자에 매도 주문 등록
                 sell_price = avg_price * (1 + grid_pct / 100)
@@ -328,6 +334,8 @@ def process_grid(job: dict) -> bool:
                 pnl = (sell_exec * (1 - SELL_FEE) - buy_exec * (1 + BUY_FEE)) * coin_qty
                 job["total_profit_krw"] = round(job.get("total_profit_krw", 0) + pnl, 2)
                 job["trade_count"]      = job.get("trade_count", 0) + 1
+                # 매도 체결로 그리드 보유 장부에서 차감 (buy_waiting 체결 시 증가시킨 것과 짝)
+                job["grid_owned_qty"] = round(max(0, job.get("grid_owned_qty", 0) - coin_qty), 8)
                 _now = datetime.now(KST).strftime("%Y-%m-%d %H:%M")
                 hist = job.setdefault("trade_history", [])
                 hist.append({"date": _now[:10], "time": _now[11:],
@@ -497,6 +505,7 @@ def _stop_loss_top_grid(job: dict) -> bool:
         )
         buy_price = grid.get("last_buy_price", 0)
         job["trade_count"] = job.get("trade_count", 0) + 1
+        job["grid_owned_qty"] = round(max(0, job.get("grid_owned_qty", 0) - coin_qty), 8)
         grid.update(state="idle", sell_uuid="", coin_qty=0)
         logger.info("▼ 손절 매도: %s %.8f개 (매수가 %s원 / 격자 %s원)",
                     job["ticker"], coin_qty, f"{buy_price:,.0f}", f"{level:,.0f}")
@@ -585,8 +594,19 @@ def _check_auto_reinit(job: dict, cur_price: float) -> bool:
 # ─────────────────────────────────────────
 
 def _sync_orphan_coins(job: dict) -> bool:
-    """reinit 후 Upbit 잔고에 있지만 그리드에 미추적된 코인(고아 코인)을
-    현재가 위 idle 격자에 지정가 매도로 등록. 변경 발생 시 True 반환."""
+    """reinit 후 "그리드 자신이 매수 체결로 확보한 걸로 장부에 남아있는데" 현재
+    격자엔 미추적인 코인(고아 코인)을 현재가 위 idle 격자에 지정가 매도로 등록.
+    변경 발생 시 True 반환.
+
+    2026-08-21 — 예전엔 Upbit 계좌 잔고 전체(actual_qty)를 기준으로 고아 여부를
+    판단해서, 사용자가 같은 코인을 업비트 앱에서 직접 매매한 수량까지 "고아
+    코인"으로 오판해 자동 매도 등록해버리는 위험이 있었음(job_coin_sell.py의
+    auto_sell_by_rule()이 계좌 전체를 훑다 사용자 직접매매 코인을 자동매도한
+    사고와 같은 종류 — 2026-08-21 사용자 요청으로 "그리드가 직접 산 코인에만"
+    엄격히 한정). job["grid_owned_qty"](process_grid의 매수/매도 체결 시점마다
+    누적·차감되는 장부, 계좌 잔고와 무관)를 기준 상한으로 쓰고, 실제 계좌 잔고와
+    비교해 그 중 더 작은 값만 사용 — 그리드 장부에 없는 수량은 계좌에 아무리
+    많이 있어도(=사용자 직접 매매분) 절대 건드리지 않는다."""
     ticker       = job["ticker"]
     grids        = job.get("grids", [])
     krw_per_grid = float(job.get("krw_per_grid", 0))
@@ -595,6 +615,13 @@ def _sync_orphan_coins(job: dict) -> bool:
         float(g.get("coin_qty", 0))
         for g in grids if g.get("state") == "sell_waiting"
     )
+
+    ledger_qty    = float(job.get("grid_owned_qty", 0))
+    ledger_orphan = ledger_qty - tracked_qty
+    if ledger_orphan < 1e-8:
+        logger.info("고아 코인 없음(그리드 장부 기준) %s: 장부보유 %.8f개 = 추적 %.8f개",
+                    ticker, ledger_qty, tracked_qty)
+        return False
 
     try:
         bal = upbit_api.get_balance()
@@ -615,14 +642,18 @@ def _sync_orphan_coins(job: dict) -> bool:
             actual_qty = float(h.get("qty", 0))
             break
 
-    orphan_qty = actual_qty - tracked_qty
+    # 그리드 장부상 고아 수량과 "계좌 잔고 - 추적중" 중 더 작은 쪽만 사용 —
+    # 계좌에 실제로 없는 걸 팔 수는 없고(안전장치 ①), 계좌엔 있어도 장부보다
+    # 많으면(=사용자 직접 매매분 포함) 장부를 넘는 초과분은 절대 건드리지
+    # 않는다(안전장치 ② — 이번 수정의 핵심).
+    orphan_qty = min(ledger_orphan, actual_qty - tracked_qty)
     if orphan_qty < 1e-8:
-        logger.info("고아 코인 없음 %s: 실제 %.8f개 = 추적 %.8f개",
+        logger.info("고아 코인 없음(계좌 잔고 기준) %s: 실제 %.8f개 = 추적 %.8f개",
                     ticker, actual_qty, tracked_qty)
         return False
 
-    logger.warning("고아 코인 감지 %s: 실제 %.8f개 - 추적 %.8f개 = 고아 %.8f개 (≈ %s원)",
-                   ticker, actual_qty, tracked_qty, orphan_qty,
+    logger.warning("고아 코인 감지 %s: 그리드장부 %.8f개 · 실제잔고 %.8f개 - 추적 %.8f개 = 고아 %.8f개 (≈ %s원)",
+                   ticker, ledger_qty, actual_qty, tracked_qty, orphan_qty,
                    f"{orphan_qty * cur_price:,.0f}")
 
     # 현재가 위 idle 격자에 낮은 가격순(현재가에 가까운 순)으로 매도 등록
