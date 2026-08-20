@@ -89,15 +89,22 @@ def _reconcile_trades():
     if not executions:
         return
 
-    existing = gist_writer._read_trades("stock")
-    known_order_nos = {t.get("order_no") for t in existing if t.get("order_no")}
+    # force_fresh=True — 여러 데몬이 공유하는 30초 캐시 때문에 방금 저장한
+    # 체결이 여기 반영 안 된 스냅샷을 볼 수 있음(2026-08-20 실측: 비트맥스
+    # 377030 체결 1건이 캐시 stale로 "새 체결"로 반복 오판돼 12번 중복 기록됨).
+    # pending_order_nos()도 같이 합쳐서, 이 프로세스가 방금 log_trade()만 하고
+    # 아직 flush 전인 order_no까지 중복방지 대상에 포함시킨다.
+    existing = gist_writer._read_trades("stock", force_fresh=True)
+    known_order_nos = {t.get("order_no") for t in existing if t.get("order_no")} | gist_writer.pending_order_nos()
 
     today_str = datetime.now(KST).strftime("%Y-%m-%d")
     new_count = 0
+    seen_this_pass = set()
     for ex in executions:
         order_no = ex.get("order_no")
-        if not order_no or order_no in known_order_nos:
+        if not order_no or order_no in known_order_nos or order_no in seen_this_pass:
             continue
+        seen_this_pass.add(order_no)
         # ex["time"]은 HHMMSS(체결 실제 시각) — 이걸 안 넘기면 log_trade()가
         # "지금(기록 시점)"으로 찍어서, 나중에 조회할 때 실제 체결시각과 다르게
         # 보임(2026-08-10 실측: 09시대 체결이 12시대 거래로 표시되는 버그 원인).

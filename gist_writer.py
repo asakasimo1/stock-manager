@@ -106,9 +106,16 @@ def _now_kst() -> datetime:
     return datetime.now(_KST)
 
 
-def _fetch_gist_raw() -> dict:
-    """GitHub Gist 전체를 가져옴. 파일 캐시 우선 (30초 TTL)."""
-    if _GIST_CACHE_FILE.exists():
+def _fetch_gist_raw(force_fresh: bool = False) -> dict:
+    """GitHub Gist 전체를 가져옴. 파일 캐시 우선 (30초 TTL).
+    force_fresh=True면 캐시를 무시하고 항상 새로 조회 — 여러 데몬이 같은 캐시
+    파일(/tmp)을 공유하다 보니, 한 프로세스가 방금 쓴 내용을 다른 프로세스가
+    쓰기 직전/직후에 캐시를 다시 채워서 무효화가 안 먹히는 경우가 있었음
+    (2026-08-20 실측 — job_balance.py의 체결 중복확인용 order_no 대조가 이
+    캐시 때문에 낡은 스냅샷을 보고 이미 기록한 체결을 "새 체결"로 오판, 같은
+    거래가 trader_trades.json에 12번 중복 기록됨). 캐시 절약보다 정확성이
+    중요한 호출부(체결 중복방지 등)는 force_fresh=True를 쓸 것."""
+    if not force_fresh and _GIST_CACHE_FILE.exists():
         try:
             cached = json.loads(_GIST_CACHE_FILE.read_text())
             if time.time() - cached.get("_ts", 0) < _GIST_CACHE_TTL:
@@ -150,17 +157,25 @@ def _trades_filename(market: str) -> str:
     return FILENAME_COIN if market == "coin" else FILENAME_STOCK
 
 
-def _read_trades(market: str) -> list:
+def _read_trades(market: str, force_fresh: bool = False) -> list:
     if not GIST_ID or not GH_TOKEN:
         return []
     try:
-        files = _fetch_gist_raw().get("files", {})
+        files = _fetch_gist_raw(force_fresh=force_fresh).get("files", {})
         fname = _trades_filename(market)
         if fname in files:
             return json.loads(files[fname].get("content", "[]"))
     except Exception as e:
         logger.warning("[Gist] 거래 내역 읽기 실패(%s): %s", market, e)
     return []
+
+
+def pending_order_nos() -> set:
+    """아직 flush_trades()로 Gist에 저장 안 된 버퍼 속 order_no 집합.
+    체결 중복기록 방지(reconcile) 시 Gist에 이미 반영된 것뿐 아니라 "방금
+    이 프로세스가 기록했지만 아직 안 올라간 것"까지 같이 걸러내기 위함
+    (2026-08-20 추가 — 비트맥스 377030 중복기록 버그 수정)."""
+    return {t.get("order_no") for t in _pending_trades if t.get("order_no")}
 
 
 def _write_trades(records: list, market: str):

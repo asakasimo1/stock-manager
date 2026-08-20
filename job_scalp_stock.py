@@ -377,6 +377,25 @@ def _close_stale_auto_watching(jobs: list) -> bool:
     return changed
 
 
+def _save_jobs(jobs: list) -> bool:
+    """scalp_stock_jobs.json 저장 — 실패해도 조용히 무시하지 않고 짧게 재시도 +
+    크게 로그. _write_gist() 자체도 409/403을 내부에서 3회 재시도하지만, 그마저
+    다 실패하면 이 사이클에서 갱신한 잡 상태(예: 방금 청산 완료해서 phase를
+    watching으로 되돌린 것)가 통째로 유실되고, 다음 사이클이 Gist에서 낡은
+    상태(여전히 holding)를 다시 읽어와 이미 판 포지션을 또 팔려고 시도하는
+    문제가 있었음(2026-08-20 비트맥스 377030 실측 — 청산 성공 후 15분간 34회
+    재시도 스팸 발생, 실제 손실은 없었지만 KIS API를 계속 헛되이 호출함).
+    여기서 한 번 더 짧게 재시도하고, 그래도 실패하면 최소한 에러 로그로 남겨
+    원인 파악이 가능하게 함(기존엔 이 저장이 실패해도 로그가 전혀 안 남았음)."""
+    for attempt in range(3):
+        if gist_writer._write_gist({"scalp_stock_jobs.json": jobs}):
+            return True
+        if attempt < 2:
+            time.sleep(1.0 * (attempt + 1))
+    logger.error("scalp_stock_jobs.json 저장 최종 실패 — 이번 사이클의 잡 상태 변경이 유실됐을 수 있음")
+    return False
+
+
 def main():
     jobs = gist_writer._read_gist_file("scalp_stock_jobs.json")
     if jobs is None:
@@ -386,7 +405,7 @@ def main():
 
     if not kis_api.is_any_market_open():
         if _close_stale_auto_watching(jobs):
-            gist_writer._write_gist({"scalp_stock_jobs.json": jobs})
+            _save_jobs(jobs)
         return
 
     stock_enabled = _is_stock_enabled()
@@ -400,7 +419,7 @@ def main():
     tickers = list({j["ticker"] for j in jobs if j.get("status") not in ("stopped", "done")})
     if not tickers:
         if changed:
-            gist_writer._write_gist({"scalp_stock_jobs.json": jobs})
+            _save_jobs(jobs)
         return
     price_cache = _fetch_prices(tickers)
 
@@ -563,7 +582,7 @@ def main():
         logger.info("지난 완료 자동발굴 잡 %d건 정리", pruned)
 
     if changed:
-        gist_writer._write_gist({"scalp_stock_jobs.json": jobs})
+        _save_jobs(jobs)
     gist_writer.flush_trades()
 
 

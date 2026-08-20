@@ -343,6 +343,19 @@ def _force_close(job: dict, cur_price: float, reason: str) -> None:
             logger.error("%s 강제청산 실패: %s", ticker, e)
 
 
+def _save_jobs(jobs: list) -> bool:
+    """scalp_coin_jobs.json 저장 — job_scalp_stock.py의 동일 버그 수정과 같은
+    이유로 재시도+에러로그 추가(2026-08-20). 상세 사유는 job_scalp_stock.py의
+    _save_jobs() 주석 참고."""
+    for attempt in range(3):
+        if gist_writer._write_gist({"scalp_coin_jobs.json": jobs}):
+            return True
+        if attempt < 2:
+            time.sleep(1.0 * (attempt + 1))
+    logger.error("scalp_coin_jobs.json 저장 최종 실패 — 이번 사이클의 잡 상태 변경이 유실됐을 수 있음")
+    return False
+
+
 def main():
     jobs = gist_writer._read_gist_file("scalp_coin_jobs.json")
     if jobs is None:
@@ -541,7 +554,7 @@ def main():
         logger.info("지난 완료 자동발굴 잡 %d건 정리", pruned)
 
     if changed:
-        gist_writer._write_gist({"scalp_coin_jobs.json": jobs})
+        _save_jobs(jobs)
     gist_writer.flush_trades()
 
 
