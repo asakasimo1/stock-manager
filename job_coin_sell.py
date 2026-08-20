@@ -176,7 +176,14 @@ def process_sell_jobs():
 def main():
     logger.info("코인 매도 잡 체크 시작")
 
-    auto_sell_by_rule()
+    # 2026-08-21 사용자 요청으로 비활성화 — auto_sell_by_rule()은 봇이 산 코인인지
+    # 사용자가 업비트에서 직접 매매한 코인인지 구분 없이 계좌 전체 잔고(bal["holdings"])를
+    # 훑어서 +20%/-4% 룰을 적용했음. 그 결과 사용자가 직접 수동으로 매수한 리플(XRP)이
+    # 봇에 의해 임의로 자동 익절 매도됨(2026-08-21 새벽 실측, 사용자가 "심각한 오류"로
+    # 리포트) — 봇이 열지 않은 포지션까지 건드리는 게 근본 문제라 함수 자체를 끔.
+    # process_sell_jobs()는 coin_sell_jobs.json에 사용자가 직접 등록한 잡만 처리하는
+    # 안전한 방식이라 그대로 유지.
+    # auto_sell_by_rule()
     process_sell_jobs()
 
     logger.info("코인 매도 잡 체크 완료")
