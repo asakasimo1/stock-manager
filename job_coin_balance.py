@@ -46,12 +46,20 @@ def _reconcile_trades():
             continue
         market = detail["market"] or o["market"]
 
-        # created_at(체결 실제 시각)을 안 넘기면 log_trade()가 "지금(기록 시점)"으로
-        # 찍어서 실제와 다른 시각으로 보임(2026-08-10 실측: 09시대 체결이 12시대로
-        # 잘못 표시된 원인 — job_balance.py와 동일한 버그를 코인 쪽도 갖고 있었음).
+        # 체결 실제 시각을 안 넘기면 log_trade()가 "지금(기록 시점)"으로 찍어서
+        # 실제와 다른 시각으로 보임(2026-08-10 실측: 09시대 체결이 12시대로 잘못
+        # 표시된 원인 — job_balance.py와 동일한 버그를 코인 쪽도 갖고 있었음).
+        #
+        # o["created_at"](주문을 "낸" 시각, get_closed_orders 응답)이 아니라
+        # detail["filled_at"](trades[]의 실제 체결시각, get_order_detail 응답)을
+        # 써야 함 — 지정가 주문은 이 둘이 크게 벌어질 수 있고, 특히 그리드매매는
+        # 매도 주문을 걸어두고 한참 뒤에 체결되는 구조라 created_at을 쓰면 거래
+        # 시각이 완전히 틀어짐(2026-08-23 실측: 01:48에 낸 매도주문이 실제로는
+        # 05:09에 체결됐는데 01:48로 기록되고 있었음 — 대시보드 시스템 트레이딩
+        # 내역이 봇의 그리드 손익 기록과 어긋나는 근본 원인이었음).
         trade_date = trade_time = None
         try:
-            dt = datetime.fromisoformat(o.get("created_at", ""))
+            dt = datetime.fromisoformat(detail.get("filled_at", ""))
             if dt.tzinfo is None:
                 dt = dt.replace(tzinfo=timezone.utc)
             dt = dt.astimezone(KST)

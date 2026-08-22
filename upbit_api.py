@@ -462,7 +462,14 @@ def get_closed_orders(state: str = "done", limit: int = 100) -> list:
 def get_order_detail(order_uuid: str) -> dict:
     """주문 상세 조회 — trades 배열 기반으로 실제 체결 평균단가를 계산.
     (get_order()의 avg_buy_price 필드는 매수 주문 기준이라 매도 주문엔 그대로
-    쓸 수 없어 거래내역 기록용으로 별도 분리)"""
+    쓸 수 없어 거래내역 기록용으로 별도 분리)
+
+    filled_at: trades[]의 마지막 체결시각(실제로 팔리거나 산 시각). 지정가
+    주문은 created_at(주문을 "낸" 시각)과 실제 체결시각이 크게 벌어질 수
+    있음 — 특히 그리드매매는 매도 주문을 걸어두고 한참 뒤에 체결되는 구조라
+    이 둘을 혼동하면 거래내역 시각이 완전히 틀어짐(2026-08-23 실측: 01:48에
+    낸 매도주문이 05:09에 체결됐는데 created_at 기준으로 01:48로 기록됨).
+    trades가 비어있으면(체결 전 조회 등) created_at으로 폴백."""
     params = {"uuid": order_uuid}
     r = _session.get(
         f"{BASE_URL}/order",
@@ -477,14 +484,17 @@ def get_order_detail(order_uuid: str) -> dict:
     if trades:
         total_cost = sum(float(t.get("price", 0)) * float(t.get("volume", 0)) for t in trades)
         avg_price = total_cost / executed_volume if executed_volume > 0 else 0.0
+        filled_at = max((t.get("created_at") for t in trades if t.get("created_at")), default=None)
     else:
         avg_price = float(data.get("price") or 0)
+        filled_at = None
     return {
         "uuid":             data.get("uuid", ""),
         "market":           data.get("market", ""),
         "side":             data.get("side", ""),
         "executed_volume":  executed_volume,
         "avg_price":        avg_price,
+        "filled_at":        filled_at or data.get("created_at", ""),
     }
 
 
