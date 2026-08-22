@@ -437,6 +437,12 @@ def _stop_loss_top_grid(job: dict) -> bool:
         return False
 
 
+# auto_reinit_minutes를 안 쓰는 잡에서 stop_loss_on_escape가 손절 판단까지
+# 기다리는 기본 대기 시간(분) — auto_reinit_minutes가 설정돼있으면 그 값을 대신 씀
+# (job_coin_grid.py의 동일 상수/수정과 짝 — 2026-08-22).
+STOP_LOSS_DEFAULT_WAIT_MIN = 15
+
+
 def _check_out_of_range(job: dict, cur_price: int) -> bool:
     lower = float(job.get("lower_price", 0))
     upper = float(job.get("upper_price", float("inf")))
@@ -466,32 +472,41 @@ def _check_out_of_range(job: dict, cur_price: int) -> bool:
             f"  {hint}"
         )
 
-    auto_min = job.get("auto_reinit_minutes")
-    if auto_min:
-        since_str = job.get("out_of_range_since", "")
-        try:
-            since = datetime.strptime(since_str, "%Y-%m-%d %H:%M").replace(tzinfo=KST)
-            elapsed = (datetime.now(KST) - since).total_seconds() / 60
-        except (ValueError, TypeError):
-            elapsed = 0
-        market_open = kis_api.is_any_market_open()
-        if elapsed >= auto_min and market_open:
-            is_below = cur_price < lower
-            # 하단 이탈 + 손절 옵션 ON(명시적으로 False가 아니면 기본 활성) + 잔고 부족
-            # 이면 재초기화 전에 최상단 보유물량 1개 먼저 손절 — 예수금 없이 계속
-            # 아래로만 물량이 쌓이는 것을 방지(2026-08-13 사용자 요청)
-            if is_below and job.get("stop_loss_on_escape") is not False and _stop_loss_top_grid(job):
-                logger.info("그리드 손절 후 다음 사이클에 재초기화 시도: %s", name)
-                return True  # 이번 사이클은 손절만, 다음 사이클에 reinit
+    # 2026-08-22 — stop_loss_on_escape는 auto_reinit_minutes 설정 여부와 무관하게
+    # 항상 평가함(job_coin_grid.py와 동일한 버그를 여기서도 발견해 같이 수정,
+    # 사용자 요청). 예전엔 auto_reinit_minutes가 없으면 아래 elapsed 계산 블록
+    # 전체가 `if auto_min:` 안에 있어서 손절이 영구히 발동 안 했음.
+    since_str = job.get("out_of_range_since", "")
+    is_below  = cur_price < lower
+    auto_min  = job.get("auto_reinit_minutes")
+    wait_min  = auto_min or STOP_LOSS_DEFAULT_WAIT_MIN
+    try:
+        since   = datetime.strptime(since_str, "%Y-%m-%d %H:%M").replace(tzinfo=KST)
+        elapsed = (datetime.now(KST) - since).total_seconds() / 60
+    except (ValueError, TypeError):
+        elapsed = 0
+    market_open = kis_api.is_any_market_open()
 
-            n_each = 5
-            step = 1 + float(job.get("grid_pct", 1.5)) / 100
-            nl = kis_api.round_price(cur_price / step ** n_each)
-            nu = kis_api.round_price(cur_price * step ** n_each)
-            job.update(lower_price=nl, upper_price=nu, status="reinit",
-                       out_of_range_since=None, out_of_range_notified=False)
-            modified = True
-            notify.send(f"🔄 <b>그리드 자동재초기화</b>  {name}\n  새 범위 {nl:,}~{nu:,}원")
+    # 하단 이탈 + 손절 옵션 ON(명시적으로 False가 아니면 기본 활성) + 대기시간 경과
+    # + 장 열림 상태면 재초기화 전에 최상단 보유물량 1개 먼저 손절 — 예수금 없이
+    # 계속 아래로만 물량이 쌓이는 것을 방지(2026-08-13 사용자 요청)
+    if (is_below and job.get("stop_loss_on_escape") is not False
+            and elapsed >= wait_min and market_open):
+        if _stop_loss_top_grid(job):
+            logger.info("그리드 손절 후 다음 사이클에 재초기화 시도: %s", name)
+            return True  # 이번 사이클은 손절만, 다음 사이클에 reinit
+
+    # 자동 재초기화(범위 이동)는 기존처럼 auto_reinit_minutes를 명시적으로
+    # 설정한 잡에만 적용 — 범위 자체를 바꾸는 더 큰 변화라 opt-in 유지.
+    if auto_min and elapsed >= auto_min and market_open:
+        n_each = 5
+        step = 1 + float(job.get("grid_pct", 1.5)) / 100
+        nl = kis_api.round_price(cur_price / step ** n_each)
+        nu = kis_api.round_price(cur_price * step ** n_each)
+        job.update(lower_price=nl, upper_price=nu, status="reinit",
+                   out_of_range_since=None, out_of_range_notified=False)
+        modified = True
+        notify.send(f"🔄 <b>그리드 자동재초기화</b>  {name}\n  새 범위 {nl:,}~{nu:,}원")
 
     return modified
 
