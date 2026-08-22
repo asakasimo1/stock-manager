@@ -826,6 +826,10 @@ async function ctAddGridJob() {
   const { lower, upper } = _cgCalcRange(count, pct, _cgCurrentPrice);
 
   const reinitMin = +document.getElementById('cg-reinit')?.value || 0;
+  // 2026-08-22 — 예전엔 5 같은 10 미만 값을 입력해도 경고 없이 조용히 무시(미설정
+  // 처리)돼서, 사용자가 저장했다고 믿었는데 실제론 반영이 안 되는 문제가 있었음.
+  // 최소값을 5분으로 낮추고, 그 밑으로 입력하면 명확히 알려준다.
+  if (reinitMin > 0 && reinitMin < 5) { if (msg) msg.innerHTML = '<span style="color:var(--red)">이탈 자동재설정은 5분 이상이어야 합니다</span>'; return; }
 
   const finalTicker = ticker.startsWith('KRW-') ? ticker : `KRW-${ticker}`;
   if (msg) msg.innerHTML = '<span style="color:var(--muted)">등록 중...</span>';
@@ -838,7 +842,7 @@ async function ctAddGridJob() {
     upper_price:  upper,
     krw_per_grid: krw,
   };
-  if (reinitMin >= 10) payload.auto_reinit_minutes = reinitMin;
+  if (reinitMin >= 5) payload.auto_reinit_minutes = reinitMin;
 
   try {
     const r = await fetch('/api/coin-grid', {
@@ -889,6 +893,12 @@ async function ctSaveGridEdit(id) {
     alert('하한가는 상한가보다 작아야 합니다');
     return;
   }
+  // 2026-08-22 — 예전엔 5 같은 10 미만 값을 조용히 null로 바꿔서 저장했던 걸,
+  // 최소값 5분으로 낮추고 그 밑으로 입력하면 명확히 알려주도록 수정.
+  if (reinit !== null && reinit > 0 && reinit < 5) {
+    alert('이탈 자동재설정은 5분 이상이어야 합니다');
+    return;
+  }
 
   const patch = {};
   const rangeChanged = lower && upper && (lower !== +job.lower_price || upper !== +job.upper_price);
@@ -902,7 +912,7 @@ async function ctSaveGridEdit(id) {
   }
 
   if (reinitV !== '') {
-    patch.auto_reinit_minutes = (reinit >= 10) ? reinit : null;
+    patch.auto_reinit_minutes = (reinit >= 5) ? reinit : null;
   }
 
   try {
@@ -1011,7 +1021,7 @@ function ctRenderGridJobs() {
           </div>
           <div>
             <div style="font-size:10px;color:var(--muted);margin-bottom:3px">이탈재설정 (분)</div>
-            <input id="cg-edit-reinit-${j.id}" type="number" min="10" placeholder="미설정"
+            <input id="cg-edit-reinit-${j.id}" type="number" min="5" placeholder="미설정"
               value="${j.auto_reinit_minutes || ''}"
               style="width:100%;padding:5px 7px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:12px;box-sizing:border-box">
           </div>
