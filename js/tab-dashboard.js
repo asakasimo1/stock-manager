@@ -623,7 +623,7 @@ async function renderTraderSummary(trades, account) {
     const updLabel = account.updated_at
       ? `<span style="font-size:11px;color:var(--muted);margin-left:6px">${account.updated_at} 기준</span>` : '';
 
-    // 당일 손익은 tab-autotrade.js "일별 수익 현황"과 동일한 계산식(atCalcDayProfit —
+    // 당일 손익은 tab-autotrade.js "일별 손익 현황"과 동일한 계산식(atCalcDayProfit —
     // 매도잡+그리드+스캘핑 실현손익 합계)을 그대로 사용해서 자동 주식매매 탭에
     // 표시되는 숫자와 항상 일치하도록 함. 계산 대상 날짜는 "오늘"이 아니라
     // account.updated_at의 날짜 — job_balance.py가 평일 08~20시에만 도는 구조라
@@ -671,7 +671,7 @@ async function renderTraderSummary(trades, account) {
   }
 
   // ── 업비트 계좌 섹션 ────────────────────────────────────
-  // 당일 손익은 tab-cointrade.js "일별 수익 현황"과 동일하게 /api/coin-today의
+  // 당일 손익은 tab-cointrade.js "일별 손익 현황"과 동일하게 /api/coin-today의
   // netProfit(당일 체결된 매도 전체의 실현손익 합계 — 스캘핑/그리드/일반매도
   // 통합)을 그대로 사용. KIS처럼 보유종목 평가변동까지 섞진 않지만, 코인은
   // bfdy_close_diff 같은 전일 종가 기준값이 따로 없어 실현손익만으로 표시.

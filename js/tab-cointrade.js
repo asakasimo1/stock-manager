@@ -34,7 +34,7 @@ async function initCoinTrade() {
   ctLoadToday();
 }
 
-// ── 일별 수익 현황 ────────────────────────────────────────────
+// ── 일별 손익 현황 ────────────────────────────────────────────
 async function ctFetchDay(date) {
   const url = date === null ? '/api/coin-today' : `/api/coin-date?date=${date}`;
   try {
