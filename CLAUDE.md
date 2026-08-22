@@ -163,3 +163,33 @@ sudo systemctl restart coin-daemon
     더 이상 자동으로 안 팔림(의도된 변경, 되돌리지 말 것). 그리드 매매를 새로
     등록해서 쓸 경우 `grid_owned_qty` 장부가 정상적으로 쌓이는지(첫 매수체결
     로그에 이 필드 관련 코드 있음) 한 번 확인해보면 좋음.
+- [2026-08-22 19:4x] **⚠️ 그리드 손절(stop_loss_on_escape)이 auto_reinit_minutes
+  없으면 영구히 발동 안 하던 버그 — 사용자가 여러 번 반복 리포트, 실사고 발생**
+  (Mac 세션). 리플 그리드가 하단 8%+ 이탈한 채 2시간 45분 넘게 손절 없이
+  방치되는 걸 사용자가 직접 발견 — `_check_auto_reinit()`이 `auto_reinit_minutes`
+  설정된 잡에서만 호출돼서, `stop_loss_on_escape=true`만 켜둔 잡은 이탈감지
+  자체가 시작 안 됐음.
+  - **코인**(`job_coin_grid.py`, 커밋 `a7b6d19`): 이탈감지(`_track_escape`)를
+    공용 함수로 분리해 `auto_reinit_minutes` 설정 여부와 무관하게 항상 호출.
+    손절 판단(`_check_stop_loss_on_escape`)도 독립 평가(대기시간: `auto_reinit_minutes`
+    있으면 그 값, 없으면 기본 15분 `STOP_LOSS_DEFAULT_WAIT_MIN`). 자동 재설정
+    (범위 이동)은 기존처럼 `auto_reinit_minutes` 명시 설정 시에만 동작 유지.
+    `auto_reinit_minutes` 최소값도 10→5분으로 완화(사용자 요청, 프론트엔드
+    `tab-cointrade.js` 동일 수정 — 5분 미만 입력 시 예전엔 경고 없이 조용히
+    무시됐던 것도 같이 고침). **사용자가 리플 그리드 잡을 직접 삭제한 뒤
+    VM 배포·`coin-daemon` 재시작 완료.**
+  - **주식**(`job_stock_grid.py`, 커밋 `2b6acb4`): 완전히 동일한 버그가 있어서
+    같은 방식으로 수정(`_check_out_of_range()` 내부에서 손절 평가를
+    `auto_reinit_minutes` 게이트 밖으로 분리). 현재 등록된 주식 그리드 잡
+    3개 전부 `status=stopped`라 배포 시점에 즉시 실행되는 건 없었음 — VM
+    배포·`stock-daemon` 재시작 완료.
+  - **검증**: 둘 다 `unittest.mock`으로 `upbit_api`/`kis_api`의 주문·취소·잔고조회
+    (+ 주식은 `is_any_market_open`)를 전부 모킹해서 8개 시나리오(핵심 버그
+    재현·수정 확인, 대기시간 미달시 오작동 없음, `stop_loss_on_escape=False`
+    존중, 반대방향 돌파 제외, 범위복귀 처리, 기존 `auto_reinit_minutes` 조합
+    유지, 장마감시 보류(주식만)) 전부 통과 — 실제 주문 없이 로직만 검증.
+  - **내일 Win PC 세션 확인사항**: `STOP_LOSS_DEFAULT_WAIT_MIN=15`(양쪽 파일
+    동일 상수)가 새로 생김 — 그리드 잡에 `stop_loss_on_escape`만 켜고
+    `auto_reinit_minutes`를 안 쓰면 이제 15분 후 자동으로 손절이 실행됨(예전엔
+    전혀 안 됐음, 의도된 변경). `auto_reinit_minutes` 최소값이 5분으로
+    낮아졌으니 5~9분 사이 값을 쓰는 잡이 있으면 정상 동작하는지 한 번 확인.
