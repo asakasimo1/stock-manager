@@ -516,15 +516,9 @@ def _stop_loss_top_grid(job: dict) -> bool:
         return False
 
 
-def _check_auto_reinit(job: dict, cur_price: float) -> bool:
-    """현재가가 그리드 범위를 이탈했을 때 auto_reinit_minutes 경과 후 reinit 트리거.
-    하단 이탈 + X분 경과 + 잔고 부족 시에만 sell_waiting 최상단 1개 손절.
-    Gist 저장이 필요한 변경이 발생하면 True 반환."""
-    reinit_min = job.get("auto_reinit_minutes")
-    if not reinit_min or reinit_min < 10:
-        return False
-
-    # 이탈 기준: 실제 그리드 격자 레벨 범위 (lower/upper_price 보다 넓을 수 있음)
+def _grid_range(job: dict) -> tuple:
+    """이탈 판단 기준 범위 — 실제 격자 레벨 범위가 lower/upper_price보다 넓을 수 있어
+    둘 다 감안. (lower, upper) 반환."""
     grids = job.get("grids", [])
     if grids:
         levels = [float(g["level"]) for g in grids]
@@ -533,60 +527,146 @@ def _check_auto_reinit(job: dict, cur_price: float) -> bool:
     else:
         lower = float(job["lower_price"])
         upper = float(job["upper_price"])
+    return lower, upper
 
+
+def _track_escape(job: dict, cur_price: float) -> tuple:
+    """그리드 범위 이탈 여부를 추적해서 job["escaped_at"]를 갱신.
+    반환: (changed, is_escaped).
+
+    2026-08-22 — 예전엔 이 이탈 감지 자체가 _check_auto_reinit() 안에 있었고
+    그 함수는 auto_reinit_minutes가 설정된 잡만 호출됐음. 그래서
+    auto_reinit_minutes를 안 쓰고 stop_loss_on_escape만 켜둔 잡은 이탈 감지
+    자체가 시작도 안 돼서 손절이 영구히 발동 안 하는 버그가 있었음(실측:
+    2026-08-22 리플 그리드가 하단 8% 넘게 이탈한 채 2시간 넘게 손절 없이
+    방치됨 — 사용자가 "여러 번 오류 발생시켰다"고 리포트). 이탈 감지를
+    두 안전장치(손절/자동재설정) 모두가 공유하는 이 함수로 분리해서,
+    아래 main()에서 auto_reinit_minutes 설정 여부와 무관하게 항상 호출한다."""
+    lower, upper = _grid_range(job)
     ticker_key = job.get("ticker", "")
+
     if lower <= cur_price <= upper:
         if job.get("escaped_at") or ticker_key in _escape_times:
             job.pop("escaped_at", None)
             _escape_times.pop(ticker_key, None)
             logger.info("그리드 범위 복귀: %s (현재가 %s원)", job.get("name"), f"{cur_price:,.0f}")
-            return True
-        return False
+            return True, False
+        return False, False
 
     # 이탈 상태
-    is_below = cur_price < lower
-    now = datetime.now(KST)
     escaped_at_str = job.get("escaped_at") or _escape_times.get(ticker_key)
     if escaped_at_str and not job.get("escaped_at"):
-        job["escaped_at"] = escaped_at_str  # Gist 실패 대비 메모리에서 복원
+        job["escaped_at"] = escaped_at_str  # Gist 저장 실패 대비 메모리에서 복원
+        return True, True
 
     if not escaped_at_str:
-        # 첫 이탈 감지: 기록만 하고 손절하지 않음 (X분 대기)
         escaped_now = now_kst()
         _escape_times[ticker_key] = escaped_now
         job["escaped_at"] = escaped_now
-        direction = "하단" if is_below else "상단"
-        logger.info("그리드 %s 이탈 감지: %s 현재가 %s원 (범위 %s~%s원, %d분 후 재설정)",
-                    direction, job.get("name"), f"{cur_price:,.0f}",
-                    f"{lower:,.0f}", f"{upper:,.0f}", reinit_min)
-        return True
+        direction = "하단" if cur_price < lower else "상단"
+        logger.info("그리드 %s 이탈 감지: %s 현재가 %s원 (범위 %s~%s원)",
+                    direction, job.get("name"), f"{cur_price:,.0f}", f"{lower:,.0f}", f"{upper:,.0f}")
+        return True, True
 
+    return False, True
+
+
+# auto_reinit_minutes를 안 쓰는 잡에서 stop_loss_on_escape가 손절 판단까지
+# 기다리는 기본 대기 시간(분) — auto_reinit_minutes가 설정돼있으면 그 값을 대신 씀
+# (기존 동작과 동일하게 유지).
+STOP_LOSS_DEFAULT_WAIT_MIN = 15
+
+
+def _check_stop_loss_on_escape(job: dict, cur_price: float) -> bool:
+    """이탈 상태가 대기시간 이상 지속되면 최상단 보유 격자부터 순차 손절.
+    **auto_reinit_minutes 설정 여부와 무관하게 항상 평가함** — stop_loss_on_escape
+    설정 하나만으로 독립적으로 동작해야 하는 안전장치(위 _track_escape 주석 참고).
+    job["escaped_at"]가 이미 채워져 있다고 가정(_track_escape를 먼저 호출했어야 함).
+    Gist 저장이 필요한 변경 발생 시 True 반환."""
+    if not job.get("stop_loss_on_escape", True):
+        return False
+    escaped_at_str = job.get("escaped_at")
+    if not escaped_at_str:
+        return False
+
+    lower, _ = _grid_range(job)
+    if cur_price >= lower:
+        return False  # 손절은 하단 이탈 때만 — 상단 돌파는 오히려 유리한 상황
+
+    wait_min = job.get("auto_reinit_minutes") or STOP_LOSS_DEFAULT_WAIT_MIN
     try:
         escaped_at = datetime.strptime(escaped_at_str, "%Y-%m-%d %H:%M").replace(tzinfo=KST)
-        elapsed_min = (now - escaped_at).total_seconds() / 60
-        logger.info("그리드 이탈 지속: %s %.0f분 경과 (재설정까지 %.0f분)",
-                    job.get("name"), elapsed_min, max(0.0, reinit_min - elapsed_min))
+        elapsed_min = (datetime.now(KST) - escaped_at).total_seconds() / 60
+    except (ValueError, TypeError):
+        logger.error("이탈 시간 파싱 실패(%s): %s", job.get("name"), escaped_at_str)
+        return False
 
-        if elapsed_min >= reinit_min:
-            # X분 경과: 하단 이탈 + 손절 옵션 ON + 잔고 부족하면 손절 1개 먼저
-            if is_below and job.get("stop_loss_on_escape", True) and _stop_loss_top_grid(job):
-                logger.info("그리드 손절 후 다음 사이클에 reinit 시도: %s", job.get("name"))
-                return True  # 이번 사이클은 손절만, 다음 사이클에 reinit
+    if elapsed_min < wait_min:
+        logger.info("그리드 이탈 지속(손절 대기 중): %s %.0f분 경과 (손절 판단까지 %.0f분)",
+                    job.get("name"), elapsed_min, max(0.0, wait_min - elapsed_min))
+        return False
 
-            # 잔고 충분하거나 손절 대상 없음 → reinit 실행
-            half = (upper - lower) / 2
-            job["lower_price"] = round(cur_price - half, 2)
-            job["upper_price"] = round(cur_price + half, 2)
-            job.pop("escaped_at", None)
-            _escape_times.pop(job.get("ticker", ""), None)
-            job["status"] = "reinit"
-            logger.info("그리드 자동 재설정 트리거: %s → 새 범위 %s~%s원",
-                        job.get("name"), f"{job['lower_price']:,.1f}", f"{job['upper_price']:,.1f}")
-            return True
-    except Exception as e:
-        logger.error("이탈 시간 파싱 실패: %s", e)
+    return _stop_loss_top_grid(job)
 
-    return False
+
+def _check_auto_reinit(job: dict, cur_price: float) -> bool:
+    """이탈 상태가 auto_reinit_minutes 이상 지속되면 현재가 기준으로 범위를 재설정.
+    auto_reinit_minutes 미설정 시 비활성(기존 동작 유지) — 이 재설정 자체는
+    범위를 바꾸는 더 큰 변화라 명시적으로 켠 잡에만 적용한다(손절과 달리
+    기본값으로 켜두지 않음). job["escaped_at"]가 이미 채워져 있다고 가정
+    (_track_escape를 먼저 호출했어야 함). Gist 저장 필요 시 True 반환."""
+    reinit_min = job.get("auto_reinit_minutes")
+    # 2026-08-22 — 최소값 10→5분 (사용자 요청). 프론트엔드(tab-cointrade.js)의
+    # 검증 최소값과 반드시 같이 맞출 것 — 다르면 프론트는 통과시켰는데 여기서
+    # 조용히 무시되는 식의 혼선이 재발함.
+    if not reinit_min or reinit_min < 5:
+        return False
+    escaped_at_str = job.get("escaped_at")
+    if not escaped_at_str:
+        return False
+
+    lower, upper = _grid_range(job)
+    try:
+        escaped_at = datetime.strptime(escaped_at_str, "%Y-%m-%d %H:%M").replace(tzinfo=KST)
+        elapsed_min = (datetime.now(KST) - escaped_at).total_seconds() / 60
+    except (ValueError, TypeError):
+        logger.error("이탈 시간 파싱 실패(%s): %s", job.get("name"), escaped_at_str)
+        return False
+
+    logger.info("그리드 이탈 지속: %s %.0f분 경과 (재설정까지 %.0f분)",
+                job.get("name"), elapsed_min, max(0.0, reinit_min - elapsed_min))
+    if elapsed_min < reinit_min:
+        return False
+
+    half = (upper - lower) / 2
+    job["lower_price"] = round(cur_price - half, 2)
+    job["upper_price"] = round(cur_price + half, 2)
+    job.pop("escaped_at", None)
+    _escape_times.pop(job.get("ticker", ""), None)
+    job["status"] = "reinit"
+    logger.info("그리드 자동 재설정 트리거: %s → 새 범위 %s~%s원",
+                job.get("name"), f"{job['lower_price']:,.1f}", f"{job['upper_price']:,.1f}")
+    return True
+
+
+def _check_grid_safety(job: dict, cur_price: float) -> bool:
+    """이탈 감지 → 손절(stop_loss_on_escape, 항상 평가) → 자동재설정
+    (auto_reinit_minutes 설정 시에만)을 한 사이클에 순서대로 처리하는 통합
+    진입점. main()은 auto_reinit_minutes 설정 여부와 무관하게 이 함수를
+    호출해야 손절 안전장치가 항상 살아있는다(2026-08-22 버그 수정 핵심).
+    Gist 저장 필요 시 True 반환."""
+    changed, is_escaped = _track_escape(job, cur_price)
+    if not is_escaped:
+        return changed
+
+    # 손절 먼저 — 손절이 일어났으면 이번 사이클은 종료(재설정은 다음 사이클에)
+    if _check_stop_loss_on_escape(job, cur_price):
+        return True
+
+    if _check_auto_reinit(job, cur_price):
+        return True
+
+    return changed
 
 
 # ─────────────────────────────────────────
@@ -737,11 +817,12 @@ def main():
                 changed = True      # stop 만 됐어도 저장 필요
 
         elif status in ("init",) or (status == "active" and not job.get("grids")):
-            # grids:[] 상태에서도 이탈 체크 (escaped_at 미설정 버그 수정)
-            if status == "active" and job.get("auto_reinit_minutes"):
+            # grids:[] 상태에서도 이탈 체크 (escaped_at 미설정 버그 수정) — 보유
+            # 코인이 없는 상태라 손절 대상은 없지만, 일관성을 위해 동일 진입점 사용.
+            if status == "active":
                 try:
                     cur_p = upbit_api.get_price(job["ticker"])["price"]
-                    if _check_auto_reinit(job, cur_p):
+                    if _check_grid_safety(job, cur_p):
                         changed = True
                 except Exception as e:
                     logger.warning("이탈 체크 실패 %s: %s", name, e)
@@ -768,11 +849,16 @@ def main():
         elif status == "active":
             logger.info("그리드 처리: %s", name)
             is_escaped = False
-            # 이탈 자동 재설정 체크
-            if job.get("auto_reinit_minutes") and job.get("grids"):
+            # 이탈 감지 + 손절(stop_loss_on_escape) + 자동재설정(auto_reinit_minutes)
+            # — 2026-08-22 수정: auto_reinit_minutes 설정 여부와 무관하게 항상 평가.
+            # 예전엔 이 블록 전체가 auto_reinit_minutes 설정된 잡에서만 돌아서,
+            # stop_loss_on_escape만 켜고 auto_reinit_minutes를 안 쓴 잡은 손절
+            # 안전장치 자체가 영구히 발동 안 하는 버그가 있었음(_check_grid_safety
+            # 주석 참고, 사용자가 반복 리포트).
+            if job.get("grids"):
                 try:
                     cur_for_reinit = upbit_api.get_price(job["ticker"])["price"]
-                    if _check_auto_reinit(job, cur_for_reinit):
+                    if _check_grid_safety(job, cur_for_reinit):
                         changed = True
                     is_escaped = bool(job.get("escaped_at"))  # 이탈 중이면 True
                 except Exception as e:
