@@ -223,6 +223,13 @@ function scRenderAutoConfig() {
         value="${cfg.min_liquidity ?? (_scAutoMarket === 'coin' ? 50000000 : 100000000)}"
         style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
     </div>
+    ${_scAutoMarket === 'coin' ? `
+    <div style="margin-bottom:10px">
+      <div style="font-size:11px;color:var(--muted);margin-bottom:4px">거래량 상위 몇 %까지만 후보로 포함 (%) — 업비트 전체 KRW 코인 중 거래대금 상위권만 선정, 최소 유동성과 둘 중 더 엄격한 기준 적용 (기본 30%)</div>
+      <input id="sac-volume-top-pct" type="number" min="1" max="100" step="1"
+        value="${(cfg.volume_top_pct ?? 0.3) * 100}"
+        style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px" />
+    </div>` : ''}
     <div style="margin-bottom:14px">
       <div style="font-size:11px;color:var(--muted);margin-bottom:4px">자동발굴 일일 손실 한도 (원) — 도달 시 그날은 신규 발굴 중단</div>
       <input id="sac-daily-loss" type="number" min="0" step="1000" value="${Math.abs(cfg.max_daily_loss_krw ?? 30000)}"
@@ -263,6 +270,9 @@ async function scSaveAutoConfig() {
     min_liquidity: parseFloat(document.getElementById('sac-min-liquidity').value) || 0,
     max_daily_loss_krw: -Math.abs(parseFloat(document.getElementById('sac-daily-loss').value) || 30000),
   };
+  if (market === 'coin') {
+    body.volume_top_pct = (parseFloat(document.getElementById('sac-volume-top-pct').value) || 30) / 100;
+  }
   try {
     const r = await fetch('/api/scalp-auto-config', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),

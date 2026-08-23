@@ -687,7 +687,7 @@ async function handleScalpAutoConfig(req, res, gistId, ghToken) {
     const cfg = await readGistFile(gistId, ghToken, FILENAME);
     const base = (cfg && typeof cfg === 'object' && !Array.isArray(cfg)) ? cfg : {};
     return res.status(200).json({
-      coin:  { ...SCALP_AUTO_DEFAULTS, krw_amount: 10000, min_liquidity: 50_000_000, ...(base.coin || {}) },
+      coin:  { ...SCALP_AUTO_DEFAULTS, krw_amount: 10000, min_liquidity: 50_000_000, volume_top_pct: 0.3, ...(base.coin || {}) },
       stock: { ...SCALP_AUTO_DEFAULTS, amount: 500000,   min_liquidity: 100_000_000, ...(base.stock || {}) },
     });
   }
