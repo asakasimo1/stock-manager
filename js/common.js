@@ -480,6 +480,29 @@ async function renderGridChart(containerId, job, curPrice, qtyField, ticker, isC
     });
   }
 
+  // createPriceLine으로 얹은 값들은 기본적으로 세로축 자동 스케일 계산에
+  // 포함되지 않는다 — 캔들 범위 밖(예: 범위 이탈 시 현재가, 혹은 캔들
+  // 데이터가 아직 없을 때의 그리드 기준가)은 스케일이 안 늘어나서 화면
+  // 밖으로 잘려 안 보임(헤드리스 크롬 스크린샷으로 실측 후 발견 — 정작
+  // 가장 중요한 "범위 이탈" 상태가 조용히 사라지는 버그였음). 캔들의
+  // 자연스러운 최소/최대에 하한/상한/현재가/활성 격자가를 강제로 합쳐서
+  // 세로축이 항상 전부 포함하도록 한다.
+  const refPrices = [lower, upper, ...levels.filter(l => l.state !== 'idle').map(l => l.price)];
+  if (curPrice != null && isFinite(curPrice)) refPrices.push(curPrice);
+  series.applyOptions({
+    autoscaleInfoProvider: original => {
+      let res = original();
+      if (res && res.priceRange) {
+        res.priceRange.minValue = Math.min(res.priceRange.minValue, ...refPrices);
+        res.priceRange.maxValue = Math.max(res.priceRange.maxValue, ...refPrices);
+      } else {
+        // 캔들 데이터가 아직 없으면(로딩 실패 등) 참조가만으로 범위 구성
+        res = { priceRange: { minValue: Math.min(...refPrices), maxValue: Math.max(...refPrices) } };
+      }
+      return res;
+    },
+  });
+
   chart.timeScale().fitContent();
 }
 
