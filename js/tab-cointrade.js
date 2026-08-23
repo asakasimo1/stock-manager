@@ -904,11 +904,21 @@ async function ctSaveGridEdit(id) {
 
   const lower   = +document.getElementById(`cg-edit-lower-${id}`)?.value || 0;
   const upper   = +document.getElementById(`cg-edit-upper-${id}`)?.value || 0;
+  const pctV    = document.getElementById(`cg-edit-pct-${id}`)?.value;
+  const krwV    = document.getElementById(`cg-edit-krw-${id}`)?.value;
   const reinitV = document.getElementById(`cg-edit-reinit-${id}`)?.value;
   const reinit  = reinitV !== '' ? +reinitV : null;
 
   if (lower && upper && lower >= upper) {
     alert('하한가는 상한가보다 작아야 합니다');
+    return;
+  }
+  if (pctV !== '' && +pctV <= 0.1) {
+    alert('격자 간격은 0.1%보다 커야 합니다');
+    return;
+  }
+  if (krwV !== '' && +krwV < 5000) {
+    alert('격자당 금액은 5,000원 이상이어야 합니다');
     return;
   }
   // 2026-08-22 — 예전엔 5 같은 10 미만 값을 조용히 null로 바꿔서 저장했던 걸,
@@ -928,6 +938,14 @@ async function ctSaveGridEdit(id) {
       patch.status = 'reinit';
     }
   }
+
+  // 간격%·격자당 금액은 하한/상한과 달리 즉시 reinit(주문 전부 취소 후 재배치)을
+  // 트리거하지 않는다 — job_coin_grid.py가 grid_pct/krw_per_grid를 매 사이클
+  // job에서 그대로 읽어 쓰므로(build_levels 호출 없이도 매도가 계산·다음 매수
+  // 금액에 바로 반영됨), 이미 걸려있는 매수/매도 주문은 그대로 두고 이후 체결
+  // 부터 새 값이 적용된다.
+  if (pctV !== '') patch.grid_pct = +pctV;
+  if (krwV !== '') patch.krw_per_grid = +krwV;
 
   if (reinitV !== '') {
     patch.auto_reinit_minutes = (reinit >= 5) ? reinit : null;
@@ -1040,7 +1058,7 @@ function ctRenderGridJobs() {
       </div>
       ${_cgEditingId === j.id ? `
       <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:8px">
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr;gap:8px;margin-bottom:8px">
           <div>
             <div style="font-size:10px;color:var(--muted);margin-bottom:3px">하한가 (원)</div>
             <input id="cg-edit-lower-${j.id}" type="number" value="${j.lower_price}"
@@ -1052,13 +1070,23 @@ function ctRenderGridJobs() {
               style="width:100%;padding:5px 7px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:12px;box-sizing:border-box">
           </div>
           <div>
+            <div style="font-size:10px;color:var(--muted);margin-bottom:3px">간격 (%)</div>
+            <input id="cg-edit-pct-${j.id}" type="number" step="0.1" value="${j.grid_pct || 1.5}"
+              style="width:100%;padding:5px 7px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:12px;box-sizing:border-box">
+          </div>
+          <div>
+            <div style="font-size:10px;color:var(--muted);margin-bottom:3px">격자당 (원)</div>
+            <input id="cg-edit-krw-${j.id}" type="number" step="10000" value="${j.krw_per_grid || 0}"
+              style="width:100%;padding:5px 7px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:12px;box-sizing:border-box">
+          </div>
+          <div>
             <div style="font-size:10px;color:var(--muted);margin-bottom:3px">이탈재설정 (분)</div>
             <input id="cg-edit-reinit-${j.id}" type="number" min="5" placeholder="미설정"
               value="${j.auto_reinit_minutes || ''}"
               style="width:100%;padding:5px 7px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:12px;box-sizing:border-box">
           </div>
         </div>
-        <div style="font-size:10px;color:var(--muted);margin-bottom:8px">* 하한/상한 변경 시 기존 주문 전부 취소 후 재초기화됩니다</div>
+        <div style="font-size:10px;color:var(--muted);margin-bottom:8px">* 하한/상한 변경 시 기존 주문 전부 취소 후 재초기화됩니다. 간격/격자당 금액은 이미 걸린 주문엔 영향 없이 다음 체결부터 적용됩니다.</div>
         <div style="display:flex;gap:8px">
           <button onclick="ctSaveGridEdit('${j.id}')"
             style="flex:1;padding:6px;background:var(--primary);color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">저장</button>

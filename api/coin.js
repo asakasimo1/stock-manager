@@ -178,6 +178,21 @@ async function handleStockGridJobs(req, res, gistId, ghToken) {
     const ok = await writeGistFile(gistId, ghToken, FILENAME, list);
     return res.status(ok ? 200 : 500).json(ok ? { ok: true } : { error: '저장 실패' });
   }
+  // stock-grid 잡은 coin-grid와 달리 id 필드가 없어(기존부터 ticker만으로
+  // 관리) PATCH도 ticker로 매칭한다. list가 unshift로 최신순이라 findIndex가
+  // 자연히 가장 최근(현재 활성) 잡을 먼저 찾는다.
+  if (req.method === 'PATCH') {
+    const { ticker } = req.query;
+    if (!ticker) return res.status(400).json({ error: 'ticker 필수' });
+    const jobs = await readGistFile(gistId, ghToken, FILENAME);
+    const list = Array.isArray(jobs) ? jobs : [];
+    const idx  = list.findIndex(j => j.ticker === ticker);
+    if (idx < 0) return res.status(404).json({ error: '잡 없음' });
+    list[idx] = { ...list[idx], ...req.body };
+    const ok = await writeGistFile(gistId, ghToken, FILENAME, list);
+    return res.status(ok ? 200 : 500).json(ok ? list[idx] : { error: '저장 실패' });
+  }
+
   if (req.method === 'DELETE') {
     const { id } = req.query;
     if (!id) return res.status(400).json({ error: 'id 필수' });
