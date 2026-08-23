@@ -1267,19 +1267,8 @@ function agRenderJobs() {
     const pnlColor = pnl >= 0 ? 'var(--green)' : 'var(--red)';
     const canStop = ['init','active','reinit'].includes(job.status);
 
-    // 매수대기: level이 지정가 매수 기준가, 금액은 잡의 격자당 금액(고정)
-    // 매도대기: 매수 체결 후 잡힌 목표 매도가(last_sell_price) 기준, 금액은 보유수량×매도가
-    const fmtBuyWait  = g => `${Number(g.level).toLocaleString()}원(${Number(job.krw_per_grid||0).toLocaleString()}원)`;
-    const fmtSellWait = g => {
-      const sp  = g.last_sell_price || Math.round(g.level * (1 + (job.grid_pct||0) / 100));
-      const amt = Math.round((g.qty || 0) * sp);
-      return `${Number(sp).toLocaleString()}원(${amt.toLocaleString()}원)`;
-    };
-    const waitDetailHtml = (buyWaitGrids.length || sellWaitGrids.length) ? `
-      <div style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.7">
-        ${buyWaitGrids.length ? `<div><span style="color:var(--primary);font-weight:600">매수대기</span> ${buyWaitGrids.map(fmtBuyWait).join(' · ')}</div>` : ''}
-        ${sellWaitGrids.length ? `<div><span style="color:var(--orange);font-weight:600">매도대기</span> ${sellWaitGrids.map(fmtSellWait).join(' · ')}</div>` : ''}
-      </div>` : '';
+    // 가격 래더 차트 — 매수/매도 대기 기준가·금액을 현재가와 함께 시각화
+    const ladderHtml = renderGridLadderChart(job, _ctPriceCache[job.ticker]?.cur, 'qty');
 
     // 범위 이탈 중이면 이탈 시각·경과·자동재설정까지 남은 시간 표시.
     // canStop(=활성 상태) 잡만 대상 — 중단된 잡은 백엔드가 더 이상 이탈을
@@ -1320,10 +1309,10 @@ function agRenderJobs() {
       </div>
       ${grids.length ? `<div style="font-size:11px;color:var(--text);margin-top:6px;display:flex;gap:12px;flex-wrap:wrap">
         <span style="color:var(--primary)">매수대기 ${buyCnt}개</span>
-        <span style="color:var(--orange)">매도대기 ${sellCnt}개</span>
+        <span style="color:var(--state-sell)">매도대기 ${sellCnt}개</span>
         <span style="color:var(--muted)">대기 ${idleCnt}개</span>
         <span style="color:${pnlColor};font-weight:600">누적수익 ${pnl>=0?'+':''}${Math.round(pnl).toLocaleString()}원 (${job.trade_count||0}회)</span>
-      </div>${waitDetailHtml}` : ''}
+      </div>${ladderHtml}` : ''}
     </div>`;
   };
 

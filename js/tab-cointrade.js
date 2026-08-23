@@ -1003,31 +1003,8 @@ function ctRenderGridJobs() {
       </div>`;
     }
 
-    // 그리드 미니 시각화 (최대 20칸)
-    const visGrids = grids.slice(0, 20);
-    const barHtml  = visGrids.map(g => {
-      const c = g.state === 'sell_waiting' ? '#f59e0b'
-              : g.state === 'buy_waiting'  ? 'var(--primary)'
-              : 'var(--border)';
-      return `<div title="${Number(g.level).toLocaleString()}원 (${g.state})"
-        style="flex:1;height:14px;background:${c};border-radius:2px;min-width:4px"></div>`;
-    }).join('');
-
-    // 매수대기: level이 곧 지정가 매수 기준가, 금액은 잡의 격자당 금액(고정)
-    // 매도대기: 매수 체결 후 잡힌 목표 매도가(last_sell_price) 기준, 금액은 보유수량×매도가
-    const buyWaitGrids  = grids.filter(g => g.state === 'buy_waiting');
-    const sellWaitGrids = grids.filter(g => g.state === 'sell_waiting');
-    const fmtBuyWait  = g => `${Number(g.level).toLocaleString()}원(${Number(j.krw_per_grid||0).toLocaleString()}원)`;
-    const fmtSellWait = g => {
-      const sp  = g.last_sell_price || Math.round(g.level * (1 + (j.grid_pct||0) / 100));
-      const amt = Math.round((g.coin_qty || 0) * sp);
-      return `${Number(sp).toLocaleString()}원(${amt.toLocaleString()}원)`;
-    };
-    const waitDetailHtml = (buyWaitGrids.length || sellWaitGrids.length) ? `
-      <div style="font-size:11px;color:var(--muted);margin-bottom:6px;line-height:1.7">
-        ${buyWaitGrids.length ? `<div><span style="color:var(--primary);font-weight:600">매수대기</span> ${buyWaitGrids.map(fmtBuyWait).join(' · ')}</div>` : ''}
-        ${sellWaitGrids.length ? `<div><span style="color:#f59e0b;font-weight:600">매도대기</span> ${sellWaitGrids.map(fmtSellWait).join(' · ')}</div>` : ''}
-      </div>` : '';
+    // 가격 래더 차트 — 매수/매도 대기 기준가·금액을 현재가와 함께 시각화
+    const ladderHtml = renderGridLadderChart(j, _ctPriceCache[j.ticker]?.cur, 'coin_qty');
 
     return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
@@ -1051,12 +1028,11 @@ function ctRenderGridJobs() {
         &nbsp;|&nbsp; 격자당: ${Number(j.krw_per_grid).toLocaleString()}원
         ${j.auto_reinit_minutes ? `&nbsp;|&nbsp; <span style="color:var(--primary)">이탈재설정 ${j.auto_reinit_minutes}분</span>` : ''}
       </div>
-      <div style="display:flex;gap:3px;margin-bottom:6px" title="파랑=매수대기 / 노랑=매도대기 / 회색=미활성">${barHtml}</div>
-      ${waitDetailHtml}
+      ${ladderHtml}
       <div style="display:flex;justify-content:space-between;font-size:12px">
         <div style="color:var(--muted)">
           매수대기 <b style="color:var(--primary)">${buyWait}</b>
-          &nbsp; 매도대기 <b style="color:#f59e0b">${sellWait}</b>
+          &nbsp; 매도대기 <b style="color:var(--state-sell)">${sellWait}</b>
           &nbsp; 총 ${total}격자
         </div>
         <div>

@@ -9,6 +9,11 @@
     --green:     #00C853;
     --red:       #FF1744;
     --radius:    12px;
+    /* 그리드 래더 차트 전용 — 매도대기 색상. --primary(매수)와 CVD ΔE 31.8
+       (라이트) 검증됨(dataviz 스킬). 라이트/다크에서 톤이 달라야 대비 기준을
+       통과해서(라이트 #f59e0b 하나로 다크에 그대로 쓰면 밝기 기준 FAIL) 모드별로
+       분리해둠 — body.dark 쪽 오버라이드 참고. */
+    --state-sell: #eb6834;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
@@ -1096,5 +1101,6 @@
     --border: #2c2e40;
     --secondary: #1a1d3a;
     --muted: #686b80;
+    --state-sell: #d95926;  /* 다크 서페이스(#1c1d28) 기준 재검증된 톤 */
   }
   body.dark .toggle-slider:before { background:#ccc; }
