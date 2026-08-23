@@ -270,7 +270,10 @@ function _pairTrades(items) {
       });
     }
   }
-  return pairs.sort((a, b) => (b.buy.date + b.buy.time).localeCompare(a.buy.date + a.buy.time));
+  // 정렬 기준: 종료된 건은 매도시각, 보유중인 건은 매도가 없으니 매수시각 —
+  // 표시 기준(_tradePairHtml)과 맞춰야 목록 순서와 실제 표시된 시각이 일치함.
+  const _tsKey = p => p.sell ? p.sell.date + p.sell.time : p.buy.date + p.buy.time;
+  return pairs.sort((a, b) => _tsKey(b).localeCompare(_tsKey(a)));
 }
 
 // 보유중 항목의 미실현 손익 계산용 현재가 조회(주식: account_balance, 코인: /api/coin-account, 30초 캐시)
@@ -359,7 +362,7 @@ function _tradePairHtml(p, priceMap) {
       <div style="font-size:12px;color:var(--fg)">${amountHtml}</div>
     </div>
     <div style="font-size:11px;color:var(--muted);white-space:nowrap;margin-left:10px;text-align:right">
-      ${p.buy.date}<br>${p.buy.time}
+      ${(p.sell || p.buy).date}<br>${(p.sell || p.buy).time}
     </div>
   </div>`;
 }
