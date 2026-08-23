@@ -171,6 +171,45 @@ function _netPnl(ticker, buyAmount, sellAmount) {
   return { pnl: net, pct: cost > 0 ? (net / cost * 100) : 0 };
 }
 
+// 그리드 매매 잡이 있는 티커는 계좌 체결 내역(trader_trades)을 FIFO로
+// 재구성하지 않고, 그리드 잡 자신의 완료 이력(trade_history)·보유 상태
+// (sell_waiting 격자)를 그대로 사용한다 — "행위 자체의 상태값"이 이미 정확한
+// 매수/매도 짝을 갖고 있는데, 계좌 전체 체결(다른 루트로 산 코인 등 그리드와
+// 무관한 매수/매도까지 섞임)을 다시 FIFO로 짝지으면 엉뚱한 매수-매도가
+// 짝지어져서 실제로는 매도가 끝난 그리드 사이클이 "보유중"으로 잘못 표시될
+// 수 있음(2026-08-24 사용자 리포트 — 다른 루트로 산 리플 때문에 XRP 전부
+// 보유중으로 보임). 그리드 잡이 없는 티커(초단타/기타)는 기존 FIFO 재구성을
+// 그대로 사용.
+function _gridDefinedPairs(ticker) {
+  const isCoin = _isCoinTicker(ticker);
+  const jobs = isCoin ? (_ctGridJobs || []) : (_agJobs || []);
+  const job = jobs.find(j => j.ticker === ticker);
+  if (!job) return null;
+
+  const pairs = [];
+  for (const h of (job.trade_history || [])) {
+    const qty = h.qty || 0;
+    if (qty <= 0) continue;
+    pairs.push({
+      ticker, name: job.name || ticker,
+      buy:  { date: h.date, time: h.buy_time || h.time, price: h.buy_price, qty, amount: Math.round(h.buy_price * qty) },
+      sell: { date: h.date, time: h.time, price: h.sell_price, qty, amount: Math.round(h.sell_price * qty) },
+      netPnl: h.profit, netPnlPct: h.buy_price > 0 ? (h.profit / (h.buy_price * qty) * 100) : null,
+    });
+  }
+  for (const g of (job.grids || [])) {
+    if (g.state !== 'sell_waiting') continue;
+    const qty = isCoin ? (g.coin_qty || 0) : (g.qty || 0);
+    if (qty <= 0) continue;
+    pairs.push({
+      ticker, name: job.name || ticker,
+      buy: { date: (job.created_at || '').slice(0, 10), time: g.buy_time || '', price: g.last_buy_price, qty, amount: Math.round(g.last_buy_price * qty) },
+      sell: null,
+    });
+  }
+  return pairs;
+}
+
 // 종목/거래시각/(매수→매도)금액/상태(보유중,종료)만 표기. 티커별로 매수를
 // 수량단위 lot으로 쌓아두고, 매도가 들어오면 앞 lot부터 수량만큼 잘라서 짝짓는다
 // (그리드처럼 여러 번 나눠 산 뒤 한 번에 몰아 파는 패턴에서도, 실제로 팔린
@@ -183,6 +222,8 @@ function _pairTrades(items) {
 
   const pairs = [];
   for (const ticker in byTicker) {
+    const gridPairs = _gridDefinedPairs(ticker);
+    if (gridPairs) { pairs.push(...gridPairs); continue; }
     // 거래시각이 분(minute) 단위까지만 기록돼서, 초단타처럼 매수·매도가 같은
     // 분 안에 체결되면 원래 배열 순서에 따라 매도가 매수보다 먼저 정렬될 수
     // 있음 — 그러면 아직 lots에 없는 매수를 팔려는 꼴이 돼서 그 매도가 조용히
@@ -256,9 +297,11 @@ async function _fetchCoinHoldingsCached() {
   return d?.holdings || [];
 }
 
-// 자동 주식매매 탭의 _atJobs/_agJobs/_asJobs(매도잡/그리드/스캘핑)를 대시보드에서도
-// 로드해서 atCalcDayProfit()을 그대로 재사용하기 위함 — 그 탭을 아직 한 번도
-// 안 열었으면 배열이 비어 있어 당일손익이 항상 0으로 나오므로 여기서 미리 채워둠.
+// 자동 주식매매 탭의 _atJobs/_agJobs/_asJobs(매도잡/그리드/스캘핑)와 코인
+// 자동매매 탭의 _ctGridJobs를 대시보드에서도 로드해서 atCalcDayProfit() 재사용
+// + _pairTrades()의 그리드 기준 짝짓기(_gridDefinedPairs)에 쓰기 위함 — 두 탭을
+// 아직 한 번도 안 열었으면 배열이 비어 있어 당일손익이 항상 0으로 나오거나
+// 그리드 티커의 거래내역이 계좌 체결 FIFO로 잘못 재구성되므로 여기서 미리 채워둠.
 let _atJobsLoadTs = 0;
 async function _ensureAutoTradeJobsLoaded() {
   const now = Date.now();
@@ -266,6 +309,9 @@ async function _ensureAutoTradeJobsLoaded() {
   _atJobsLoadTs = now;
   if (typeof atLoadAll === 'function') {
     try { await atLoadAll(); } catch (e) { console.warn('자동매매 데이터 로드 실패:', e.message); }
+  }
+  if (typeof ctLoadAll === 'function') {
+    try { await ctLoadAll(); } catch (e) { console.warn('코인 자동매매 데이터 로드 실패:', e.message); }
   }
 }
 
@@ -359,6 +405,10 @@ async function renderTraderTrades(items, accountBalance) {
 
   if (accountBalance) _lastTraderAccountBalance = accountBalance;
   else accountBalance = _lastTraderAccountBalance;
+
+  // _pairTrades()가 그리드 티커는 _ctGridJobs/_agJobs를 참고하므로, 렌더 전에
+  // 반드시 로드되어 있어야 함(자체 30초 캐시라 매번 새로 불러오지 않음).
+  await _ensureAutoTradeJobsLoaded();
 
   // 보유중(미체결) 항목이 있으면 현재가를 조회해서 평가손익을 함께 표시 — 세 목록이
   // 공유하는 계산이라 한 번만 수행(코인/주식 나눠서 각자 조회하면 API 호출이 불필요하게 늘어남)
