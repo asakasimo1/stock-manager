@@ -636,15 +636,41 @@ def _stop_loss_top_grid(job: dict) -> bool:
 
     # 시장가 손절 매도
     try:
-        upbit_api.place_order(
+        r = upbit_api.place_order(
             market=job["ticker"], side="ask", ord_type="market", volume=coin_qty
         )
-        buy_price = grid.get("last_buy_price", 0)
+        buy_price = float(grid.get("last_buy_price", 0) or 0)
+        # 2026-08-24 — 예전엔 이 함수가 손익 계산·trade_history 기록을 아예 안 해서
+        # (체결/장부만 갱신) 범위 이탈 손절이 거래내역에서 통째로 사라지는 버그가
+        # 있었음(사용자 리포트: "매도했다가 바로 재매수한 것처럼 보인다" — 실제로는
+        # 그 뒤에 이 손절이 조용히 한 번 더 일어난 거였는데 기록이 안 남아 안 보였음).
+        # 실제 체결가를 get_order로 재확인해서 손익을 기록한다(_rebalance_grid의
+        # 손절 처리와 동일 방식).
+        try:
+            time.sleep(0.3)
+            fill = upbit_api.get_order(r["uuid"])
+            sell_exec = fill.get("avg_price") or upbit_api.get_price(job["ticker"])["price"]
+        except Exception:
+            sell_exec = upbit_api.get_price(job["ticker"])["price"]
+        if buy_price > 0:
+            pnl = (sell_exec * (1 - SELL_FEE) - buy_price * (1 + BUY_FEE)) * coin_qty
+            job["total_profit_krw"] = round(job.get("total_profit_krw", 0) + pnl, 2)
+            _now = datetime.now(KST).strftime("%Y-%m-%d %H:%M")
+            hist = job.setdefault("trade_history", [])
+            hist.append({"date": _now[:10], "time": _now[11:],
+                         "buy_time": grid.get("buy_time", ""),
+                         "buy_price": round(buy_price, 2), "sell_price": round(sell_exec, 2),
+                         "qty": round(coin_qty, 8), "profit": round(pnl, 2), "reason": "이탈손절"})
+            if len(hist) > 500:
+                job["trade_history"] = hist[-500:]
+        else:
+            pnl = 0
         job["trade_count"] = job.get("trade_count", 0) + 1
         job["grid_owned_qty"] = round(max(0, job.get("grid_owned_qty", 0) - coin_qty), 8)
-        grid.update(state="idle", sell_uuid="", coin_qty=0)
-        logger.info("▼ 손절 매도: %s %.8f개 (매수가 %s원 / 격자 %s원)",
-                    job["ticker"], coin_qty, f"{buy_price:,.0f}", f"{level:,.0f}")
+        grid.update(state="idle", sell_uuid="", coin_qty=0, last_buy_price=0, last_sell_price=0)
+        logger.info("▼ 손절 매도: %s %.8f개 @ %s원 손익 %+.0f원 (매수가 %s원 / 격자 %s원)",
+                    job["ticker"], coin_qty, f"{sell_exec:,.0f}", pnl,
+                    f"{buy_price:,.0f}", f"{level:,.0f}")
         return True
     except Exception as e:
         logger.error("손절 매도 실패 %s원: %s", f"{level:,.0f}", e)

@@ -566,11 +566,32 @@ def _stop_loss_top_grid(job: dict) -> bool:
 
     try:
         kis_api.place_order(ticker, "SELL", qty, order_type="market")
-        buy_price = grid.get("last_buy_price", 0)
+        buy_price = float(grid.get("last_buy_price", 0) or 0)
+        # 2026-08-24 — 예전엔 이 함수가 손익 계산·trade_history 기록을 아예 안 해서
+        # 범위 이탈 손절이 거래내역에서 통째로 사라지는 버그가 있었음(코인 그리드와
+        # 동일한 문제, job_coin_grid.py의 같은 수정 참고). KIS는 시장가 체결가를
+        # 바로 재조회할 방법이 없어 이번 사이클의 현재가로 근사한다.
+        try:
+            sell_exec = float(kis_api.get_price(ticker)["stck_prpr"])
+        except Exception:
+            sell_exec = buy_price
+        if buy_price > 0:
+            pnl = (sell_exec * (1 - kis_api.SELL_FEE) - buy_price * (1 + kis_api.BUY_FEE)) * qty
+            job["total_profit_krw"] = round(job.get("total_profit_krw", 0) + pnl, 0)
+            _now = datetime.now(KST).strftime("%Y-%m-%d %H:%M")
+            hist = job.setdefault("trade_history", [])
+            hist.append({"date": _now[:10], "time": _now[11:],
+                         "buy_time": grid.get("buy_time", ""),
+                         "buy_price": round(buy_price, 2), "sell_price": round(sell_exec, 2),
+                         "qty": qty, "profit": round(pnl, 2), "reason": "이탈손절"})
+            if len(hist) > 500:
+                job["trade_history"] = hist[-500:]
+        else:
+            pnl = 0
         job["trade_count"] = job.get("trade_count", 0) + 1
-        grid.update(state="idle", order_no="", org_no="", qty=0)
-        logger.info("▼ 손절 매도: %s %d주 (매수가 %s원 / 격자 %s원)",
-                    ticker, qty, f"{buy_price:,.0f}", f"{level:,.0f}")
+        grid.update(state="idle", order_no="", org_no="", qty=0, last_buy_price=0, last_sell_price=0)
+        logger.info("▼ 손절 매도: %s %d주 @ %s원 손익 %+.0f원 (매수가 %s원 / 격자 %s원)",
+                    ticker, qty, f"{sell_exec:,.0f}", pnl, f"{buy_price:,.0f}", f"{level:,.0f}")
         return True
     except Exception as e:
         logger.error("손절 매도 실패 %s원: %s", f"{level:,.0f}", e)
