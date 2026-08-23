@@ -163,6 +163,16 @@ def _auto_discover(jobs: list, auto_cfg: dict, price_cache: dict, coin_enabled: 
     max_day_chg = float(auto_cfg.get("max_day_chg_pct", 5.0))
     min_liquidity = float(auto_cfg.get("min_liquidity", 50_000_000))
 
+    # 거래량 상위 N% 필터(기본 30%) — 업비트 전체 KRW 마켓 코인 중 거래대금 상위권만 후보로 삼음.
+    # min_liquidity(절대 하한)와 별개로, 두 기준 중 더 엄격한(높은) 값을 실제 하한으로 적용.
+    volume_top_pct = float(auto_cfg.get("volume_top_pct", 0.3) or 0)
+    if volume_top_pct > 0 and candidates:
+        liquidities = sorted((c["liquidity"] for c in candidates), reverse=True)
+        cutoff_idx = min(int(len(liquidities) * volume_top_pct), len(liquidities) - 1)
+        percentile_liquidity = liquidities[cutoff_idx]
+        if percentile_liquidity > min_liquidity:
+            min_liquidity = percentile_liquidity
+
     picked_surge = []
     if surge_enabled:
         picked_surge = scalp_engine.select_auto_candidates(
