@@ -321,3 +321,290 @@ setTimeout(() => { _fetchGistData(); _fetchBinData(); }, 0);
 let _dashData = null;
 let _ipoRecords = [];   // ← Script 1에서 선언: initDashboard·markSubscribed 모두 이 변수 공유
 
+// ══════════════════════════════════════════════════════════
+// 그리드 범위 이탈 공용 헬퍼 (코인/주식 그리드 탭 공유)
+// ══════════════════════════════════════════════════════════
+// 코인(job_coin_grid.py)은 2026-08-22 리팩터로 escaped_at 필드를 쓰고,
+// 주식(job_stock_grid.py)은 같은 날 같은 버그를 out_of_range_since 필드를
+// 유지한 채로 고쳤음 — 필드명이 갈라져 있어 둘 다 확인한다. 백엔드의
+// wait_min = auto_reinit_minutes || 15(STOP_LOSS_DEFAULT_WAIT_MIN)와
+// 반드시 같은 상수를 써야 함 — 다르면 UI 카운트다운이 실제 손절/재설정
+// 타이밍과 어긋난다.
+const GRID_STOP_LOSS_DEFAULT_WAIT_MIN = 15;
+
+function _gridEscapeInfo(job) {
+  const sinceStr = job.escaped_at || job.out_of_range_since;
+  if (!sinceStr) return null;
+
+  // "YYYY-MM-DD HH:MM" (KST, 타임존 표기 없음) → 명시적으로 KST로 파싱
+  const since = new Date(sinceStr.replace(' ', 'T') + ':00+09:00');
+  if (isNaN(since.getTime())) return null;
+
+  const elapsedMin = Math.max(0, Math.floor((Date.now() - since.getTime()) / 60000));
+  const timeLabel  = sinceStr.slice(11);  // "HH:MM"
+  const autoMin    = job.auto_reinit_minutes;
+  const waitMin    = autoMin || GRID_STOP_LOSS_DEFAULT_WAIT_MIN;
+
+  return { since, sinceStr, timeLabel, elapsedMin, autoMin, waitMin };
+}
+
+// ══════════════════════════════════════════════════════════
+// 그리드 매매 현황 — 10분봉 캔들차트 + 가격선 오버레이 (코인/주식 공유)
+// ══════════════════════════════════════════════════════════
+// 색상은 dataviz 가이드로 검증됨 — 매수(앱 --primary #3D5AFE)/매도(신규
+// --state-sell, 라이트#eb6834·다크#d95926)는 CVD ΔE 31.8/26.8·일반시각
+// 40.0/31.8(모두 8/15 기준 통과), --border(idle)는 무채색이라 대상 아님.
+// 현재가 기준선은 카테고리 색과 겹치는 걸 피하려고 일부러 색상 대신
+// 텍스트 잉크+점선으로 표현(참조선은 "계열"이 아니라 구조적 주석이라
+// 색상 채널을 새로 하나 더 쓰지 않는 게 맞음 — violet(#8b5cf6)을 넣어
+// 봤더니 --primary와 일반시각 ΔE 11.1로 실패해서 폐기).
+
+// job.grids[] + job 설정(krw_per_grid, grid_pct)을 가격/금액 기준으로 정규화.
+// qtyField: 코인은 'coin_qty', 주식은 'qty' — 그 외 필드명은 전부 동일.
+function _gridLevelsNormalize(job, qtyField) {
+  const grids = Array.isArray(job.grids) ? job.grids : [];
+  return grids.map(g => {
+    if (g.state === 'buy_waiting') {
+      return { price: g.level, state: 'buy_waiting', amount: job.krw_per_grid || 0 };
+    }
+    if (g.state === 'sell_waiting') {
+      const sp = g.last_sell_price || Math.round(g.level * (1 + (job.grid_pct || 0) / 100));
+      const amount = Math.round((g[qtyField] || 0) * sp);
+      return { price: sp, state: 'sell_waiting', amount };
+    }
+    return { price: g.level, state: 'idle', amount: 0 };
+  });
+}
+
+// ── 10분봉 캔들차트 + 그리드 가격선 오버레이 ─────────────────────────
+// (SVG 래더는 폐기 — lightweight-charts의 createPriceLine으로 실제 캔들
+// 위에 매수/매도 대기가를 직접 겹쳐 그리는 게 "시간 흐름 속 현재가 맥락 +
+// 그리드 기준가"를 한 화면에서 훨씬 조화롭게 보여줌).
+// 시간대별 캔들 캐시 TTL — 분봉은 자주 바뀌니 짧게, 일/주/월봉은 하루~수시간에
+// 한 번만 바뀌는 데이터라 길게 잡아도 무방(오히려 불필요한 재조회를 줄여줌).
+// 코인(Upbit)은 어느 시간대든 단일 콜이라 부담 적고, 주식 1분/10분/1시간봉은
+// KIS 1분봉 페이징(최대 5~14콜)이 필요한 무거운 호출이라 짧은 TTL이 곧 방어막.
+const GRID_CHART_CACHE_MS = { '1m': 60000, '10m': 150000, '1h': 150000, '1d': 1800000, '1w': 10800000, '1M': 21600000 };
+const GRID_TIMEFRAMES = [
+  { key: '1m',  label: '1분' },
+  { key: '10m', label: '10분' },
+  { key: '1h',  label: '1시간' },
+  { key: '1d',  label: '일' },
+  { key: '1w',  label: '주' },
+  { key: '1M',  label: '월' },
+];
+const _gridChartCandleCache = {};   // "ticker:timeframe" → {candles, ts}
+const _gridChartInstances   = {};   // containerId → lightweight-charts 인스턴스(재렌더 시 정리용)
+const _gridChartToken       = {};   // containerId → 최신 렌더 호출 토큰(경쟁 상태 방지)
+const _gridChartTimeframe   = {};   // containerId → 현재 선택된 시간대(기본 '10m')
+const _gridChartLastArgs    = {};   // containerId → 마지막 렌더 인자(시간대 전환 시 즉시 재렌더용)
+
+async function _fetchGridCandles(ticker, isCoin, timeframe) {
+  const tf = timeframe || '10m';
+  const cacheKey = `${ticker}:${tf}`;
+  const cached = _gridChartCandleCache[cacheKey];
+  const ttl = GRID_CHART_CACHE_MS[tf] || 150000;
+  if (cached && (Date.now() - cached.ts) < ttl) return cached.candles;
+  try {
+    let url;
+    if (isCoin) {
+      const periodMap = { '1d': 'day', '1w': 'week', '1M': 'month' };
+      const unitMap  = { '1m': 1, '10m': 10, '1h': 60 };
+      const countMap = { '1m': 120, '10m': 36, '1h': 48 }; // 1시간봉: 최근 48시간(2일)
+      url = periodMap[tf]
+        ? `/api/coin-price?candles=1&market=${encodeURIComponent(ticker)}&period=${periodMap[tf]}&count=${tf === '1M' ? 60 : 100}`
+        : `/api/coin-price?candles=1&market=${encodeURIComponent(ticker)}&unit=${unitMap[tf] || 10}&count=${countMap[tf] || 36}`;
+    } else {
+      url = `/api/quote?ticker=${encodeURIComponent(ticker)}&chart=1&interval=${tf}`;
+    }
+    const r = await fetch(url);
+    const d = await r.json();
+    const candles = Array.isArray(d.candles) ? d.candles : [];
+    _gridChartCandleCache[cacheKey] = { candles, ts: Date.now() };
+    return candles;
+  } catch (_) {
+    return cached?.candles || [];
+  }
+}
+
+// 시간대 버튼 클릭 시 호출 — 선택 상태만 바꾸고 마지막 렌더 인자로 즉시 재렌더.
+function _switchGridChartTimeframe(containerId, tf) {
+  _gridChartTimeframe[containerId] = tf;
+  const args = _gridChartLastArgs[containerId];
+  if (!args) return;
+  renderGridChart(containerId, args.job, args.curPrice, args.qtyField, args.ticker, args.isCoin);
+}
+
+function _gridChartTfBarHtml(containerId, activeTf) {
+  return GRID_TIMEFRAMES.map(tf => {
+    const active = tf.key === activeTf;
+    return `<button onclick="_switchGridChartTimeframe('${containerId}','${tf.key}')"
+      style="padding:2px 9px;border-radius:5px;font-size:11px;cursor:pointer;
+      border:1px solid ${active ? 'var(--primary)' : 'var(--border)'};
+      background:${active ? 'var(--primary)' : 'none'};
+      color:${active ? '#fff' : 'var(--muted)'};font-weight:${active ? 700 : 400}">${tf.label}</button>`;
+  }).join('');
+}
+
+// containerId 엘리먼트에 job 하나의 10분봉(최근 6시간) + 매수/매도 대기가
+// 오버레이 차트를 그린다. curPrice: 현재가(숫자, 없으면 기준선 생략).
+// qtyField: 'coin_qty' | 'qty'. ticker: Upbit market 코드 또는 KIS 종목코드.
+async function renderGridChart(containerId, job, curPrice, qtyField, ticker, isCoin) {
+  if (typeof LightweightCharts === 'undefined') return;
+  _gridChartLastArgs[containerId] = { job, curPrice, qtyField, ticker, isCoin }; // 시간대 전환 버튼용
+
+  // 초기 로딩 시 agRenderJobs/ctRenderGridJobs가 동기 1회 + 가격 폴링 완료 후
+  // 1회, 총 2번 거의 동시에 호출되는 경우가 있다 — 둘 다 아래 await 시점에
+  // 컨테이너에 아직 인스턴스가 없는 걸 보고 통과해버려서 같은 컨테이너에
+  // 차트가 2개 겹쳐 그려짐(실측: 첫 진입 시 2개, 탭 이동 후 재진입하면 1개
+  // — 그때는 호출이 1번만 일어나서). 호출마다 토큰을 발급하고, await 이후
+  // 가장 최근 토큰이 아니면 그리지 않고 조용히 포기한다.
+  const myToken = (_gridChartToken[containerId] = (_gridChartToken[containerId] || 0) + 1);
+
+  const timeframe = _gridChartTimeframe[containerId] || '10m';
+  const candles = await _fetchGridCandles(ticker, isCoin, timeframe);
+  if (_gridChartToken[containerId] !== myToken) return; // 더 최신 호출이 있었음 — 이 호출은 폐기
+
+  const outer = document.getElementById(containerId);
+  if (!outer || !document.body.contains(outer)) return; // 그 사이 탭 이동 등으로 DOM에서 사라졌을 수 있음
+
+  // 시간대 버튼 바 + 실제 차트를 별도 하위 div로 분리 — 버튼 바는 매번 다시
+  // 그려도(활성 상태 갱신) 차트 쪽만 인스턴스를 정리/재생성하면 되게 한다.
+  let barEl = outer.querySelector('.grid-chart-tf-bar');
+  let chartEl = outer.querySelector('.grid-chart-inner');
+  if (!barEl || !chartEl) {
+    outer.innerHTML = `<div class="grid-chart-tf-bar" style="display:flex;gap:4px;margin-bottom:6px"></div><div class="grid-chart-inner" style="height:220px"></div>`;
+    barEl = outer.querySelector('.grid-chart-tf-bar');
+    chartEl = outer.querySelector('.grid-chart-inner');
+  }
+  barEl.innerHTML = _gridChartTfBarHtml(containerId, timeframe);
+
+  if (_gridChartInstances[containerId]) {
+    try { _gridChartInstances[containerId].remove(); } catch (_) {}
+    delete _gridChartInstances[containerId];
+  }
+  chartEl.innerHTML = ''; // 방어적으로 잔여 DOM 제거
+
+  const cs = getComputedStyle(document.body);
+  const buyColor    = cs.getPropertyValue('--primary').trim()    || '#3D5AFE';
+  const sellColor   = cs.getPropertyValue('--state-sell').trim() || '#eb6834';
+  const borderColor = cs.getPropertyValue('--border').trim()     || '#EBEBEB';
+  const textColor    = cs.getPropertyValue('--muted').trim()      || '#9EA3B0';
+
+  // lightweight-charts는 숫자 타임스탬프를 기본적으로 UTC 기준으로 축에
+  // 표시한다(브라우저 로컬시간이 아님) — 그래서 KST 13:40 캔들이 "04:40"으로
+  // 보여 "새벽 시간대가 나온다"는 문제가 생겼음(실측: 값 자체는 정확한 KST
+  // 절대시각의 UTC epoch였고, 표시 포맷팅만 UTC였음). tickMarkFormatter/
+  // timeFormatter로 Asia/Seoul 기준 표기를 강제한다. 일/주/월봉은 서버가
+  // 이미 'YYYY-MM-DD' 캘린더 날짜 문자열로 주므로(시간대 변환 불필요) 분기.
+  const _kstFmt = (opts) => (time) => new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', ...opts }).format(new Date(time * 1000));
+  const _kstTimeLabel = _kstFmt({ hour: '2-digit', minute: '2-digit', hour12: false });
+  const _kstDayLabel  = _kstFmt({ day: 'numeric' });
+  const _dateStrParts = (s) => { const [y, mo, d] = s.split('-'); return { y, mo: Number(mo), d: Number(d) }; };
+
+  const chart = LightweightCharts.createChart(chartEl, {
+    layout: { background: { type: LightweightCharts.ColorType.Solid, color: 'transparent' }, textColor },
+    grid: { vertLines: { color: borderColor }, horzLines: { color: borderColor } },
+    timeScale: {
+      borderColor, timeVisible: true, secondsVisible: false,
+      tickMarkFormatter: (time, tickMarkType) => {
+        if (typeof time === 'string') {
+          const { y, mo, d } = _dateStrParts(time);
+          return tickMarkType === LightweightCharts.TickMarkType.Year ? y : `${mo}/${d}`;
+        }
+        const isDayMark = tickMarkType === LightweightCharts.TickMarkType.DayOfMonth
+          || tickMarkType === LightweightCharts.TickMarkType.Month
+          || tickMarkType === LightweightCharts.TickMarkType.Year;
+        return (isDayMark ? _kstDayLabel : _kstTimeLabel)(time);
+      },
+    },
+    localization: {
+      timeFormatter: (time) => {
+        if (typeof time === 'string') { const { y, mo, d } = _dateStrParts(time); return `${y}.${mo}.${d}`; }
+        return `${_kstDayLabel(time)}일 ${_kstTimeLabel(time)}`;
+      },
+    },
+    rightPriceScale: { borderColor },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+    width: chartEl.clientWidth,
+    height: 220,
+  });
+  _gridChartInstances[containerId] = chart;
+
+  const series = chart.addCandlestickSeries({
+    upColor: '#16a34a', downColor: '#dc2626',
+    borderUpColor: '#16a34a', borderDownColor: '#dc2626',
+    wickUpColor: '#16a34a', wickDownColor: '#dc2626',
+    priceLineVisible: false,  // 현재가는 아래에서 별도 라인으로 직접 표시(더 실시간)
+    lastValueVisible: false,  // 캔들 라이브러리 기본 "마지막 종가" 배지 — 10분봉 마감가라
+                               // 실시간 폴링 현재가("현재" 점선)와 다른 값이 동시에 떠서
+                               // 혼동을 줌(사용자 실측: "빨간바탕 흰색 2013이 뭐냐" 질문).
+                               // 실시간 현재가는 이미 아래 "현재" 라인이 대신하므로 끈다.
+  });
+  if (candles.length) series.setData(candles);
+
+  // 매수/매도 대기 기준가 — 실제 캔들 위에 바로 겹쳐서 "지금 가격 흐름 대비
+  // 내 주문이 어디 걸려있는지"가 한눈에 보이도록. 금액은 매수대기는 격자당
+  // 금액(job.krw_per_grid)으로 항상 동일하고, 매도대기는 레벨마다 달라서
+  // 표시 여부가 갈렸었는데 — 통일성을 위해 둘 다 라벨 없이 가격선만 표시
+  // (금액은 위 정보줄의 "격자당 X원"으로 충분).
+  const levels = _gridLevelsNormalize(job, qtyField);
+  for (const l of levels) {
+    if (l.state === 'idle') continue;
+    const isBuy = l.state === 'buy_waiting';
+    series.createPriceLine({
+      price: l.price,
+      color: isBuy ? buyColor : sellColor,
+      lineWidth: 2,
+      lineStyle: LightweightCharts.LineStyle.Solid,
+      axisLabelVisible: true,
+      title: isBuy ? '매수' : '매도',
+    });
+  }
+
+  // 설정 범위 상/하한 — 옅은 점선 가이드
+  const lower = Number(job.lower_price) || 0, upper = Number(job.upper_price) || 0;
+  series.createPriceLine({ price: lower, color: borderColor, lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: '하한' });
+  series.createPriceLine({ price: upper, color: borderColor, lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: '상한' });
+
+  // 현재가 — 중립 잉크 + 점선(카테고리 색과 겹치지 않도록, SVG 래더 때와 동일 원칙).
+  // 캔들의 마지막 종가보다 최신일 수 있어(현재가 폴링이 10분봉보다 촘촘함)
+  // series 기본 lastValue 라인 대신 이걸 켠다.
+  if (curPrice != null && isFinite(curPrice)) {
+    const isEscaped = curPrice < lower || curPrice > upper;
+    series.createPriceLine({
+      price: curPrice,
+      color: textColor,
+      lineWidth: 2,
+      lineStyle: LightweightCharts.LineStyle.Dashed,
+      axisLabelVisible: true,
+      title: `현재${isEscaped ? ' ⚠️' : ''}`,
+    });
+  }
+
+  // createPriceLine으로 얹은 값들은 기본적으로 세로축 자동 스케일 계산에
+  // 포함되지 않는다 — 캔들 범위 밖(예: 범위 이탈 시 현재가, 혹은 캔들
+  // 데이터가 아직 없을 때의 그리드 기준가)은 스케일이 안 늘어나서 화면
+  // 밖으로 잘려 안 보임(헤드리스 크롬 스크린샷으로 실측 후 발견 — 정작
+  // 가장 중요한 "범위 이탈" 상태가 조용히 사라지는 버그였음). 캔들의
+  // 자연스러운 최소/최대에 하한/상한/현재가/활성 격자가를 강제로 합쳐서
+  // 세로축이 항상 전부 포함하도록 한다.
+  const refPrices = [lower, upper, ...levels.filter(l => l.state !== 'idle').map(l => l.price)];
+  if (curPrice != null && isFinite(curPrice)) refPrices.push(curPrice);
+  series.applyOptions({
+    autoscaleInfoProvider: original => {
+      let res = original();
+      if (res && res.priceRange) {
+        res.priceRange.minValue = Math.min(res.priceRange.minValue, ...refPrices);
+        res.priceRange.maxValue = Math.max(res.priceRange.maxValue, ...refPrices);
+      } else {
+        // 캔들 데이터가 아직 없으면(로딩 실패 등) 참조가만으로 범위 구성
+        res = { priceRange: { minValue: Math.min(...refPrices), maxValue: Math.max(...refPrices) } };
+      }
+      return res;
+    },
+  });
+
+  chart.timeScale().fitContent();
+}
+

@@ -34,7 +34,7 @@ async function initCoinTrade() {
   ctLoadToday();
 }
 
-// ── 일별 수익 현황 ────────────────────────────────────────────
+// ── 일별 손익 현황 ────────────────────────────────────────────
 async function ctFetchDay(date) {
   const url = date === null ? '/api/coin-today' : `/api/coin-date?date=${date}`;
   try {
@@ -333,14 +333,15 @@ function ctRenderAccount() {
 // ── 현재가 갱신 ──────────────────────────────────────────
 async function ctRefreshPrices() {
   const activeSell  = _ctSellJobs.filter(j => j.status === 'active');
+  const activeGrids = (Array.isArray(_ctGridJobs) ? _ctGridJobs : []).filter(j => j.status !== 'stopped');
   const all = [...activeSell];
   // 앱 탭이 활성화된 동안 coin-runner를 서버사이드에서 트리거 (매매 자동 실행)
   if (all.length > 0) {
     fetch('/api/data?mode=trigger_coin_runner&runner_mode=sell').catch(() => {});
   }
-  if (!all.length) return;
+  if (!all.length && !activeGrids.length) return;
 
-  const tickers = [...new Set(all.map(j => j.ticker))];
+  const tickers = [...new Set([...all.map(j => j.ticker), ...activeGrids.map(j => j.ticker)])];
   try {
     const r = await fetch(`/api/coin-price?markets=${tickers.join(',')}`);
     const data = await r.json();
@@ -370,6 +371,23 @@ async function ctRefreshPrices() {
       if (priceEl) priceEl.textContent = priceText;
       if (pnlEl && pnlHtml) pnlEl.innerHTML = pnlHtml;
     }
+
+    // 그리드 잡 헤더의 현재가 배지(시인성용 — 매수/매도 대기 기준가와 눈으로 비교하기 위함)
+    let gridPriceUpdated = false;
+    for (const job of activeGrids) {
+      const d = priceMap[job.ticker];
+      if (!d) continue;
+      const cur       = d.trade_price;
+      const chgPct    = (d.signed_change_rate * 100).toFixed(2);
+      const priceText = `${cur.toLocaleString()}원 (${chgPct >= 0 ? '+' : ''}${chgPct}%)`;
+      _ctPriceCache[job.ticker] = { ..._ctPriceCache[job.ticker], priceText, cur };
+
+      const curEl = document.getElementById(`ct-grid-curprice-${job.id}`);
+      if (curEl) curEl.textContent = `현재가 ${priceText}`;
+      gridPriceUpdated = true;
+    }
+    // 이탈 배지의 경과시간을 갱신하려면 재렌더 필요 — 잡당 한 번이 아니라 한 번만
+    if (gridPriceUpdated) ctRenderGridJobs();
   } catch (_) {}
 }
 
@@ -826,6 +844,10 @@ async function ctAddGridJob() {
   const { lower, upper } = _cgCalcRange(count, pct, _cgCurrentPrice);
 
   const reinitMin = +document.getElementById('cg-reinit')?.value || 0;
+  // 2026-08-22 — 예전엔 5 같은 10 미만 값을 입력해도 경고 없이 조용히 무시(미설정
+  // 처리)돼서, 사용자가 저장했다고 믿었는데 실제론 반영이 안 되는 문제가 있었음.
+  // 최소값을 5분으로 낮추고, 그 밑으로 입력하면 명확히 알려준다.
+  if (reinitMin > 0 && reinitMin < 5) { if (msg) msg.innerHTML = '<span style="color:var(--red)">이탈 자동재설정은 5분 이상이어야 합니다</span>'; return; }
 
   const finalTicker = ticker.startsWith('KRW-') ? ticker : `KRW-${ticker}`;
   if (msg) msg.innerHTML = '<span style="color:var(--muted)">등록 중...</span>';
@@ -838,7 +860,7 @@ async function ctAddGridJob() {
     upper_price:  upper,
     krw_per_grid: krw,
   };
-  if (reinitMin >= 10) payload.auto_reinit_minutes = reinitMin;
+  if (reinitMin >= 5) payload.auto_reinit_minutes = reinitMin;
 
   try {
     const r = await fetch('/api/coin-grid', {
@@ -882,11 +904,27 @@ async function ctSaveGridEdit(id) {
 
   const lower   = +document.getElementById(`cg-edit-lower-${id}`)?.value || 0;
   const upper   = +document.getElementById(`cg-edit-upper-${id}`)?.value || 0;
+  const pctV    = document.getElementById(`cg-edit-pct-${id}`)?.value;
+  const krwV    = document.getElementById(`cg-edit-krw-${id}`)?.value;
   const reinitV = document.getElementById(`cg-edit-reinit-${id}`)?.value;
   const reinit  = reinitV !== '' ? +reinitV : null;
 
   if (lower && upper && lower >= upper) {
     alert('하한가는 상한가보다 작아야 합니다');
+    return;
+  }
+  if (pctV !== '' && +pctV <= 0.1) {
+    alert('격자 간격은 0.1%보다 커야 합니다');
+    return;
+  }
+  if (krwV !== '' && +krwV < 5000) {
+    alert('격자당 금액은 5,000원 이상이어야 합니다');
+    return;
+  }
+  // 2026-08-22 — 예전엔 5 같은 10 미만 값을 조용히 null로 바꿔서 저장했던 걸,
+  // 최소값 5분으로 낮추고 그 밑으로 입력하면 명확히 알려주도록 수정.
+  if (reinit !== null && reinit > 0 && reinit < 5) {
+    alert('이탈 자동재설정은 5분 이상이어야 합니다');
     return;
   }
 
@@ -901,8 +939,16 @@ async function ctSaveGridEdit(id) {
     }
   }
 
+  // 간격%·격자당 금액은 하한/상한과 달리 즉시 reinit(주문 전부 취소 후 재배치)을
+  // 트리거하지 않는다 — job_coin_grid.py가 grid_pct/krw_per_grid를 매 사이클
+  // job에서 그대로 읽어 쓰므로(build_levels 호출 없이도 매도가 계산·다음 매수
+  // 금액에 바로 반영됨), 이미 걸려있는 매수/매도 주문은 그대로 두고 이후 체결
+  // 부터 새 값이 적용된다.
+  if (pctV !== '') patch.grid_pct = +pctV;
+  if (krwV !== '') patch.krw_per_grid = +krwV;
+
   if (reinitV !== '') {
-    patch.auto_reinit_minutes = (reinit >= 10) ? reinit : null;
+    patch.auto_reinit_minutes = (reinit >= 5) ? reinit : null;
   }
 
   try {
@@ -953,21 +999,34 @@ function ctRenderGridJobs() {
     const pnlClr = pnl >= 0 ? 'var(--green)' : 'var(--red)';
     const canStop = ['active', 'init', 'reinit'].includes(j.status);
 
-    // 그리드 미니 시각화 (최대 20칸)
-    const visGrids = grids.slice(0, 20);
-    const barHtml  = visGrids.map(g => {
-      const c = g.state === 'sell_waiting' ? '#f59e0b'
-              : g.state === 'buy_waiting'  ? 'var(--primary)'
-              : 'var(--border)';
-      return `<div title="${Number(g.level).toLocaleString()}원 (${g.state})"
-        style="flex:1;height:14px;background:${c};border-radius:2px;min-width:4px"></div>`;
-    }).join('');
+    // 범위 이탈 중이면 이탈 시각·경과·자동재설정까지 남은 시간 표시.
+    // canStop(=활성 상태) 잡만 대상 — 중단된 잡은 백엔드가 더 이상 이탈을
+    // 재평가하지 않아 escaped_at/out_of_range_since가 몇 주 전 값으로 그대로
+    // 남아있을 수 있음(실측: 중단된 주식 그리드 하나가 2026-07-13 이탈 기록을
+    // 그대로 갖고 있었음) — 그걸 그대로 보여주면 이미 안 도는 잡에 "이탈 중"
+    // 경고가 잘못 뜬다.
+    const escInfo = canStop ? _gridEscapeInfo(j) : null;
+    let escapeHtml = '';
+    if (escInfo) {
+      const curPrice = _ctPriceCache[j.ticker]?.cur;
+      const dir = curPrice != null
+        ? (curPrice < j.lower_price ? '하단 이탈 🔻' : curPrice > j.upper_price ? '상단 돌파 🔺' : '범위 이탈')
+        : '범위 이탈';
+      const remain = escInfo.autoMin ? escInfo.waitMin - escInfo.elapsedMin : null;
+      const reinitText = escInfo.autoMin
+        ? (remain > 0 ? `재설정까지 ${remain}분` : '재설정 대기중')
+        : '자동재설정 미설정(수동)';
+      escapeHtml = `<div style="font-size:11px;color:#ef4444;font-weight:600;margin-bottom:6px">
+        ⚠️ ${dir} — ${escInfo.timeLabel}부터 · ${escInfo.elapsedMin}분 경과 · ${reinitText}
+      </div>`;
+    }
 
     return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
         <div>
           <span style="font-weight:700">${j.name}</span>
           <span style="color:var(--muted);font-size:11px;margin-left:6px">${j.ticker}</span>
+          <span id="ct-grid-curprice-${j.id}" style="color:#8b5cf6;font-size:12px;font-weight:700;margin-left:8px">${_ctPriceCache[j.ticker]?.priceText ? `현재가 ${_ctPriceCache[j.ticker].priceText}` : '현재가 조회중...'}</span>
         </div>
         <div style="display:flex;gap:6px;align-items:center">
           <span style="color:${statusColor};font-size:12px;font-weight:600">${statusLabel}</span>
@@ -977,17 +1036,18 @@ function ctRenderGridJobs() {
             style="padding:2px 9px;border:1px solid var(--red);border-radius:5px;background:none;font-size:11px;color:var(--red);cursor:pointer">중단</button>` : ''}
         </div>
       </div>
+      ${escapeHtml}
       <div style="font-size:12px;color:var(--muted);margin-bottom:6px">
         범위: ${Number(j.lower_price).toLocaleString()} ~ ${Number(j.upper_price).toLocaleString()}원
         &nbsp;|&nbsp; 간격: ${j.grid_pct}%
         &nbsp;|&nbsp; 격자당: ${Number(j.krw_per_grid).toLocaleString()}원
-        ${j.auto_reinit_minutes ? `&nbsp;|&nbsp; <span style="color:var(--primary)">이탈재설정 ${j.auto_reinit_minutes}분</span>` : ''}
+        &nbsp;|&nbsp; <span style="color:var(--primary)">이탈재설정 ${j.auto_reinit_minutes || GRID_STOP_LOSS_DEFAULT_WAIT_MIN}분${j.auto_reinit_minutes ? '' : '(기본)'}</span>
       </div>
-      <div style="display:flex;gap:3px;margin-bottom:6px" title="파랑=매수대기 / 노랑=매도대기 / 회색=미활성">${barHtml}</div>
+      <div id="ct-grid-chart-${j.id}" style="margin-bottom:8px"></div>
       <div style="display:flex;justify-content:space-between;font-size:12px">
         <div style="color:var(--muted)">
           매수대기 <b style="color:var(--primary)">${buyWait}</b>
-          &nbsp; 매도대기 <b style="color:#f59e0b">${sellWait}</b>
+          &nbsp; 매도대기 <b style="color:var(--state-sell)">${sellWait}</b>
           &nbsp; 총 ${total}격자
         </div>
         <div>
@@ -998,7 +1058,7 @@ function ctRenderGridJobs() {
       </div>
       ${_cgEditingId === j.id ? `
       <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:8px">
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr;gap:8px;margin-bottom:8px">
           <div>
             <div style="font-size:10px;color:var(--muted);margin-bottom:3px">하한가 (원)</div>
             <input id="cg-edit-lower-${j.id}" type="number" value="${j.lower_price}"
@@ -1010,13 +1070,23 @@ function ctRenderGridJobs() {
               style="width:100%;padding:5px 7px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:12px;box-sizing:border-box">
           </div>
           <div>
+            <div style="font-size:10px;color:var(--muted);margin-bottom:3px">간격 (%)</div>
+            <input id="cg-edit-pct-${j.id}" type="number" step="0.1" value="${j.grid_pct || 1.5}"
+              style="width:100%;padding:5px 7px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:12px;box-sizing:border-box">
+          </div>
+          <div>
+            <div style="font-size:10px;color:var(--muted);margin-bottom:3px">격자당 (원)</div>
+            <input id="cg-edit-krw-${j.id}" type="number" step="10000" value="${j.krw_per_grid || 0}"
+              style="width:100%;padding:5px 7px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:12px;box-sizing:border-box">
+          </div>
+          <div>
             <div style="font-size:10px;color:var(--muted);margin-bottom:3px">이탈재설정 (분)</div>
-            <input id="cg-edit-reinit-${j.id}" type="number" min="10" placeholder="미설정"
+            <input id="cg-edit-reinit-${j.id}" type="number" min="5" placeholder="미설정"
               value="${j.auto_reinit_minutes || ''}"
               style="width:100%;padding:5px 7px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:12px;box-sizing:border-box">
           </div>
         </div>
-        <div style="font-size:10px;color:var(--muted);margin-bottom:8px">* 하한/상한 변경 시 기존 주문 전부 취소 후 재초기화됩니다</div>
+        <div style="font-size:10px;color:var(--muted);margin-bottom:8px">* 하한/상한 변경 시 기존 주문 전부 취소 후 재초기화됩니다. 간격/격자당 금액은 이미 걸린 주문엔 영향 없이 다음 체결부터 적용됩니다.</div>
         <div style="display:flex;gap:8px">
           <button onclick="ctSaveGridEdit('${j.id}')"
             style="flex:1;padding:6px;background:var(--primary);color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">저장</button>
@@ -1026,6 +1096,13 @@ function ctRenderGridJobs() {
       </div>` : ''}
     </div>`;
   }).join('');
+
+  // 차트는 실제 DOM에 컨테이너가 붙은 다음(innerHTML 대입 후)에만 그릴 수
+  // 있어 별도 루프로 처리 — fire-and-forget(각 차트가 개별적으로 캔들을
+  // 불러와 그리므로 여기서 await할 필요 없음).
+  for (const j of jobs) {
+    renderGridChart(`ct-grid-chart-${j.id}`, j, _ctPriceCache[j.ticker]?.cur, 'coin_qty', j.ticker, true);
+  }
 }
 
 // ══════════════════════════════════════════════════════════

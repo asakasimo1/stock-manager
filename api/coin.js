@@ -178,6 +178,21 @@ async function handleStockGridJobs(req, res, gistId, ghToken) {
     const ok = await writeGistFile(gistId, ghToken, FILENAME, list);
     return res.status(ok ? 200 : 500).json(ok ? { ok: true } : { error: '저장 실패' });
   }
+  // stock-grid 잡은 coin-grid와 달리 id 필드가 없어(기존부터 ticker만으로
+  // 관리) PATCH도 ticker로 매칭한다. list가 unshift로 최신순이라 findIndex가
+  // 자연히 가장 최근(현재 활성) 잡을 먼저 찾는다.
+  if (req.method === 'PATCH') {
+    const { ticker } = req.query;
+    if (!ticker) return res.status(400).json({ error: 'ticker 필수' });
+    const jobs = await readGistFile(gistId, ghToken, FILENAME);
+    const list = Array.isArray(jobs) ? jobs : [];
+    const idx  = list.findIndex(j => j.ticker === ticker);
+    if (idx < 0) return res.status(404).json({ error: '잡 없음' });
+    list[idx] = { ...list[idx], ...req.body };
+    const ok = await writeGistFile(gistId, ghToken, FILENAME, list);
+    return res.status(ok ? 200 : 500).json(ok ? list[idx] : { error: '저장 실패' });
+  }
+
   if (req.method === 'DELETE') {
     const { id } = req.query;
     if (!id) return res.status(400).json({ error: 'id 필수' });
@@ -816,7 +831,47 @@ async function handleCoinDate(req, res, gistId, ghToken) {
 }
 
 async function handleCoinPrice(req, res) {
-  const { markets } = req.query;
+  const { markets, candles, market, unit, count, period } = req.query;
+
+  // 분/일/주/월봉 캔들 (그리드 매매 현황 차트용)
+  // — 분봉: ?candles=1&market=X&unit=10&count=36 (기존)
+  // — 일/주/월봉: ?candles=1&market=X&period=day|week|month&count=N
+  // Upbit은 어느 주기든 단일 호출(최대 200건)이라 기간을 늘려도 부담이
+  // 늘지 않음 — KIS처럼 페이지네이션이 필요한 게 아님.
+  if (candles === '1') {
+    if (!market) return res.status(400).json({ error: 'market 파라미터 필요' });
+    const isDaily = period === 'day' || period === 'week' || period === 'month';
+    try {
+      let url;
+      if (isDaily) {
+        const path = period === 'day' ? 'days' : period === 'week' ? 'weeks' : 'months';
+        const c = Math.min(Number(count) || 100, 200);
+        url = `https://api.upbit.com/v1/candles/${path}?market=${encodeURIComponent(market)}&count=${c}`;
+      } else {
+        const u = Number(unit) || 10;
+        const c = Math.min(Number(count) || 36, 200); // Upbit 페이지당 최대 200건, 10분봉 36개=6시간이면 단일 호출로 충분
+        url = `https://api.upbit.com/v1/candles/minutes/${u}?market=${encodeURIComponent(market)}&count=${c}`;
+      }
+      const r = await fetch(url);
+      if (!r.ok) return res.status(r.status).json({ error: 'Upbit 캔들 API 오류' });
+      const raw = await r.json();
+      // lightweight-charts 캔들시리즈 포맷으로 변환 — Upbit은 최신순(내림차순)
+      // 반환이라 오름차순(과거→최근)으로 뒤집어야 함(라이브러리 요구사항).
+      // 일/주/월봉은 날짜 문자열('YYYY-MM-DD')을 그대로 time으로 써서
+      // (lightweight-charts가 이를 캘린더 날짜로 직접 지원) 시간대 변환 없이
+      // 정확한 날짜만 표시되게 한다.
+      const chartCandles = raw
+        .map(x => isDaily
+          ? { time: x.candle_date_time_kst.slice(0, 10), open: x.opening_price, high: x.high_price, low: x.low_price, close: x.trade_price }
+          : { time: Math.floor(new Date(x.candle_date_time_kst + '+09:00').getTime() / 1000), open: x.opening_price, high: x.high_price, low: x.low_price, close: x.trade_price })
+        .sort((a, b) => isDaily ? a.time.localeCompare(b.time) : a.time - b.time);
+      res.setHeader('Cache-Control', 'no-store');
+      return res.status(200).json({ candles: chartCandles });
+    } catch (e) {
+      return res.status(500).json({ error: e.message });
+    }
+  }
+
   if (!markets) return res.status(400).json({ error: 'markets 파라미터 필요' });
   try {
     const r = await fetch(`https://api.upbit.com/v1/ticker?markets=${encodeURIComponent(markets)}`);

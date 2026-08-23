@@ -137,7 +137,23 @@ function _renderBriefing() {
 }
 
 // ── 거래 내역 (stock_trader 실거래) ─────────────────────
-let _traderTradesExpanded = false;
+// 페이지당 건수. 코인+주식 파일 분리 이후 표시 대상이 최대 200건까지 늘 수
+// 있어(2026-08-15) "더보기"로 한 번에 50건까지만 펼치던 방식 대신 페이지네이션으로 변경.
+const TRADER_TRADES_PAGE_SIZE = 10;
+// key: 'all'(모바일 통합 목록) / 'coin' / 'stock'(PC 분리 목록, 2026-08-15 추가) —
+// 각자 독립적인 페이지 상태를 가짐. items는 페이지 이동 시 재사용 — onclick 속성에 큰
+// JSON을 직접 넣지 않기 위함(예전 방식: 거래내역에 "가 포함되면 onclick 속성이 그
+// 지점에서 잘려 핸들러 전체가 깨지고 버튼이 아무 반응도 안 하던 버그가 있었음).
+const _traderTradesState = {
+  all:   { page: 0, items: [], elId: 'list-trader-trades' },
+  coin:  { page: 0, items: [], elId: 'list-trader-trades-coin' },
+  stock: { page: 0, items: [], elId: 'list-trader-trades-stock' },
+};
+
+function _traderTradesGoPage(key, delta) {
+  _traderTradesState[key].page += delta;
+  _renderTraderTradesList(key, _lastTraderTradesPriceMap);
+}
 
 // 금액(원) 표시는 전부 소수점 버림 — 코인 거래는 단가/손익에 소수점이 남는 경우가 있음
 const krw = v => Math.trunc(Number(v) || 0).toLocaleString();
@@ -155,6 +171,45 @@ function _netPnl(ticker, buyAmount, sellAmount) {
   return { pnl: net, pct: cost > 0 ? (net / cost * 100) : 0 };
 }
 
+// 그리드 매매 잡이 있는 티커는 계좌 체결 내역(trader_trades)을 FIFO로
+// 재구성하지 않고, 그리드 잡 자신의 완료 이력(trade_history)·보유 상태
+// (sell_waiting 격자)를 그대로 사용한다 — "행위 자체의 상태값"이 이미 정확한
+// 매수/매도 짝을 갖고 있는데, 계좌 전체 체결(다른 루트로 산 코인 등 그리드와
+// 무관한 매수/매도까지 섞임)을 다시 FIFO로 짝지으면 엉뚱한 매수-매도가
+// 짝지어져서 실제로는 매도가 끝난 그리드 사이클이 "보유중"으로 잘못 표시될
+// 수 있음(2026-08-24 사용자 리포트 — 다른 루트로 산 리플 때문에 XRP 전부
+// 보유중으로 보임). 그리드 잡이 없는 티커(초단타/기타)는 기존 FIFO 재구성을
+// 그대로 사용.
+function _gridDefinedPairs(ticker) {
+  const isCoin = _isCoinTicker(ticker);
+  const jobs = isCoin ? (_ctGridJobs || []) : (_agJobs || []);
+  const job = jobs.find(j => j.ticker === ticker);
+  if (!job) return null;
+
+  const pairs = [];
+  for (const h of (job.trade_history || [])) {
+    const qty = h.qty || 0;
+    if (qty <= 0) continue;
+    pairs.push({
+      ticker, name: job.name || ticker,
+      buy:  { date: h.date, time: h.buy_time || h.time, price: h.buy_price, qty, amount: Math.round(h.buy_price * qty) },
+      sell: { date: h.date, time: h.time, price: h.sell_price, qty, amount: Math.round(h.sell_price * qty) },
+      netPnl: h.profit, netPnlPct: h.buy_price > 0 ? (h.profit / (h.buy_price * qty) * 100) : null,
+    });
+  }
+  for (const g of (job.grids || [])) {
+    if (g.state !== 'sell_waiting') continue;
+    const qty = isCoin ? (g.coin_qty || 0) : (g.qty || 0);
+    if (qty <= 0) continue;
+    pairs.push({
+      ticker, name: job.name || ticker,
+      buy: { date: (job.created_at || '').slice(0, 10), time: g.buy_time || '', price: g.last_buy_price, qty, amount: Math.round(g.last_buy_price * qty) },
+      sell: null,
+    });
+  }
+  return pairs;
+}
+
 // 종목/거래시각/(매수→매도)금액/상태(보유중,종료)만 표기. 티커별로 매수를
 // 수량단위 lot으로 쌓아두고, 매도가 들어오면 앞 lot부터 수량만큼 잘라서 짝짓는다
 // (그리드처럼 여러 번 나눠 산 뒤 한 번에 몰아 파는 패턴에서도, 실제로 팔린
@@ -167,6 +222,8 @@ function _pairTrades(items) {
 
   const pairs = [];
   for (const ticker in byTicker) {
+    const gridPairs = _gridDefinedPairs(ticker);
+    if (gridPairs) { pairs.push(...gridPairs); continue; }
     // 거래시각이 분(minute) 단위까지만 기록돼서, 초단타처럼 매수·매도가 같은
     // 분 안에 체결되면 원래 배열 순서에 따라 매도가 매수보다 먼저 정렬될 수
     // 있음 — 그러면 아직 lots에 없는 매수를 팔려는 꼴이 돼서 그 매도가 조용히
@@ -217,104 +274,155 @@ function _pairTrades(items) {
 }
 
 // 보유중 항목의 미실현 손익 계산용 현재가 조회(주식: account_balance, 코인: /api/coin-account, 30초 캐시)
-let _dashCoinHoldings   = null;
+// 업비트 계좌 요약 카드(renderTraderSummary)도 같은 캐시를 공유해서 중복 호출을 피함.
+let _dashCoinAccount   = null;
 let _dashCoinHoldingsTs = 0;
 let _lastTraderAccountBalance = null;
-async function _fetchCoinHoldingsCached() {
+async function _fetchCoinAccountCached() {
   const now = Date.now();
-  if (_dashCoinHoldings && (now - _dashCoinHoldingsTs) < 30000) return _dashCoinHoldings;
+  if (_dashCoinAccount && (now - _dashCoinHoldingsTs) < 30000) return _dashCoinAccount;
   try {
     const r = await fetch('/api/coin-account');
     if (r.ok) {
-      const d = await r.json();
-      _dashCoinHoldings   = d.holdings || [];
+      _dashCoinAccount   = await r.json();
       _dashCoinHoldingsTs = now;
     }
   } catch (e) {
     console.warn('코인 잔고 조회 실패:', e.message);
   }
-  return _dashCoinHoldings || [];
+  return _dashCoinAccount;
+}
+async function _fetchCoinHoldingsCached() {
+  const d = await _fetchCoinAccountCached();
+  return d?.holdings || [];
 }
 
-async function renderTraderTrades(items, accountBalance) {
-  const el = document.getElementById('list-trader-trades');
-  if (!el) return;
+// 자동 주식매매 탭의 _atJobs/_agJobs/_asJobs(매도잡/그리드/스캘핑)와 코인
+// 자동매매 탭의 _ctGridJobs를 대시보드에서도 로드해서 atCalcDayProfit() 재사용
+// + _pairTrades()의 그리드 기준 짝짓기(_gridDefinedPairs)에 쓰기 위함 — 두 탭을
+// 아직 한 번도 안 열었으면 배열이 비어 있어 당일손익이 항상 0으로 나오거나
+// 그리드 티커의 거래내역이 계좌 체결 FIFO로 잘못 재구성되므로 여기서 미리 채워둠.
+let _atJobsLoadTs = 0;
+async function _ensureAutoTradeJobsLoaded() {
+  const now = Date.now();
+  if (now - _atJobsLoadTs < 30000) return;
+  _atJobsLoadTs = now;
+  if (typeof atLoadAll === 'function') {
+    try { await atLoadAll(); } catch (e) { console.warn('자동매매 데이터 로드 실패:', e.message); }
+  }
+  if (typeof ctLoadAll === 'function') {
+    try { await ctLoadAll(); } catch (e) { console.warn('코인 자동매매 데이터 로드 실패:', e.message); }
+  }
+}
 
-  if (accountBalance) _lastTraderAccountBalance = accountBalance;
-  else accountBalance = _lastTraderAccountBalance;
+function _tradePairHtml(p, priceMap) {
+  const isOpen = !p.sell;
+  const statusHtml = isOpen
+    ? `<span style="background:#dcfce7;color:#166534;border-radius:5px;padding:2px 8px;font-size:11px;font-weight:700">보유중</span>`
+    : `<span style="background:#f1f5f9;color:#64748b;border-radius:5px;padding:2px 8px;font-size:11px;font-weight:700">종료</span>`;
 
-  const pairs = _pairTrades(items);
+  // 왼쪽 세로선: 수익 초록 / 손실 빨강. 보유중이라도 현재가를 알면 평가손익 기준으로 색상 표시
+  let barColor = 'var(--border)';
+  let amountHtml;
+  if (isOpen) {
+    const curPrice = priceMap[p.ticker];
+    if (curPrice != null) {
+      const curAmount = Math.round(curPrice * p.buy.qty);
+      const { pnl } = _netPnl(p.ticker, p.buy.amount, curAmount);
+      const up  = pnl >= 0;
+      barColor  = up ? '#16a34a' : '#dc2626';
+      const pnlStr = `${up ? '+' : ''}${krw(pnl)}원`;
+      amountHtml = `${krw(p.buy.amount)}원 → <b style="color:${barColor}">${krw(curAmount)}원</b>
+        &nbsp;<span style="color:${barColor};font-size:11px;font-weight:700">(${pnlStr} 평가)</span>`;
+    } else {
+      amountHtml = `<b>${krw(p.buy.amount)}원</b>`;
+    }
+  } else {
+    const pnl = p.netPnl;
+    const up  = pnl >= 0;
+    barColor  = up ? '#16a34a' : '#dc2626';
+    const pnlStr = `${up ? '+' : ''}${krw(pnl)}원`;
+    amountHtml = `${krw(p.buy.amount)}원 → <b style="color:${barColor}">${krw(p.sell.amount)}원</b>
+      &nbsp;<span style="color:${barColor};font-size:11px;font-weight:700">(${pnlStr})</span>`;
+  }
+
+  return `
+  <div style="display:flex;align-items:center;justify-content:space-between;
+              padding:9px 0 9px 10px;border-bottom:1px solid var(--border);
+              border-left:3px solid ${barColor}">
+    <div style="flex:1;min-width:0">
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+        <span style="font-weight:700;font-size:13px">${p.name || p.ticker}</span>
+        <span style="font-size:11px;color:var(--muted)">${p.ticker}</span>
+        ${statusHtml}
+      </div>
+      <div style="font-size:12px;color:var(--fg)">${amountHtml}</div>
+    </div>
+    <div style="font-size:11px;color:var(--muted);white-space:nowrap;margin-left:10px;text-align:right">
+      ${p.buy.date}<br>${p.buy.time}
+    </div>
+  </div>`;
+}
+
+function _renderTraderTradesList(key, priceMap) {
+  const st = _traderTradesState[key];
+  const el = document.getElementById(st.elId);
+  if (!el) return;  // PC 전용/모바일 전용 목록은 반대 화면에서 DOM 자체가 없을 수 있음
+
+  const pairs = _pairTrades(st.items);
   if (!pairs.length) {
     el.innerHTML = '<div class="empty-msg">거래 내역이 없습니다</div>';
     return;
   }
 
-  // 보유중(미체결) 항목이 있으면 현재가를 조회해서 평가손익을 함께 표시
+  const totalPages = Math.max(1, Math.ceil(pairs.length / TRADER_TRADES_PAGE_SIZE));
+  st.page = Math.min(Math.max(st.page, 0), totalPages - 1);
+  const start  = st.page * TRADER_TRADES_PAGE_SIZE;
+  const toShow = pairs.slice(start, start + TRADER_TRADES_PAGE_SIZE);
+
+  const pageBtn = totalPages > 1 ? `
+    <div style="display:flex;align-items:center;justify-content:center;gap:12px;padding:8px 0">
+      <button onclick="_traderTradesGoPage('${key}',-1)" ${st.page === 0 ? 'disabled' : ''}
+        style="background:none;border:1px solid var(--border);border-radius:8px;padding:5px 14px;font-size:12px;color:var(--muted);cursor:pointer;opacity:${st.page === 0 ? '0.4' : '1'}">
+        ◀ 이전
+      </button>
+      <span style="font-size:12px;color:var(--muted)">${st.page + 1} / ${totalPages}페이지 (총 ${pairs.length}건)</span>
+      <button onclick="_traderTradesGoPage('${key}',1)" ${st.page >= totalPages - 1 ? 'disabled' : ''}
+        style="background:none;border:1px solid var(--border);border-radius:8px;padding:5px 14px;font-size:12px;color:var(--muted);cursor:pointer;opacity:${st.page >= totalPages - 1 ? '0.4' : '1'}">
+        다음 ▶
+      </button>
+    </div>` : '';
+
+  el.innerHTML = toShow.map(p => _tradePairHtml(p, priceMap)).join('') + pageBtn;
+}
+
+let _lastTraderTradesPriceMap = {};
+
+async function renderTraderTrades(items, accountBalance) {
+  _traderTradesState.all.items   = items;
+  _traderTradesState.coin.items  = items.filter(t => _isCoinTicker(t.ticker));
+  _traderTradesState.stock.items = items.filter(t => !_isCoinTicker(t.ticker));
+
+  if (accountBalance) _lastTraderAccountBalance = accountBalance;
+  else accountBalance = _lastTraderAccountBalance;
+
+  // _pairTrades()가 그리드 티커는 _ctGridJobs/_agJobs를 참고하므로, 렌더 전에
+  // 반드시 로드되어 있어야 함(자체 30초 캐시라 매번 새로 불러오지 않음).
+  await _ensureAutoTradeJobsLoaded();
+
+  // 보유중(미체결) 항목이 있으면 현재가를 조회해서 평가손익을 함께 표시 — 세 목록이
+  // 공유하는 계산이라 한 번만 수행(코인/주식 나눠서 각자 조회하면 API 호출이 불필요하게 늘어남)
+  const pairs = _pairTrades(items);
   let priceMap = {};
   if (pairs.some(p => !p.sell)) {
     for (const h of (accountBalance?.holdings || [])) priceMap[h.ticker] = h.eval_price;
     for (const h of await _fetchCoinHoldingsCached()) priceMap[h.ticker] = h.cur_price;
   }
+  _lastTraderTradesPriceMap = priceMap;
 
-  const toShow  = _traderTradesExpanded ? pairs.slice(0, 50) : pairs.slice(0, 10);
-  const hasMore = pairs.length > 10;
-
-  const moreBtn = hasMore ? `
-    <div style="text-align:center;padding:6px 0">
-      <button onclick="_traderTradesExpanded=!_traderTradesExpanded;renderTraderTrades(${JSON.stringify(items).replace(/</g,'\\u003c')})"
-        style="background:none;border:1px solid var(--border);border-radius:8px;padding:5px 18px;font-size:12px;color:var(--muted);cursor:pointer">
-        ${_traderTradesExpanded ? '▲ 접기' : `▼ 더보기 (${pairs.length}건)`}
-      </button>
-    </div>` : '';
-
-  el.innerHTML = toShow.map(p => {
-    const isOpen = !p.sell;
-    const statusHtml = isOpen
-      ? `<span style="background:#dcfce7;color:#166534;border-radius:5px;padding:2px 8px;font-size:11px;font-weight:700">보유중</span>`
-      : `<span style="background:#f1f5f9;color:#64748b;border-radius:5px;padding:2px 8px;font-size:11px;font-weight:700">종료</span>`;
-
-    // 왼쪽 세로선: 수익 초록 / 손실 빨강. 보유중이라도 현재가를 알면 평가손익 기준으로 색상 표시
-    let barColor = 'var(--border)';
-    let amountHtml;
-    if (isOpen) {
-      const curPrice = priceMap[p.ticker];
-      if (curPrice != null) {
-        const curAmount = Math.round(curPrice * p.buy.qty);
-        const { pnl } = _netPnl(p.ticker, p.buy.amount, curAmount);
-        const up  = pnl >= 0;
-        barColor  = up ? '#16a34a' : '#dc2626';
-        const pnlStr = `${up ? '+' : ''}${krw(pnl)}원`;
-        amountHtml = `${krw(p.buy.amount)}원 → <b style="color:${barColor}">${krw(curAmount)}원</b>
-          &nbsp;<span style="color:${barColor};font-size:11px;font-weight:700">(${pnlStr} 평가)</span>`;
-      } else {
-        amountHtml = `<b>${krw(p.buy.amount)}원</b>`;
-      }
-    } else {
-      const pnl = p.netPnl;
-      const up  = pnl >= 0;
-      barColor  = up ? '#16a34a' : '#dc2626';
-      const pnlStr = `${up ? '+' : ''}${krw(pnl)}원`;
-      amountHtml = `${krw(p.buy.amount)}원 → <b style="color:${barColor}">${krw(p.sell.amount)}원</b>
-        &nbsp;<span style="color:${barColor};font-size:11px;font-weight:700">(${pnlStr})</span>`;
-    }
-
-    return `
-    <div style="display:flex;align-items:center;justify-content:space-between;
-                padding:9px 0 9px 10px;border-bottom:1px solid var(--border);
-                border-left:3px solid ${barColor}">
-      <div style="flex:1;min-width:0">
-        <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
-          <span style="font-weight:700;font-size:13px">${p.name || p.ticker}</span>
-          <span style="font-size:11px;color:var(--muted)">${p.ticker}</span>
-          ${statusHtml}
-        </div>
-        <div style="font-size:12px;color:var(--fg)">${amountHtml}</div>
-      </div>
-      <div style="font-size:11px;color:var(--muted);white-space:nowrap;margin-left:10px;text-align:right">
-        ${p.buy.date}<br>${p.buy.time}
-      </div>
-    </div>`;
-  }).join('') + moreBtn;
+  _renderTraderTradesList('all', priceMap);
+  _renderTraderTradesList('coin', priceMap);
+  _renderTraderTradesList('stock', priceMap);
 }
 
 // ── 공모주 구글 캘린더 연동 ───────────────────────────────
@@ -537,9 +645,24 @@ function _renderIpoList() {
 }
 
 // ── 매매 현황 (stock_trader 거래 내역 + 계좌 잔액) ────────
-function renderTraderSummary(trades, account) {
+const TRADER_STATS_PERIODS = [
+  { days: 1,   label: '1일' },
+  { days: 7,   label: '7일' },
+  { days: 30,  label: '30일' },
+  { days: 365, label: '1년' },
+];
+let _traderStatsPeriodDays  = 1;
+let _lastTraderSummaryTrades = [];
+
+function _setTraderStatsPeriod(days) {
+  _traderStatsPeriodDays = days;
+  renderTraderSummary(_lastTraderSummaryTrades, _lastTraderAccountBalance);
+}
+
+async function renderTraderSummary(trades, account) {
   const wrap = document.getElementById('trader-summary-wrap');
   if (!wrap) return;
+  _lastTraderSummaryTrades = trades;
 
   const c  = v => v >= 0 ? '#16a34a' : '#dc2626';
   const sg = v => v >= 0 ? '+' : '';
@@ -549,8 +672,20 @@ function renderTraderSummary(trades, account) {
   if (account) {
     const updLabel = account.updated_at
       ? `<span style="font-size:11px;color:var(--muted);margin-left:6px">${account.updated_at} 기준</span>` : '';
-    const dayPnlColor = (account.day_pnl || 0) >= 0 ? '#16a34a' : '#dc2626';
-    const dayRetColor = (account.day_ret || 0) >= 0 ? '#16a34a' : '#dc2626';
+
+    // 당일 손익은 tab-autotrade.js "일별 손익 현황"과 동일한 계산식(atCalcDayProfit —
+    // 매도잡+그리드+스캘핑 실현손익 합계)을 그대로 사용해서 자동 주식매매 탭에
+    // 표시되는 숫자와 항상 일치하도록 함. 계산 대상 날짜는 "오늘"이 아니라
+    // account.updated_at의 날짜 — job_balance.py가 평일 08~20시에만 도는 구조라
+    // 주말/공휴일엔 updated_at이 마지막 거래일에 멈춰 있고, 그 날짜를 그대로 쓰면
+    // "거래 없는 날인데 0원"으로 오해되는 대신 마지막 거래일 손익이 자연스럽게 표시됨.
+    await _ensureAutoTradeJobsLoaded();
+    const dayDateStr = (account.updated_at || '').slice(0, 10) || new Date().toISOString().slice(0, 10);
+    const dayData = (typeof atCalcDayProfit === 'function') ? atCalcDayProfit(dayDateStr) : null;
+    const dayPnl  = dayData ? dayData.netProfit : (account.day_pnl || 0);
+    const dayRet  = account.total_eval > 0 ? (dayPnl / account.total_eval * 100) : 0;
+    const dayPnlColor = dayPnl >= 0 ? '#16a34a' : '#dc2626';
+    const dayRetColor = dayRet >= 0 ? '#16a34a' : '#dc2626';
 
     // 계좌 요약 카드
     accountHtml += `
@@ -568,11 +703,11 @@ function renderTraderSummary(trades, account) {
         </div>
         <div style="background:var(--surface2,#1e2d45);border-radius:10px;padding:12px;text-align:center">
           <div style="font-size:11px;color:var(--muted);margin-bottom:4px">당일 손익</div>
-          <div style="font-size:16px;font-weight:700;color:${dayPnlColor}">${sg(account.day_pnl)}${krw(account.day_pnl)}<span style="font-size:11px">원</span></div>
+          <div style="font-size:16px;font-weight:700;color:${dayPnlColor}">${sg(dayPnl)}${krw(dayPnl)}<span style="font-size:11px">원</span></div>
         </div>
         <div style="background:var(--surface2,#1e2d45);border-radius:10px;padding:12px;text-align:center">
           <div style="font-size:11px;color:var(--muted);margin-bottom:4px">당일 수익률</div>
-          <div style="font-size:20px;font-weight:700;color:${dayRetColor}">${sg(account.day_ret||0)}${account.day_ret ?? '—'}<span style="font-size:13px;color:var(--muted)">%</span></div>
+          <div style="font-size:20px;font-weight:700;color:${dayRetColor}">${sg(dayRet)}${dayRet.toFixed(2)}<span style="font-size:13px;color:var(--muted)">%</span></div>
         </div>
       </div>`;
 
@@ -583,7 +718,62 @@ function renderTraderSummary(trades, account) {
           📌 보유 ${account.holdings.length}종목 — 상세는 🤖 자동 주식매매 탭에서 확인
         </div>`;
     }
-    accountHtml += `<hr style="border:none;border-top:1px solid var(--border);margin:0 0 16px">`;
+  }
+
+  // ── 업비트 계좌 섹션 ────────────────────────────────────
+  // 당일 손익은 tab-cointrade.js "일별 손익 현황"과 동일하게 /api/coin-today의
+  // netProfit(당일 체결된 매도 전체의 실현손익 합계 — 스캘핑/그리드/일반매도
+  // 통합)을 그대로 사용. KIS처럼 보유종목 평가변동까지 섞진 않지만, 코인은
+  // bfdy_close_diff 같은 전일 종가 기준값이 따로 없어 실현손익만으로 표시.
+  const [coinAccount, coinToday] = await Promise.all([
+    _fetchCoinAccountCached(),
+    ctFetchDay(null).catch(() => null),
+  ]);
+  let coinHtml = '';
+  if (coinAccount) {
+    const holdings     = coinAccount.holdings || [];
+    const holdingsEval = holdings.reduce((s, h) => s + (h.eval_amount || 0), 0);
+    const totalEval     = (coinAccount.krw || 0) + holdingsEval;
+    const dayPnl        = coinToday?.netProfit || 0;
+    const dayRet        = totalEval > 0 ? (dayPnl / totalEval * 100) : 0;
+    const dayPnlColor   = dayPnl >= 0 ? '#16a34a' : '#dc2626';
+    const dayRetColor   = dayRet >= 0 ? '#16a34a' : '#dc2626';
+    const updLabel      = coinAccount.updated_at
+      ? `<span style="font-size:11px;color:var(--muted);margin-left:6px">${coinAccount.updated_at} 기준</span>` : '';
+
+    coinHtml += `
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:10px">
+        <span style="font-size:12px;font-weight:700">🪙 업비트 계좌</span>${updLabel}
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:16px">
+        <div style="background:var(--surface2,#1e2d45);border-radius:10px;padding:12px;text-align:center">
+          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">총 평가금액</div>
+          <div style="font-size:16px;font-weight:700;color:#ffffff">${krw(totalEval)}<span style="font-size:11px;color:var(--muted)">원</span></div>
+        </div>
+        <div style="background:var(--surface2,#1e2d45);border-radius:10px;padding:12px;text-align:center">
+          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">예수금 (현금)</div>
+          <div style="font-size:16px;font-weight:700;color:#ffffff">${krw(coinAccount.krw)}<span style="font-size:11px;color:var(--muted)">원</span></div>
+        </div>
+        <div style="background:var(--surface2,#1e2d45);border-radius:10px;padding:12px;text-align:center">
+          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">당일 손익</div>
+          <div style="font-size:16px;font-weight:700;color:${dayPnlColor}">${sg(dayPnl)}${krw(dayPnl)}<span style="font-size:11px">원</span></div>
+        </div>
+        <div style="background:var(--surface2,#1e2d45);border-radius:10px;padding:12px;text-align:center">
+          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">당일 수익률</div>
+          <div style="font-size:20px;font-weight:700;color:${dayRetColor}">${sg(dayRet)}${dayRet.toFixed(2)}<span style="font-size:13px;color:var(--muted)">%</span></div>
+        </div>
+      </div>`;
+
+    if (holdings.length) {
+      coinHtml += `
+        <div style="font-size:12px;color:var(--muted);margin-bottom:16px">
+          📌 보유 ${holdings.length}종목 — 상세는 🪙 자동코인매매 탭에서 확인
+        </div>`;
+    }
+  }
+
+  if (accountHtml || coinHtml) {
+    accountHtml += coinHtml + `<hr style="border:none;border-top:1px solid var(--border);margin:0 0 16px">`;
   }
 
   if (!trades.length) {
@@ -592,17 +782,42 @@ function renderTraderSummary(trades, account) {
   }
 
   // ── 종결된 거래 손익 집계 (매수→매도 lot 매칭 + 수수료 포함 손익 기준) ──
-  const closed    = _pairTrades(trades).filter(p => p.sell);
+  // 기간 선택(1/7/30/365일, KST 캘린더 기준, 오늘 포함) — 시장별로 저장 상한이
+  // 같은 100건이어도 코인은 초단타라 최근 며칠 치만 남고 주식은 몇 주~몇 달
+  // 치가 남아서, 기간 필터 없이 그냥 합치면 두 시장의 "누적" 기간이 서로 달라
+  // 비교가 안 되는 문제가 있었음(2026-08-15 지적으로 발견) — 버튼으로 기간을
+  // 명시적으로 고정해서 항상 같은 창으로 비교되게 함.
+  const kstNowStats    = new Date(Date.now() + 9 * 3600000);
+  const cutoffDateStats = new Date(kstNowStats); cutoffDateStats.setUTCDate(cutoffDateStats.getUTCDate() - (_traderStatsPeriodDays - 1));
+  const cutoffStrStats  = cutoffDateStats.toISOString().slice(0, 10);
+
+  const closed    = _pairTrades(trades).filter(p => p.sell && p.sell.date >= cutoffStrStats);
   const totalPnl  = closed.reduce((s, p) => s + p.netPnl, 0);
   const wins      = closed.filter(p => p.netPnl > 0).length;
   const winRate   = closed.length ? Math.round(wins / closed.length * 100) : null;
-  const avgPnlPct = closed.length
-    ? (closed.reduce((s, p) => s + p.netPnlPct, 0) / closed.length).toFixed(2)
+  // 거래별 %의 단순평균은 금액을 무시해서, 소액 거래의 큰 %손실 몇 건이 대형 거래의
+  // 이익을 압도해 버려 "누적 실현손익은 플러스인데 평균 수익률은 마이너스"로 서로
+  // 모순돼 보이는 경우가 있었음(2026-08-15 지적으로 발견). 금액가중 평균(총손익÷총매수금액)으로
+  // 바꿔서 항상 누적 실현손익과 부호가 일치하도록 함.
+  const totalBuyAmt = closed.reduce((s, p) => s + p.buy.amount, 0);
+  const avgPnlPct = closed.length && totalBuyAmt > 0
+    ? (totalPnl / totalBuyAmt * 100).toFixed(2)
     : null;
+
+  const periodBtns = TRADER_STATS_PERIODS.map(p => `
+    <button onclick="_setTraderStatsPeriod(${p.days})"
+      style="background:${p.days === _traderStatsPeriodDays ? 'var(--primary)' : 'none'};
+             color:${p.days === _traderStatsPeriodDays ? '#fff' : 'var(--muted)'};
+             border:1px solid ${p.days === _traderStatsPeriodDays ? 'var(--primary)' : 'var(--border)'};
+             border-radius:6px;padding:3px 10px;font-size:11px;cursor:pointer">${p.label}</button>
+  `).join('');
 
   // ── 거래 통계 카드 ─────────────────────────────────────
   const statsHtml = `
-    <div style="font-size:12px;font-weight:700;color:var(--fg);margin-bottom:8px">📊 시스템 트레이딩 통계</div>
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:8px">
+      <div style="font-size:12px;font-weight:700;color:var(--fg)">📊 시스템 트레이딩 통계 (최근 ${TRADER_STATS_PERIODS.find(p => p.days === _traderStatsPeriodDays)?.label ?? _traderStatsPeriodDays + '일'})</div>
+      <div style="display:flex;gap:6px">${periodBtns}</div>
+    </div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:16px">
       <div style="background:var(--surface2,#1e2d45);border-radius:10px;padding:12px;text-align:center">
         <div style="font-size:11px;color:var(--muted);margin-bottom:4px">총 거래</div>

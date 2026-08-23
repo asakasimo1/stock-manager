@@ -3,14 +3,22 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>TradeLens — AI Trading Behavior Analyzer</title>
+<title>Stock-manager</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect x='8' y='45' width='22' height='47' rx='6' fill='%233b82f6'/><rect x='39' y='28' width='22' height='64' rx='6' fill='%238b5cf6'/><rect x='70' y='8' width='22' height='84' rx='6' fill='%23ec4899'/></svg>">
 <link href="https://fonts.googleapis.com/css2?family=Pretendard:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="css/main.css">
 </head>
 <body>
 
 <header>
-  <div class="logo">🔐 Nex<em>Vault</em></div>
+  <div class="logo" onclick="switchTab('dashboard')" style="cursor:pointer;display:flex;align-items:center;gap:8px" title="대시보드로 이동">
+    <svg width="22" height="22" viewBox="0 0 100 100" style="flex-shrink:0">
+      <rect x="8" y="45" width="22" height="47" rx="6" fill="#3b82f6"/>
+      <rect x="39" y="28" width="22" height="64" rx="6" fill="#8b5cf6"/>
+      <rect x="70" y="8" width="22" height="84" rx="6" fill="#ec4899"/>
+    </svg>
+    <span>Stock-<em>manager</em></span>
+  </div>
   <div class="header-spacer"></div>
   <button class="settings-btn" onclick="openSettingsWithAuth()" title="설정">⚙️</button>
 </header>
@@ -753,11 +761,27 @@
     </div>
   </div>
 
-  <!-- 시스템 트레이딩 내역 -->
-  <div class="card">
+  <!-- 시스템 트레이딩 내역 (모바일: 코인+주식 통합 한 목록) -->
+  <div class="card mobile-only">
     <div class="card-title">🤖 시스템 트레이딩 내역</div>
     <div class="result-list" id="list-trader-trades">
       <div class="empty-msg">로딩 중...</div>
+    </div>
+  </div>
+
+  <!-- 시스템 트레이딩 내역 (PC: 코인/주식 분리) -->
+  <div class="dash-full pc-only trades-split-grid">
+    <div class="card">
+      <div class="card-title">🪙 코인 거래내역</div>
+      <div class="result-list" id="list-trader-trades-coin">
+        <div class="empty-msg">로딩 중...</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">📈 주식 거래내역</div>
+      <div class="result-list" id="list-trader-trades-stock">
+        <div class="empty-msg">로딩 중...</div>
+      </div>
     </div>
   </div>
 
@@ -835,8 +859,8 @@
   </div>
   <div id="at-account" style="margin-bottom:20px"></div>
 
-  <!-- 최근 3일 매매 수익 현황 -->
-  <div style="font-size:12px;font-weight:700;color:var(--text);margin-bottom:10px">📊 일별 수익 현황</div>
+  <!-- 최근 3일 매매 손익 현황 -->
+  <div style="font-size:12px;font-weight:700;color:var(--text);margin-bottom:10px">📊 일별 손익 현황</div>
   <div id="at-daily-wrap" style="display:flex;flex-direction:column;gap:10px;margin-bottom:20px">
     <!-- JS(atLoadToday)가 채움 -->
   </div>
@@ -1006,8 +1030,8 @@
   </div>
   <div id="ct-account" style="margin-bottom:20px"></div>
 
-  <!-- 최근 3일 매매 수익 현황 -->
-  <div style="font-size:12px;font-weight:700;color:var(--text);margin-bottom:10px">📊 일별 수익 현황</div>
+  <!-- 최근 3일 매매 손익 현황 -->
+  <div style="font-size:12px;font-weight:700;color:var(--text);margin-bottom:10px">📊 일별 손익 현황</div>
   <div id="ct-daily-wrap" style="display:flex;flex-direction:column;gap:10px;margin-bottom:20px">
     <!-- JS(ctLoadToday)가 채움 -->
   </div>
@@ -1060,7 +1084,7 @@
       </div>
       <div>
         <div style="font-size:10px;color:var(--muted);margin-bottom:3px">범위이탈 재설정 (분, 선택)</div>
-        <input id="cg-reinit" type="number" placeholder="미입력 시 알림만" min="10" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:13px;box-sizing:border-box">
+        <input id="cg-reinit" type="number" placeholder="미입력 시 알림만" min="5" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:13px;box-sizing:border-box">
       </div>
     </div>
     <div id="cg-preview" style="font-size:11px;color:var(--muted);background:var(--bg);border-radius:6px;padding:8px;margin-bottom:10px"></div>

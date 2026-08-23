@@ -76,6 +76,24 @@ async function atRefreshPrices() {
       }
     } catch (_) {}
   }
+
+  // 그리드 잡 헤더의 현재가 배지(시인성용 — 매수/매도 대기 기준가와 눈으로 비교하기 위함)
+  const activeGrids = (Array.isArray(_agJobs) ? _agJobs : []).filter(j => ['init','active','reinit','stopping'].includes(j.status));
+  let gridPriceUpdated = false;
+  for (const job of activeGrids) {
+    try {
+      const r = await fetch(`/api/stock?ticker=${job.ticker}`);
+      const d = await r.json();
+      if (!d.price) continue;
+      const priceText = `${d.price.toLocaleString()}원 (${d.chgPct >= 0 ? '+' : ''}${d.chgPct}%)`;
+      _ctPriceCache[job.ticker] = { ..._ctPriceCache[job.ticker], priceText, cur: d.price };
+      const curEl = document.getElementById(`ag-grid-curprice-${job.ticker}`);
+      if (curEl) curEl.textContent = `현재가 ${priceText}`;
+      gridPriceUpdated = true;
+    } catch (_) {}
+  }
+  // 이탈 배지의 경과시간을 갱신하려면 재렌더 필요 — 잡당 한 번이 아니라 한 번만
+  if (gridPriceUpdated) agRenderJobs();
 }
 
 async function atLoadAll() {
@@ -1117,7 +1135,7 @@ function ctCheckDaemonStatus() {
 // ═══════════════════════════════════════════════════════════════
 let _agJobs = [];
 let _agAcTimer = null;
-let _asJobs = [];  // 초단타(스캘핑) 잡 — 일별 수익현황 합산용
+let _asJobs = [];  // 초단타(스캘핑) 잡 — 일별 손익현황 합산용
 
 // ── 종목 자동완성 ──────────────────────────────────────────────
 // 2026-08-12: 여기만 존재하지 않는 전역 _stockList를 참조하고 있어서(다른
@@ -1215,6 +1233,63 @@ async function agRegister() {
   }
 }
 
+// ── 편집 (하한/상한·간격%·격자당 금액·이탈재설정) ──────────────
+// stock-grid 잡은 id 필드가 없어(coin-grid와 달리) ticker로 식별 —
+// PATCH도 ticker 쿼리로 매칭한다(api/coin.js handleStockGridJobs 참고).
+let _agEditingTicker = null;
+
+function agToggleGridEdit(ticker) {
+  _agEditingTicker = (_agEditingTicker === ticker) ? null : ticker;
+  agRenderJobs();
+}
+
+async function agSaveGridEdit(ticker) {
+  const job = (_agJobs || []).find(j => j.ticker === ticker && ['init','active','reinit'].includes(j.status));
+  if (!job) return;
+
+  const lower   = +document.getElementById(`ag-edit-lower-${ticker}`)?.value || 0;
+  const upper   = +document.getElementById(`ag-edit-upper-${ticker}`)?.value || 0;
+  const pctV    = document.getElementById(`ag-edit-pct-${ticker}`)?.value;
+  const krwV    = document.getElementById(`ag-edit-krw-${ticker}`)?.value;
+  const reinitV = document.getElementById(`ag-edit-reinit-${ticker}`)?.value;
+  const reinit  = reinitV !== '' ? +reinitV : null;
+
+  if (lower && upper && lower >= upper) { alert('하한가는 상한가보다 커야 합니다'); return; }
+  if (pctV !== '' && +pctV < 0.5) { alert('격자 간격은 0.5% 이상이어야 합니다'); return; }
+  if (krwV !== '' && +krwV < 10000) { alert('격자당 금액은 1만원 이상이어야 합니다'); return; }
+  if (reinit !== null && reinit > 0 && reinit < 5) { alert('이탈 자동재설정은 5분 이상이어야 합니다'); return; }
+
+  const patch = {};
+  const rangeChanged = lower && upper && (lower !== +job.lower_price || upper !== +job.upper_price);
+  if (lower && upper) {
+    patch.lower_price = lower;
+    patch.upper_price = upper;
+    if (rangeChanged && ['active', 'init'].includes(job.status)) patch.status = 'reinit';
+  }
+  // 간격%·격자당 금액은 하한/상한과 달리 즉시 재초기화를 트리거하지 않음 —
+  // job_stock_grid.py가 매 사이클 job에서 grid_pct/krw_per_grid를 그대로
+  // 읽어 쓰므로 이미 걸린 주문은 그대로 두고 이후 체결부터 새 값이 적용됨
+  // (코인 그리드와 동일한 방식, tab-cointrade.js ctSaveGridEdit 참고).
+  if (pctV !== '') patch.grid_pct = +pctV;
+  if (krwV !== '') patch.krw_per_grid = +krwV;
+  if (reinitV !== '') patch.auto_reinit_minutes = (reinit >= 5) ? reinit : null;
+
+  try {
+    const r = await fetch(`/api/stock-grid?ticker=${encodeURIComponent(ticker)}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
+    });
+    const d = await r.json();
+    if (r.ok && !d.error) {
+      _agEditingTicker = null;
+      await atLoadAll();
+    } else {
+      alert('저장 실패: ' + (d.error || ''));
+    }
+  } catch (e) {
+    alert('오류: ' + e.message);
+  }
+}
+
 // ── 중단 ──────────────────────────────────────────────────────
 async function agStop(id) {
   if (!confirm('그리드를 중단하고 모든 미체결 주문을 취소하시겠습니까?')) return;
@@ -1240,12 +1315,35 @@ function agRenderJobs() {
 
   const renderJob = (job) => {
     const grids = job.grids || [];
-    const buyCnt  = grids.filter(g=>g.state==='buy_waiting').length;
-    const sellCnt = grids.filter(g=>g.state==='sell_waiting').length;
+    const buyWaitGrids  = grids.filter(g=>g.state==='buy_waiting');
+    const sellWaitGrids = grids.filter(g=>g.state==='sell_waiting');
+    const buyCnt  = buyWaitGrids.length;
+    const sellCnt = sellWaitGrids.length;
     const idleCnt = grids.filter(g=>g.state==='idle').length;
     const pnl = job.total_profit_krw || 0;
     const pnlColor = pnl >= 0 ? 'var(--green)' : 'var(--red)';
     const canStop = ['init','active','reinit'].includes(job.status);
+
+    // 범위 이탈 중이면 이탈 시각·경과·자동재설정까지 남은 시간 표시.
+    // canStop(=활성 상태) 잡만 대상 — 중단된 잡은 백엔드가 더 이상 이탈을
+    // 재평가하지 않아 out_of_range_since가 몇 주 전 값으로 그대로 남아있을
+    // 수 있음(실측: 빅텍 그리드가 2026-07-13 이탈 기록을 그대로 갖고 있었음)
+    // — 그걸 그대로 보여주면 이미 안 도는 잡에 "이탈 중" 경고가 잘못 뜬다.
+    const escInfo = canStop ? _gridEscapeInfo(job) : null;
+    let escapeHtml = '';
+    if (escInfo) {
+      const curPrice = _ctPriceCache[job.ticker]?.cur;
+      const dir = curPrice != null
+        ? (curPrice < job.lower_price ? '하단 이탈 🔻' : curPrice > job.upper_price ? '상단 돌파 🔺' : '범위 이탈')
+        : '범위 이탈';
+      const remain = escInfo.autoMin ? escInfo.waitMin - escInfo.elapsedMin : null;
+      const reinitText = escInfo.autoMin
+        ? (remain > 0 ? `재설정까지 ${remain}분` : '재설정 대기중')
+        : '자동재설정 미설정(수동)';
+      escapeHtml = `<div style="font-size:11px;color:#ef4444;font-weight:600;margin-top:4px">
+        ⚠️ ${dir} — ${escInfo.timeLabel}부터 · ${escInfo.elapsedMin}분 경과 · ${reinitText}
+      </div>`;
+    }
 
     return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
@@ -1253,29 +1351,79 @@ function agRenderJobs() {
           <span style="font-weight:700;font-size:13px">${job.name || job.ticker}</span>
           <span style="font-size:11px;color:var(--muted);margin-left:6px">${job.ticker}</span>
           <span style="font-size:11px;color:${statusColor[job.status]};margin-left:6px;font-weight:600">${statusLabel[job.status]||job.status}</span>
+          <span id="ag-grid-curprice-${job.ticker}" style="color:#8b5cf6;font-size:11px;font-weight:700;margin-left:8px">${_ctPriceCache[job.ticker]?.priceText ? `현재가 ${_ctPriceCache[job.ticker].priceText}` : '현재가 조회중...'}</span>
         </div>
-        ${canStop ? `<button onclick="agStop('${job.id}')" style="padding:3px 10px;background:none;border:1px solid var(--red);border-radius:6px;font-size:11px;color:var(--red);cursor:pointer">중단</button>` : ''}
+        <div style="display:flex;gap:6px">
+          ${canStop ? `<button onclick="agToggleGridEdit('${job.ticker}')" style="padding:3px 10px;border:1px solid var(--border);border-radius:6px;background:none;font-size:11px;color:var(--muted);cursor:pointer">${_agEditingTicker === job.ticker ? '닫기' : '편집'}</button>` : ''}
+          ${canStop ? `<button onclick="agStop('${job.id}')" style="padding:3px 10px;background:none;border:1px solid var(--red);border-radius:6px;font-size:11px;color:var(--red);cursor:pointer">중단</button>` : ''}
+        </div>
       </div>
+      ${escapeHtml}
       <div style="font-size:11px;color:var(--muted);display:flex;gap:12px;flex-wrap:wrap">
         <span>범위 ${(job.lower_price||0).toLocaleString()}~${(job.upper_price||0).toLocaleString()}원</span>
         <span>간격 ${job.grid_pct||1.5}%</span>
         <span>격자당 ${(job.krw_per_grid||0).toLocaleString()}원</span>
+        <span style="color:var(--primary)">이탈재설정 ${job.auto_reinit_minutes || GRID_STOP_LOSS_DEFAULT_WAIT_MIN}분${job.auto_reinit_minutes ? '' : '(기본)'}</span>
       </div>
+      ${_agEditingTicker === job.ticker ? `
+      <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr;gap:8px;margin-bottom:8px">
+          <div>
+            <div style="font-size:10px;color:var(--muted);margin-bottom:3px">하한가 (원)</div>
+            <input id="ag-edit-lower-${job.ticker}" type="number" value="${job.lower_price}"
+              style="width:100%;padding:5px 7px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:12px;box-sizing:border-box">
+          </div>
+          <div>
+            <div style="font-size:10px;color:var(--muted);margin-bottom:3px">상한가 (원)</div>
+            <input id="ag-edit-upper-${job.ticker}" type="number" value="${job.upper_price}"
+              style="width:100%;padding:5px 7px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:12px;box-sizing:border-box">
+          </div>
+          <div>
+            <div style="font-size:10px;color:var(--muted);margin-bottom:3px">간격 (%)</div>
+            <input id="ag-edit-pct-${job.ticker}" type="number" step="0.1" value="${job.grid_pct || 1.5}"
+              style="width:100%;padding:5px 7px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:12px;box-sizing:border-box">
+          </div>
+          <div>
+            <div style="font-size:10px;color:var(--muted);margin-bottom:3px">격자당 (원)</div>
+            <input id="ag-edit-krw-${job.ticker}" type="number" step="10000" value="${job.krw_per_grid || 0}"
+              style="width:100%;padding:5px 7px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:12px;box-sizing:border-box">
+          </div>
+          <div>
+            <div style="font-size:10px;color:var(--muted);margin-bottom:3px">이탈재설정 (분)</div>
+            <input id="ag-edit-reinit-${job.ticker}" type="number" min="5" placeholder="미설정"
+              value="${job.auto_reinit_minutes || ''}"
+              style="width:100%;padding:5px 7px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:12px;box-sizing:border-box">
+          </div>
+        </div>
+        <div style="font-size:10px;color:var(--muted);margin-bottom:8px">* 하한/상한 변경 시 기존 주문 전부 취소 후 재초기화됩니다. 간격/격자당 금액은 이미 걸린 주문엔 영향 없이 다음 체결부터 적용됩니다.</div>
+        <div style="display:flex;gap:8px">
+          <button onclick="agSaveGridEdit('${job.ticker}')"
+            style="flex:1;padding:6px;background:var(--primary);color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">저장</button>
+          <button onclick="agToggleGridEdit('${job.ticker}')"
+            style="padding:6px 14px;background:none;border:1px solid var(--border);border-radius:6px;font-size:12px;color:var(--muted);cursor:pointer">취소</button>
+        </div>
+      </div>` : ''}
       ${grids.length ? `<div style="font-size:11px;color:var(--text);margin-top:6px;display:flex;gap:12px;flex-wrap:wrap">
         <span style="color:var(--primary)">매수대기 ${buyCnt}개</span>
-        <span style="color:var(--orange)">매도대기 ${sellCnt}개</span>
+        <span style="color:var(--state-sell)">매도대기 ${sellCnt}개</span>
         <span style="color:var(--muted)">대기 ${idleCnt}개</span>
         <span style="color:${pnlColor};font-weight:600">누적수익 ${pnl>=0?'+':''}${Math.round(pnl).toLocaleString()}원 (${job.trade_count||0}회)</span>
-      </div>` : ''}
+      </div>${canStop ? `<div id="ag-grid-chart-${job.ticker}" style="margin-top:8px"></div>` : ''}` : ''}
     </div>`;
   };
 
   el.innerHTML = active.map(renderJob).join('') +
     (stopped.length ? `<div style="font-size:12px;color:var(--muted);margin-top:4px">종료된 잡</div>${stopped.map(renderJob).join('')}` : '');
+
+  // 차트는 DOM에 컨테이너가 붙은 다음에만 그릴 수 있어 별도 루프로 처리
+  // (fire-and-forget) — 중단된 잡은 제외(불필요한 KIS 분봉 호출 방지).
+  for (const job of active) {
+    renderGridChart(`ag-grid-chart-${job.ticker}`, job, _ctPriceCache[job.ticker]?.cur, 'qty', job.ticker, false);
+  }
 }
 
 
-// ── 자동 주식매매 일별 수익 현황 ──────────────────────────────────
+// ── 자동 주식매매 일별 손익 현황 ──────────────────────────────────
 
 function atCalcDayProfit(dateStr) {
   const BUY_FEE  = 0.00015;  // 매수 수수료 0.015%
