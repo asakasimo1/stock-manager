@@ -1025,7 +1025,7 @@ function ctRenderGridJobs() {
         &nbsp;|&nbsp; 격자당: ${Number(j.krw_per_grid).toLocaleString()}원
         &nbsp;|&nbsp; <span style="color:var(--primary)">이탈재설정 ${j.auto_reinit_minutes || GRID_STOP_LOSS_DEFAULT_WAIT_MIN}분${j.auto_reinit_minutes ? '' : '(기본)'}</span>
       </div>
-      <div id="ct-grid-chart-${j.id}" style="height:220px;margin-bottom:8px"></div>
+      <div id="ct-grid-chart-${j.id}" style="margin-bottom:8px"></div>
       <div style="display:flex;justify-content:space-between;font-size:12px">
         <div style="color:var(--muted)">
           매수대기 <b style="color:var(--primary)">${buyWait}</b>

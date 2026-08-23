@@ -1310,7 +1310,7 @@ function agRenderJobs() {
         <span style="color:var(--state-sell)">매도대기 ${sellCnt}개</span>
         <span style="color:var(--muted)">대기 ${idleCnt}개</span>
         <span style="color:${pnlColor};font-weight:600">누적수익 ${pnl>=0?'+':''}${Math.round(pnl).toLocaleString()}원 (${job.trade_count||0}회)</span>
-      </div>${canStop ? `<div id="ag-grid-chart-${job.ticker}" style="height:220px;margin-top:8px"></div>` : ''}` : ''}
+      </div>${canStop ? `<div id="ag-grid-chart-${job.ticker}" style="margin-top:8px"></div>` : ''}` : ''}
     </div>`;
   };
 

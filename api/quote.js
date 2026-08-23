@@ -238,8 +238,8 @@ export default async function handler(req, res) {
   const ticker = (req.query.ticker || '').trim().toUpperCase().replace(/^A/, '');
   if (!/^[A-Z0-9]{6}$/.test(ticker)) return res.status(400).json({ error: '유효한 티커(6자리)를 입력하세요' });
 
-  // ── 일봉 차트 데이터 (?chart=1) ────────────────────────────
-  if (req.query.chart === '1' && req.query.interval !== '10m') {
+  // ── 일봉 차트 데이터 (?chart=1, interval 없음) — ETF 탭 등 기존 호출 ──
+  if (req.query.chart === '1' && !req.query.interval) {
     const count = Math.min(Number(req.query.count) || 60, 200);
     try {
       const url = `https://fchart.stock.naver.com/sise.nhn?symbol=${ticker}&timeframe=day&count=${count}&requestType=0`;
@@ -257,13 +257,18 @@ export default async function handler(req, res) {
     }
   }
 
-  // ── 10분봉 차트 데이터 (?chart=1&interval=10m) — 그리드 매매 현황용 ──
+  // ── 분봉 차트 데이터 (?chart=1&interval=1m|10m) — 그리드 매매 현황용 ──
   // KIS "주식당일분봉조회"(FHKST03010200)는 1분봉만 주고 호출당 최대 30건이라
-  // (당일 데이터만 제공) FID_INPUT_HOUR_1을 뒤로 이동시키며 최대 12회
-  // 페이징해서 1분봉을 모은 뒤 10분 단위로 직접 집계한다(최근 6시간 목표
-  // — 장 시작 이전까지 페이징하면 응답이 비거나 시간이 더 안 줄어드므로
-  // 그 지점에서 조기 종료).
-  if (req.query.chart === '1' && req.query.interval === '10m') {
+  // (당일 데이터만 제공) FID_INPUT_HOUR_1을 뒤로 이동시키며 페이징해서
+  // 1분봉을 모은다. interval에 따라 목표 범위·페이지 수·집계 단위만 다르고
+  // 로직은 동일 — 1분봉은 최근 2시간(가벼운 페이지 수), 10분봉은 최근
+  // 6시간(기존)까지 모은 뒤 bucketMin 단위로 집계(1분봉은 집계 없이 그대로).
+  if (req.query.chart === '1' && (req.query.interval === '1m' || req.query.interval === '10m')) {
+    const is1m = req.query.interval === '1m';
+    const bucketMin = is1m ? 1 : 10;
+    const targetMin  = is1m ? 120 : 360;   // 1분봉: 최근 2시간 / 10분봉: 최근 6시간
+    const maxPages   = is1m ? 5 : 12;
+
     const appKey = process.env.KIS_APP_KEY, appSecret = process.env.KIS_APP_SECRET;
     if (!appKey || !appSecret) return res.status(500).json({ error: 'KIS API 키 미설정' });
     try {
@@ -282,7 +287,7 @@ export default async function handler(req, res) {
       let hour1 = String(kst.getUTCHours()).padStart(2, '0') + String(kst.getUTCMinutes()).padStart(2, '0') + '00';
       const oneMin = []; // {time:'HH:MM:SS', open, high, low, close}
       const seenHours = new Set();
-      for (let page = 0; page < 12; page++) {
+      for (let page = 0; page < maxPages; page++) {
         const params = new URLSearchParams({
           FID_COND_MRKT_DIV_CODE: 'J', FID_INPUT_ISCD: ticker,
           FID_INPUT_HOUR_1: hour1, FID_PW_DATA_INCU_YN: 'Y', FID_ETC_CLS_CODE: '',
@@ -309,7 +314,7 @@ export default async function handler(req, res) {
           });
           if (earliest === null || t < earliest) earliest = t;
         }
-        if (oneMin.length >= 360 || !earliest || earliest === hour1) break;
+        if (oneMin.length >= targetMin || !earliest || earliest === hour1) break;
         // 다음 페이지는 이번 페이지의 가장 이른 시각 1분 전부터
         const h = Number(earliest.slice(0, 2)), m = Number(earliest.slice(2, 4));
         const totalMin = h * 60 + m - 1;
@@ -317,13 +322,13 @@ export default async function handler(req, res) {
         hour1 = String(Math.floor(totalMin / 60)).padStart(2, '0') + String(totalMin % 60).padStart(2, '0') + '00';
       }
 
-      // 시간 오름차순 정렬 후 10분 단위로 집계
+      // 시간 오름차순 정렬 후 bucketMin 단위로 집계(1분봉은 사실상 그대로 통과)
       oneMin.sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
-      const buckets = new Map(); // "YYYYMMDDHHMM0"(10분 버킷) → candle
+      const buckets = new Map(); // "YYYYMMDDHHMM0"(버킷 키) → candle
       for (const bar of oneMin) {
         const h = bar.time.slice(0, 2), m = bar.time.slice(2, 4);
-        const bucketMin = String(Math.floor(Number(m) / 10) * 10).padStart(2, '0');
-        const key = `${bar.date}${h}${bucketMin}`;
+        const bucketMinStr = String(Math.floor(Number(m) / bucketMin) * bucketMin).padStart(2, '0');
+        const key = `${bar.date}${h}${bucketMinStr}`;
         if (!buckets.has(key)) {
           buckets.set(key, { key, open: bar.open, high: bar.high, low: bar.low, close: bar.close });
         } else {
@@ -341,6 +346,31 @@ export default async function handler(req, res) {
           return { time: Math.floor(utcMs / 1000), open: b.open, high: b.high, low: b.low, close: b.close };
         });
 
+      res.setHeader('Cache-Control', 'no-store');
+      return res.status(200).json({ candles });
+    } catch (e) {
+      return res.status(500).json({ error: e.message });
+    }
+  }
+
+  // ── 일/주/월봉 차트 데이터 (?chart=1&interval=1d|1w|1M) — 그리드 매매
+  // 현황용. KIS 대신 이미 ETF 탭에서 쓰던 네이버 fchart(인증 불필요, 단일
+  // 콜)를 재사용 — 기간을 아무리 늘려도 호출 1번이라 KIS 쿼터(실거래
+  // 데몬과 공유)에 전혀 영향 없음.
+  if (req.query.chart === '1' && ['1d', '1w', '1M'].includes(req.query.interval)) {
+    const tfMap    = { '1d': 'day', '1w': 'week', '1M': 'month' };
+    const countMap = { '1d': 100, '1w': 100, '1M': 60 }; // 대략 일봉 5개월치/주봉 2년치/월봉 5년치
+    const timeframe = tfMap[req.query.interval];
+    const count = countMap[req.query.interval];
+    try {
+      const url = `https://fchart.stock.naver.com/sise.nhn?symbol=${ticker}&timeframe=${timeframe}&count=${count}&requestType=0`;
+      const r = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://m.stock.naver.com/' } });
+      if (!r.ok) throw new Error(`Naver fchart ${r.status}`);
+      const text = await r.text();
+      const candles = [...text.matchAll(/data="([^"]+)"/g)].map(m => {
+        const [date, open, high, low, close] = m[1].split('|');
+        return { time: `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}`, open: Number(open), high: Number(high), low: Number(low), close: Number(close) };
+      }).filter(d => d.close > 0);
       res.setHeader('Cache-Control', 'no-store');
       return res.status(200).json({ candles });
     } catch (e) {

@@ -816,25 +816,40 @@ async function handleCoinDate(req, res, gistId, ghToken) {
 }
 
 async function handleCoinPrice(req, res) {
-  const { markets, candles, market, unit, count } = req.query;
+  const { markets, candles, market, unit, count, period } = req.query;
 
-  // 분봉 캔들 (그리드 매매 현황 차트용) — ?coin-price?candles=1&market=X&unit=10&count=36
+  // 분/일/주/월봉 캔들 (그리드 매매 현황 차트용)
+  // — 분봉: ?candles=1&market=X&unit=10&count=36 (기존)
+  // — 일/주/월봉: ?candles=1&market=X&period=day|week|month&count=N
+  // Upbit은 어느 주기든 단일 호출(최대 200건)이라 기간을 늘려도 부담이
+  // 늘지 않음 — KIS처럼 페이지네이션이 필요한 게 아님.
   if (candles === '1') {
     if (!market) return res.status(400).json({ error: 'market 파라미터 필요' });
-    const u = Number(unit) || 10;
-    const c = Math.min(Number(count) || 36, 200); // Upbit 페이지당 최대 200건, 10분봉 36개=6시간이면 단일 호출로 충분
+    const isDaily = period === 'day' || period === 'week' || period === 'month';
     try {
-      const r = await fetch(`https://api.upbit.com/v1/candles/minutes/${u}?market=${encodeURIComponent(market)}&count=${c}`);
+      let url;
+      if (isDaily) {
+        const path = period === 'day' ? 'days' : period === 'week' ? 'weeks' : 'months';
+        const c = Math.min(Number(count) || 100, 200);
+        url = `https://api.upbit.com/v1/candles/${path}?market=${encodeURIComponent(market)}&count=${c}`;
+      } else {
+        const u = Number(unit) || 10;
+        const c = Math.min(Number(count) || 36, 200); // Upbit 페이지당 최대 200건, 10분봉 36개=6시간이면 단일 호출로 충분
+        url = `https://api.upbit.com/v1/candles/minutes/${u}?market=${encodeURIComponent(market)}&count=${c}`;
+      }
+      const r = await fetch(url);
       if (!r.ok) return res.status(r.status).json({ error: 'Upbit 캔들 API 오류' });
       const raw = await r.json();
       // lightweight-charts 캔들시리즈 포맷으로 변환 — Upbit은 최신순(내림차순)
       // 반환이라 오름차순(과거→최근)으로 뒤집어야 함(라이브러리 요구사항).
+      // 일/주/월봉은 날짜 문자열('YYYY-MM-DD')을 그대로 time으로 써서
+      // (lightweight-charts가 이를 캘린더 날짜로 직접 지원) 시간대 변환 없이
+      // 정확한 날짜만 표시되게 한다.
       const chartCandles = raw
-        .map(x => ({
-          time: Math.floor(new Date(x.candle_date_time_kst + '+09:00').getTime() / 1000),
-          open: x.opening_price, high: x.high_price, low: x.low_price, close: x.trade_price,
-        }))
-        .sort((a, b) => a.time - b.time);
+        .map(x => isDaily
+          ? { time: x.candle_date_time_kst.slice(0, 10), open: x.opening_price, high: x.high_price, low: x.low_price, close: x.trade_price }
+          : { time: Math.floor(new Date(x.candle_date_time_kst + '+09:00').getTime() / 1000), open: x.opening_price, high: x.high_price, low: x.low_price, close: x.trade_price })
+        .sort((a, b) => isDaily ? a.time.localeCompare(b.time) : a.time - b.time);
       res.setHeader('Cache-Control', 'no-store');
       return res.status(200).json({ candles: chartCandles });
     } catch (e) {

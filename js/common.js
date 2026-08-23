@@ -380,28 +380,67 @@ function _gridLevelsNormalize(job, qtyField) {
 // (SVG 래더는 폐기 — lightweight-charts의 createPriceLine으로 실제 캔들
 // 위에 매수/매도 대기가를 직접 겹쳐 그리는 게 "시간 흐름 속 현재가 맥락 +
 // 그리드 기준가"를 한 화면에서 훨씬 조화롭게 보여줌).
-const GRID_CHART_CACHE_MS = 150000; // 캔들 데이터 캐시 2.5분 — 코인은 Upbit
-// 1콜이라 부담 없지만, 주식은 KIS 1분봉을 페이징(최대 12콜)해서 집계하는
-// 무거운 호출이라 렌더 주기(15~30초)마다 매번 새로 부르면 과함.
-const _gridChartCandleCache = {};   // ticker → {candles, ts}
+// 시간대별 캔들 캐시 TTL — 분봉은 자주 바뀌니 짧게, 일/주/월봉은 하루~수시간에
+// 한 번만 바뀌는 데이터라 길게 잡아도 무방(오히려 불필요한 재조회를 줄여줌).
+// 코인(Upbit)은 어느 시간대든 단일 콜이라 부담 적고, 주식 1분/10분봉은 KIS
+// 1분봉 페이징(최대 5~12콜)이 필요한 무거운 호출이라 짧은 TTL이 곧 방어막.
+const GRID_CHART_CACHE_MS = { '1m': 60000, '10m': 150000, '1d': 1800000, '1w': 10800000, '1M': 21600000 };
+const GRID_TIMEFRAMES = [
+  { key: '1m',  label: '1분' },
+  { key: '10m', label: '10분' },
+  { key: '1d',  label: '일' },
+  { key: '1w',  label: '주' },
+  { key: '1M',  label: '월' },
+];
+const _gridChartCandleCache = {};   // "ticker:timeframe" → {candles, ts}
 const _gridChartInstances   = {};   // containerId → lightweight-charts 인스턴스(재렌더 시 정리용)
 const _gridChartToken       = {};   // containerId → 최신 렌더 호출 토큰(경쟁 상태 방지)
+const _gridChartTimeframe   = {};   // containerId → 현재 선택된 시간대(기본 '10m')
+const _gridChartLastArgs    = {};   // containerId → 마지막 렌더 인자(시간대 전환 시 즉시 재렌더용)
 
-async function _fetchGridCandles(ticker, isCoin) {
-  const cached = _gridChartCandleCache[ticker];
-  if (cached && (Date.now() - cached.ts) < GRID_CHART_CACHE_MS) return cached.candles;
+async function _fetchGridCandles(ticker, isCoin, timeframe) {
+  const tf = timeframe || '10m';
+  const cacheKey = `${ticker}:${tf}`;
+  const cached = _gridChartCandleCache[cacheKey];
+  const ttl = GRID_CHART_CACHE_MS[tf] || 150000;
+  if (cached && (Date.now() - cached.ts) < ttl) return cached.candles;
   try {
-    const url = isCoin
-      ? `/api/coin-price?candles=1&market=${encodeURIComponent(ticker)}&unit=10&count=36`
-      : `/api/quote?ticker=${encodeURIComponent(ticker)}&chart=1&interval=10m`;
+    let url;
+    if (isCoin) {
+      const periodMap = { '1d': 'day', '1w': 'week', '1M': 'month' };
+      url = periodMap[tf]
+        ? `/api/coin-price?candles=1&market=${encodeURIComponent(ticker)}&period=${periodMap[tf]}&count=${tf === '1M' ? 60 : 100}`
+        : `/api/coin-price?candles=1&market=${encodeURIComponent(ticker)}&unit=${tf === '1m' ? 1 : 10}&count=${tf === '1m' ? 120 : 36}`;
+    } else {
+      url = `/api/quote?ticker=${encodeURIComponent(ticker)}&chart=1&interval=${tf}`;
+    }
     const r = await fetch(url);
     const d = await r.json();
     const candles = Array.isArray(d.candles) ? d.candles : [];
-    _gridChartCandleCache[ticker] = { candles, ts: Date.now() };
+    _gridChartCandleCache[cacheKey] = { candles, ts: Date.now() };
     return candles;
   } catch (_) {
     return cached?.candles || [];
   }
+}
+
+// 시간대 버튼 클릭 시 호출 — 선택 상태만 바꾸고 마지막 렌더 인자로 즉시 재렌더.
+function _switchGridChartTimeframe(containerId, tf) {
+  _gridChartTimeframe[containerId] = tf;
+  const args = _gridChartLastArgs[containerId];
+  if (!args) return;
+  renderGridChart(containerId, args.job, args.curPrice, args.qtyField, args.ticker, args.isCoin);
+}
+
+function _gridChartTfBarHtml(containerId, activeTf) {
+  return GRID_TIMEFRAMES.map(tf => {
+    const active = tf.key === activeTf;
+    return `<button onclick="_switchGridChartTimeframe('${containerId}','${tf.key}')"
+      style="padding:2px 9px;border-radius:5px;font-size:11px;cursor:pointer;
+      border:1px solid ${active ? 'var(--primary)' : 'var(--border)'};
+      background:${active ? 'var(--primary)' : 'none'};
+      color:${active ? '#fff' : 'var(--muted)'};font-weight:${active ? 700 : 400}">${tf.label}</button>`;
+  }).join('');
 }
 
 // containerId 엘리먼트에 job 하나의 10분봉(최근 6시간) + 매수/매도 대기가
@@ -409,6 +448,7 @@ async function _fetchGridCandles(ticker, isCoin) {
 // qtyField: 'coin_qty' | 'qty'. ticker: Upbit market 코드 또는 KIS 종목코드.
 async function renderGridChart(containerId, job, curPrice, qtyField, ticker, isCoin) {
   if (typeof LightweightCharts === 'undefined') return;
+  _gridChartLastArgs[containerId] = { job, curPrice, qtyField, ticker, isCoin }; // 시간대 전환 버튼용
 
   // 초기 로딩 시 agRenderJobs/ctRenderGridJobs가 동기 1회 + 가격 폴링 완료 후
   // 1회, 총 2번 거의 동시에 호출되는 경우가 있다 — 둘 다 아래 await 시점에
@@ -418,17 +458,29 @@ async function renderGridChart(containerId, job, curPrice, qtyField, ticker, isC
   // 가장 최근 토큰이 아니면 그리지 않고 조용히 포기한다.
   const myToken = (_gridChartToken[containerId] = (_gridChartToken[containerId] || 0) + 1);
 
-  const candles = await _fetchGridCandles(ticker, isCoin);
+  const timeframe = _gridChartTimeframe[containerId] || '10m';
+  const candles = await _fetchGridCandles(ticker, isCoin, timeframe);
   if (_gridChartToken[containerId] !== myToken) return; // 더 최신 호출이 있었음 — 이 호출은 폐기
 
-  const container = document.getElementById(containerId);
-  if (!container || !document.body.contains(container)) return; // 그 사이 탭 이동 등으로 DOM에서 사라졌을 수 있음
+  const outer = document.getElementById(containerId);
+  if (!outer || !document.body.contains(outer)) return; // 그 사이 탭 이동 등으로 DOM에서 사라졌을 수 있음
+
+  // 시간대 버튼 바 + 실제 차트를 별도 하위 div로 분리 — 버튼 바는 매번 다시
+  // 그려도(활성 상태 갱신) 차트 쪽만 인스턴스를 정리/재생성하면 되게 한다.
+  let barEl = outer.querySelector('.grid-chart-tf-bar');
+  let chartEl = outer.querySelector('.grid-chart-inner');
+  if (!barEl || !chartEl) {
+    outer.innerHTML = `<div class="grid-chart-tf-bar" style="display:flex;gap:4px;margin-bottom:6px"></div><div class="grid-chart-inner" style="height:220px"></div>`;
+    barEl = outer.querySelector('.grid-chart-tf-bar');
+    chartEl = outer.querySelector('.grid-chart-inner');
+  }
+  barEl.innerHTML = _gridChartTfBarHtml(containerId, timeframe);
 
   if (_gridChartInstances[containerId]) {
     try { _gridChartInstances[containerId].remove(); } catch (_) {}
     delete _gridChartInstances[containerId];
   }
-  container.innerHTML = ''; // 방어적으로 잔여 DOM 제거
+  chartEl.innerHTML = ''; // 방어적으로 잔여 DOM 제거
 
   const cs = getComputedStyle(document.body);
   const buyColor    = cs.getPropertyValue('--primary').trim()    || '#3D5AFE';
@@ -440,17 +492,23 @@ async function renderGridChart(containerId, job, curPrice, qtyField, ticker, isC
   // 표시한다(브라우저 로컬시간이 아님) — 그래서 KST 13:40 캔들이 "04:40"으로
   // 보여 "새벽 시간대가 나온다"는 문제가 생겼음(실측: 값 자체는 정확한 KST
   // 절대시각의 UTC epoch였고, 표시 포맷팅만 UTC였음). tickMarkFormatter/
-  // timeFormatter로 Asia/Seoul 기준 표기를 강제한다.
+  // timeFormatter로 Asia/Seoul 기준 표기를 강제한다. 일/주/월봉은 서버가
+  // 이미 'YYYY-MM-DD' 캘린더 날짜 문자열로 주므로(시간대 변환 불필요) 분기.
   const _kstFmt = (opts) => (time) => new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', ...opts }).format(new Date(time * 1000));
   const _kstTimeLabel = _kstFmt({ hour: '2-digit', minute: '2-digit', hour12: false });
   const _kstDayLabel  = _kstFmt({ day: 'numeric' });
+  const _dateStrParts = (s) => { const [y, mo, d] = s.split('-'); return { y, mo: Number(mo), d: Number(d) }; };
 
-  const chart = LightweightCharts.createChart(container, {
+  const chart = LightweightCharts.createChart(chartEl, {
     layout: { background: { type: LightweightCharts.ColorType.Solid, color: 'transparent' }, textColor },
     grid: { vertLines: { color: borderColor }, horzLines: { color: borderColor } },
     timeScale: {
       borderColor, timeVisible: true, secondsVisible: false,
       tickMarkFormatter: (time, tickMarkType) => {
+        if (typeof time === 'string') {
+          const { y, mo, d } = _dateStrParts(time);
+          return tickMarkType === LightweightCharts.TickMarkType.Year ? y : `${mo}/${d}`;
+        }
         const isDayMark = tickMarkType === LightweightCharts.TickMarkType.DayOfMonth
           || tickMarkType === LightweightCharts.TickMarkType.Month
           || tickMarkType === LightweightCharts.TickMarkType.Year;
@@ -458,11 +516,14 @@ async function renderGridChart(containerId, job, curPrice, qtyField, ticker, isC
       },
     },
     localization: {
-      timeFormatter: (time) => `${_kstDayLabel(time)}일 ${_kstTimeLabel(time)}`,
+      timeFormatter: (time) => {
+        if (typeof time === 'string') { const { y, mo, d } = _dateStrParts(time); return `${y}.${mo}.${d}`; }
+        return `${_kstDayLabel(time)}일 ${_kstTimeLabel(time)}`;
+      },
     },
     rightPriceScale: { borderColor },
     crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
-    width: container.clientWidth,
+    width: chartEl.clientWidth,
     height: 220,
   });
   _gridChartInstances[containerId] = chart;
