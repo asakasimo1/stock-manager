@@ -1240,12 +1240,28 @@ function agRenderJobs() {
 
   const renderJob = (job) => {
     const grids = job.grids || [];
-    const buyCnt  = grids.filter(g=>g.state==='buy_waiting').length;
-    const sellCnt = grids.filter(g=>g.state==='sell_waiting').length;
+    const buyWaitGrids  = grids.filter(g=>g.state==='buy_waiting');
+    const sellWaitGrids = grids.filter(g=>g.state==='sell_waiting');
+    const buyCnt  = buyWaitGrids.length;
+    const sellCnt = sellWaitGrids.length;
     const idleCnt = grids.filter(g=>g.state==='idle').length;
     const pnl = job.total_profit_krw || 0;
     const pnlColor = pnl >= 0 ? 'var(--green)' : 'var(--red)';
     const canStop = ['init','active','reinit'].includes(job.status);
+
+    // 매수대기: level이 지정가 매수 기준가, 금액은 잡의 격자당 금액(고정)
+    // 매도대기: 매수 체결 후 잡힌 목표 매도가(last_sell_price) 기준, 금액은 보유수량×매도가
+    const fmtBuyWait  = g => `${Number(g.level).toLocaleString()}원(${Number(job.krw_per_grid||0).toLocaleString()}원)`;
+    const fmtSellWait = g => {
+      const sp  = g.last_sell_price || Math.round(g.level * (1 + (job.grid_pct||0) / 100));
+      const amt = Math.round((g.qty || 0) * sp);
+      return `${Number(sp).toLocaleString()}원(${amt.toLocaleString()}원)`;
+    };
+    const waitDetailHtml = (buyWaitGrids.length || sellWaitGrids.length) ? `
+      <div style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.7">
+        ${buyWaitGrids.length ? `<div><span style="color:var(--primary);font-weight:600">매수대기</span> ${buyWaitGrids.map(fmtBuyWait).join(' · ')}</div>` : ''}
+        ${sellWaitGrids.length ? `<div><span style="color:var(--orange);font-weight:600">매도대기</span> ${sellWaitGrids.map(fmtSellWait).join(' · ')}</div>` : ''}
+      </div>` : '';
 
     return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
@@ -1266,7 +1282,7 @@ function agRenderJobs() {
         <span style="color:var(--orange)">매도대기 ${sellCnt}개</span>
         <span style="color:var(--muted)">대기 ${idleCnt}개</span>
         <span style="color:${pnlColor};font-weight:600">누적수익 ${pnl>=0?'+':''}${Math.round(pnl).toLocaleString()}원 (${job.trade_count||0}회)</span>
-      </div>` : ''}
+      </div>${waitDetailHtml}` : ''}
     </div>`;
   };
 
