@@ -257,17 +257,18 @@ export default async function handler(req, res) {
     }
   }
 
-  // ── 분봉 차트 데이터 (?chart=1&interval=1m|10m) — 그리드 매매 현황용 ──
+  // ── 분봉 차트 데이터 (?chart=1&interval=1m|10m|1h) — 그리드 매매 현황용 ──
   // KIS "주식당일분봉조회"(FHKST03010200)는 1분봉만 주고 호출당 최대 30건이라
   // (당일 데이터만 제공) FID_INPUT_HOUR_1을 뒤로 이동시키며 페이징해서
   // 1분봉을 모은다. interval에 따라 목표 범위·페이지 수·집계 단위만 다르고
   // 로직은 동일 — 1분봉은 최근 2시간(가벼운 페이지 수), 10분봉은 최근
-  // 6시간(기존)까지 모은 뒤 bucketMin 단위로 집계(1분봉은 집계 없이 그대로).
-  if (req.query.chart === '1' && (req.query.interval === '1m' || req.query.interval === '10m')) {
-    const is1m = req.query.interval === '1m';
-    const bucketMin = is1m ? 1 : 10;
-    const targetMin  = is1m ? 120 : 360;   // 1분봉: 최근 2시간 / 10분봉: 최근 6시간
-    const maxPages   = is1m ? 5 : 12;
+  // 6시간(기존), 1시간봉은 장중 전체(약 7시간)까지 모은 뒤 bucketMin 단위로
+  // 집계(1분봉은 집계 없이 그대로).
+  if (req.query.chart === '1' && ['1m', '10m', '1h'].includes(req.query.interval)) {
+    const ivl = req.query.interval;
+    const bucketMin = ivl === '1m' ? 1 : ivl === '10m' ? 10 : 60;
+    const targetMin  = ivl === '1m' ? 120 : ivl === '10m' ? 360 : 420;
+    const maxPages   = ivl === '1m' ? 5 : ivl === '10m' ? 12 : 14;
 
     const appKey = process.env.KIS_APP_KEY, appSecret = process.env.KIS_APP_SECRET;
     if (!appKey || !appSecret) return res.status(500).json({ error: 'KIS API 키 미설정' });

@@ -382,12 +382,13 @@ function _gridLevelsNormalize(job, qtyField) {
 // 그리드 기준가"를 한 화면에서 훨씬 조화롭게 보여줌).
 // 시간대별 캔들 캐시 TTL — 분봉은 자주 바뀌니 짧게, 일/주/월봉은 하루~수시간에
 // 한 번만 바뀌는 데이터라 길게 잡아도 무방(오히려 불필요한 재조회를 줄여줌).
-// 코인(Upbit)은 어느 시간대든 단일 콜이라 부담 적고, 주식 1분/10분봉은 KIS
-// 1분봉 페이징(최대 5~12콜)이 필요한 무거운 호출이라 짧은 TTL이 곧 방어막.
-const GRID_CHART_CACHE_MS = { '1m': 60000, '10m': 150000, '1d': 1800000, '1w': 10800000, '1M': 21600000 };
+// 코인(Upbit)은 어느 시간대든 단일 콜이라 부담 적고, 주식 1분/10분/1시간봉은
+// KIS 1분봉 페이징(최대 5~14콜)이 필요한 무거운 호출이라 짧은 TTL이 곧 방어막.
+const GRID_CHART_CACHE_MS = { '1m': 60000, '10m': 150000, '1h': 150000, '1d': 1800000, '1w': 10800000, '1M': 21600000 };
 const GRID_TIMEFRAMES = [
   { key: '1m',  label: '1분' },
   { key: '10m', label: '10분' },
+  { key: '1h',  label: '1시간' },
   { key: '1d',  label: '일' },
   { key: '1w',  label: '주' },
   { key: '1M',  label: '월' },
@@ -408,9 +409,11 @@ async function _fetchGridCandles(ticker, isCoin, timeframe) {
     let url;
     if (isCoin) {
       const periodMap = { '1d': 'day', '1w': 'week', '1M': 'month' };
+      const unitMap  = { '1m': 1, '10m': 10, '1h': 60 };
+      const countMap = { '1m': 120, '10m': 36, '1h': 48 }; // 1시간봉: 최근 48시간(2일)
       url = periodMap[tf]
         ? `/api/coin-price?candles=1&market=${encodeURIComponent(ticker)}&period=${periodMap[tf]}&count=${tf === '1M' ? 60 : 100}`
-        : `/api/coin-price?candles=1&market=${encodeURIComponent(ticker)}&unit=${tf === '1m' ? 1 : 10}&count=${tf === '1m' ? 120 : 36}`;
+        : `/api/coin-price?candles=1&market=${encodeURIComponent(ticker)}&unit=${unitMap[tf] || 10}&count=${countMap[tf] || 36}`;
     } else {
       url = `/api/quote?ticker=${encodeURIComponent(ticker)}&chart=1&interval=${tf}`;
     }
