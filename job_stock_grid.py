@@ -56,6 +56,61 @@ def _buy_qty(krw: float, price: int) -> int:
     return max(MIN_QTY, int(krw / price))
 
 
+GRID_DRIFT_INTERVAL_MIN = 5  # 격자 드리프트(트레일링 이동) 최소 재실행 간격(분)
+
+
+def _maybe_drift_grid(job: dict, grid: dict, grids: list, cur_price: float) -> bool:
+    """매도 체결로 방금 idle이 된 격자가 사다리 양 끝(최저/최고가)이면, 가격이 그 격자를
+    확실히 지나쳐갔을 때 그 자리에서 재등록하는 대신 반대편 끝 바깥으로 옮겨서 격자
+    개수를 유지한 채 현재가 주변에 계속 격자가 몰려있게 한다(2026-08-23, 사용자 요청 —
+    코인 그리드(job_coin_grid.py)와 동일 로직). 잡 단위로 GRID_DRIFT_INTERVAL_MIN(5분)에
+    한 번만 판단. 조건 불충족 시 False → 호출부가 기존처럼 동일 격자 재등록으로 폴백.
+
+    주식은 코인의 _grid_range() 같은 "실제 격자 범위로 자동 확장" 로직이 없고
+    _check_out_of_range()가 job['lower_price']/upper_price'를 그대로 신뢰하므로,
+    여기서 그 두 필드를 반드시 갱신해야 이탈감지가 어긋나지 않는다."""
+    last_at = job.get("last_grid_shift_at")
+    if last_at:
+        try:
+            elapsed_min = (datetime.now(KST) - datetime.strptime(last_at, "%Y-%m-%d %H:%M").replace(tzinfo=KST)).total_seconds() / 60
+        except (ValueError, TypeError):
+            elapsed_min = GRID_DRIFT_INTERVAL_MIN  # 파싱 실패 시 안전하게 이동 허용
+        if elapsed_min < GRID_DRIFT_INTERVAL_MIN:
+            return False
+
+    levels = sorted(float(g["level"]) for g in grids)
+    if len(levels) < 2:
+        return False
+    grid_pct = float(job["grid_pct"])
+    level    = float(grid["level"])
+
+    if level == levels[0] and cur_price > levels[1]:
+        new_level = kis_api.round_price(levels[-1] * (1 + grid_pct / 100))
+        direction = "위"
+    elif level == levels[-1] and cur_price < levels[-2]:
+        new_level = kis_api.round_price(levels[0] / (1 + grid_pct / 100))
+        direction = "아래"
+    else:
+        return False
+
+    old_level = grid["level"]
+    # 호출 시점엔 아직 state가 "sell_waiting"(order_no만 빈 문자열로 비워진 상태)로
+    # 남아있음 — 그대로 두면 다음 사이클에 "order_no 없는 sell_waiting"으로 걸려서
+    # (elif state=="sell_waiting" and not order_no: 분기, L396) 보유물량 없는 격자에
+    # 매도 재등록을 시도하는 오동작이 남. 매수/매도 필드도 함께 초기화해서
+    # initialize_grid()가 만드는 새 idle 격자와 동일한 모양으로 맞춘다.
+    grid.update(level=new_level, state="idle", order_no="", org_no="",
+                qty=0, last_buy_price=0, last_sell_price=0)
+    job["lower_price"] = min(float(g["level"]) for g in grids)
+    job["upper_price"] = max(float(g["level"]) for g in grids)
+    job["last_grid_shift_at"] = now_kst()
+    logger.info("↕ 그리드 드리프트(%s): %s %s원(idle) → %s원  (현재가 %s원, 범위 %s~%s원 갱신)",
+                direction, job.get("name", job.get("ticker")),
+                f"{old_level:,.0f}", f"{new_level:,.0f}", f"{cur_price:,.0f}",
+                f"{job['lower_price']:,.0f}", f"{job['upper_price']:,.0f}")
+    return True
+
+
 _pending_cache: dict = {}
 _pending_fetched_at: float = 0.0
 
@@ -331,18 +386,24 @@ def process_grid(job: dict, cur_price: int = None) -> bool:
                         _invalidate_pending()
                         logger.info("★매도체결 %s원 수익 %+.0f원 (누적 %+.0f원 %d회)",
                                     f"{sell_exec:,}", pnl, job["total_profit_krw"], job["trade_count"])
-                        qty2 = _buy_qty(krw_per_grid, level)
-                        try:
-                            time.sleep(0.25)
-                            r = kis_api.place_order(ticker, "BUY", qty2, level, "limit")
-                            grid.update(state="buy_waiting", order_no=r["order_no"],
-                                        org_no=r.get("org_no",""), qty=qty2,
-                                        last_buy_price=level, order_date=today_str)
-                            _invalidate_pending()
-                            logger.info("  재매수등록 %s원 %d주", f"{level:,}", qty2)
-                        except Exception as e:
-                            grid.update(state="idle")
-                            logger.error("재매수실패 %s원: %s", f"{level:,}", e)
+                        if _maybe_drift_grid(job, grid, grids, sell_exec):
+                            # 사다리 반대편 끝으로 이동 — 새 레벨은 idle 그대로 두고,
+                            # 기존 idle 재등록 경로(_fill_idle, 이 함수 끝에서 매
+                            # 사이클 호출됨)가 가격이 닿으면 알아서 매수 등록하게 둔다.
+                            pass
+                        else:
+                            qty2 = _buy_qty(krw_per_grid, level)
+                            try:
+                                time.sleep(0.25)
+                                r = kis_api.place_order(ticker, "BUY", qty2, level, "limit")
+                                grid.update(state="buy_waiting", order_no=r["order_no"],
+                                            org_no=r.get("org_no",""), qty=qty2,
+                                            last_buy_price=level, order_date=today_str)
+                                _invalidate_pending()
+                                logger.info("  재매수등록 %s원 %d주", f"{level:,}", qty2)
+                            except Exception as e:
+                                grid.update(state="idle")
+                                logger.error("재매수실패 %s원: %s", f"{level:,}", e)
 
         elif state == "sell_waiting" and not order_no:
             # 이월물량 매도등록 실패분 재시도 (재초기화 시 보유물량 이월 과정에서
@@ -360,6 +421,12 @@ def process_grid(job: dict, cur_price: int = None) -> bool:
                     logger.info("↻이월물량 매도재시도등록 %s원 %d주", f"{sell_price:,}", qty)
                 except Exception as e:
                     logger.error("이월물량 매도재시도실패 %s원: %s", f"{sell_price:,}", e)
+
+    # 드리프트로 격자 level이 바뀌었을 수 있어 배열을 다시 가격순 정렬 —
+    # 매수체결 시 "상위 격자" 판단이 grids[i+1] 인덱스 인접성에 의존하므로
+    # (위 buy_waiting 분기의 sell_price 클램프, L323-324) 다음 사이클 전에 반드시
+    # 맞춰둔다. 루프 도중이 아니라 끝난 뒤 1회만 정렬.
+    grids.sort(key=lambda g: float(g["level"]))
 
     # idle 격자 주기적 보충 — 만료재등록/재매수 실패로 idle에 빠진 격자가
     # 다음 사이클에서도 방치되지 않도록 매 사이클 재시도 (NXT 프리마켓 초반
