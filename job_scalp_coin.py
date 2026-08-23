@@ -399,7 +399,15 @@ def main():
     holding_count = sum(1 for j in jobs if j.get("phase") == "holding" and j.get("status") != "stopped")
 
     for job in jobs:
-        if job.get("status") == "stopped":
+        # 2026-08-24 — "done"(완료·포기된 1회성 자동발굴 잡)도 여기서 계속 처리하면
+        # _reset_daily_stats_if_needed()가 매일 stats_date를 오늘 날짜로 갱신해버려서
+        # (1) prune_stale_auto_jobs가 "오늘 완료된 것"으로 착각해 영원히 안 지워지고
+        # (2) _auto_discover의 재시도 제한 로직도 "오늘 이미 시도함"으로 착각해 해당
+        # 티커를 영구적으로 재감시 대상에서 제외하는 심각한 버그가 있었음(실측: 8/7~
+        # 8/24 사이 시도된 코인 215종목 전부가 이 상태로 갇혀서 그 뒤로 단 한 번도
+        # 재감시가 안 됨 — 사실상 발굴 풀 전체가 고갈됨). status=="done"은 1회성 잡의
+        # 최종 상태라 이후 절대 다시 거래하지 않으므로, 완전히 건드리지 않고 건너뛴다.
+        if job.get("status") in ("stopped", "done"):
             continue
 
         ticker = job["ticker"]
