@@ -816,7 +816,32 @@ async function handleCoinDate(req, res, gistId, ghToken) {
 }
 
 async function handleCoinPrice(req, res) {
-  const { markets } = req.query;
+  const { markets, candles, market, unit, count } = req.query;
+
+  // 분봉 캔들 (그리드 매매 현황 차트용) — ?coin-price?candles=1&market=X&unit=10&count=36
+  if (candles === '1') {
+    if (!market) return res.status(400).json({ error: 'market 파라미터 필요' });
+    const u = Number(unit) || 10;
+    const c = Math.min(Number(count) || 36, 200); // Upbit 페이지당 최대 200건, 10분봉 36개=6시간이면 단일 호출로 충분
+    try {
+      const r = await fetch(`https://api.upbit.com/v1/candles/minutes/${u}?market=${encodeURIComponent(market)}&count=${c}`);
+      if (!r.ok) return res.status(r.status).json({ error: 'Upbit 캔들 API 오류' });
+      const raw = await r.json();
+      // lightweight-charts 캔들시리즈 포맷으로 변환 — Upbit은 최신순(내림차순)
+      // 반환이라 오름차순(과거→최근)으로 뒤집어야 함(라이브러리 요구사항).
+      const chartCandles = raw
+        .map(x => ({
+          time: Math.floor(new Date(x.candle_date_time_kst + '+09:00').getTime() / 1000),
+          open: x.opening_price, high: x.high_price, low: x.low_price, close: x.trade_price,
+        }))
+        .sort((a, b) => a.time - b.time);
+      res.setHeader('Cache-Control', 'no-store');
+      return res.status(200).json({ candles: chartCandles });
+    } catch (e) {
+      return res.status(500).json({ error: e.message });
+    }
+  }
+
   if (!markets) return res.status(400).json({ error: 'markets 파라미터 필요' });
   try {
     const r = await fetch(`https://api.upbit.com/v1/ticker?markets=${encodeURIComponent(markets)}`);

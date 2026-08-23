@@ -1267,9 +1267,6 @@ function agRenderJobs() {
     const pnlColor = pnl >= 0 ? 'var(--green)' : 'var(--red)';
     const canStop = ['init','active','reinit'].includes(job.status);
 
-    // 가격 래더 차트 — 매수/매도 대기 기준가·금액을 현재가와 함께 시각화
-    const ladderHtml = renderGridLadderChart(job, _ctPriceCache[job.ticker]?.cur, 'qty');
-
     // 범위 이탈 중이면 이탈 시각·경과·자동재설정까지 남은 시간 표시.
     // canStop(=활성 상태) 잡만 대상 — 중단된 잡은 백엔드가 더 이상 이탈을
     // 재평가하지 않아 out_of_range_since가 몇 주 전 값으로 그대로 남아있을
@@ -1312,12 +1309,18 @@ function agRenderJobs() {
         <span style="color:var(--state-sell)">매도대기 ${sellCnt}개</span>
         <span style="color:var(--muted)">대기 ${idleCnt}개</span>
         <span style="color:${pnlColor};font-weight:600">누적수익 ${pnl>=0?'+':''}${Math.round(pnl).toLocaleString()}원 (${job.trade_count||0}회)</span>
-      </div>${ladderHtml}` : ''}
+      </div>${canStop ? `<div id="ag-grid-chart-${job.ticker}" style="height:220px;margin-top:8px"></div>` : ''}` : ''}
     </div>`;
   };
 
   el.innerHTML = active.map(renderJob).join('') +
     (stopped.length ? `<div style="font-size:12px;color:var(--muted);margin-top:4px">종료된 잡</div>${stopped.map(renderJob).join('')}` : '');
+
+  // 차트는 DOM에 컨테이너가 붙은 다음에만 그릴 수 있어 별도 루프로 처리
+  // (fire-and-forget) — 중단된 잡은 제외(불필요한 KIS 분봉 호출 방지).
+  for (const job of active) {
+    renderGridChart(`ag-grid-chart-${job.ticker}`, job, _ctPriceCache[job.ticker]?.cur, 'qty', job.ticker, false);
+  }
 }
 
 

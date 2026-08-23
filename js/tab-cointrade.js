@@ -1003,9 +1003,6 @@ function ctRenderGridJobs() {
       </div>`;
     }
 
-    // 가격 래더 차트 — 매수/매도 대기 기준가·금액을 현재가와 함께 시각화
-    const ladderHtml = renderGridLadderChart(j, _ctPriceCache[j.ticker]?.cur, 'coin_qty');
-
     return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
         <div>
@@ -1028,7 +1025,7 @@ function ctRenderGridJobs() {
         &nbsp;|&nbsp; 격자당: ${Number(j.krw_per_grid).toLocaleString()}원
         ${j.auto_reinit_minutes ? `&nbsp;|&nbsp; <span style="color:var(--primary)">이탈재설정 ${j.auto_reinit_minutes}분</span>` : ''}
       </div>
-      ${ladderHtml}
+      <div id="ct-grid-chart-${j.id}" style="height:220px;margin-bottom:8px"></div>
       <div style="display:flex;justify-content:space-between;font-size:12px">
         <div style="color:var(--muted)">
           매수대기 <b style="color:var(--primary)">${buyWait}</b>
@@ -1071,6 +1068,13 @@ function ctRenderGridJobs() {
       </div>` : ''}
     </div>`;
   }).join('');
+
+  // 차트는 실제 DOM에 컨테이너가 붙은 다음(innerHTML 대입 후)에만 그릴 수
+  // 있어 별도 루프로 처리 — fire-and-forget(각 차트가 개별적으로 캔들을
+  // 불러와 그리므로 여기서 await할 필요 없음).
+  for (const j of jobs) {
+    renderGridChart(`ct-grid-chart-${j.id}`, j, _ctPriceCache[j.ticker]?.cur, 'coin_qty', j.ticker, true);
+  }
 }
 
 // ══════════════════════════════════════════════════════════

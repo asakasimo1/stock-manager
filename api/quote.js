@@ -239,7 +239,7 @@ export default async function handler(req, res) {
   if (!/^[A-Z0-9]{6}$/.test(ticker)) return res.status(400).json({ error: '유효한 티커(6자리)를 입력하세요' });
 
   // ── 일봉 차트 데이터 (?chart=1) ────────────────────────────
-  if (req.query.chart === '1') {
+  if (req.query.chart === '1' && req.query.interval !== '10m') {
     const count = Math.min(Number(req.query.count) || 60, 200);
     try {
       const url = `https://fchart.stock.naver.com/sise.nhn?symbol=${ticker}&timeframe=day&count=${count}&requestType=0`;
@@ -251,6 +251,97 @@ export default async function handler(req, res) {
         return { time: `${date.slice(0,4)}-${date.slice(4,6)}-${date.slice(6,8)}`, open: Number(open), high: Number(high), low: Number(low), close: Number(close), volume: Number(volume) };
       }).filter(d => d.close > 0);
       res.setHeader('Cache-Control', 'max-age=300');
+      return res.status(200).json({ candles });
+    } catch (e) {
+      return res.status(500).json({ error: e.message });
+    }
+  }
+
+  // ── 10분봉 차트 데이터 (?chart=1&interval=10m) — 그리드 매매 현황용 ──
+  // KIS "주식당일분봉조회"(FHKST03010200)는 1분봉만 주고 호출당 최대 30건이라
+  // (당일 데이터만 제공) FID_INPUT_HOUR_1을 뒤로 이동시키며 최대 12회
+  // 페이징해서 1분봉을 모은 뒤 10분 단위로 직접 집계한다(최근 6시간 목표
+  // — 장 시작 이전까지 페이징하면 응답이 비거나 시간이 더 안 줄어드므로
+  // 그 지점에서 조기 종료).
+  if (req.query.chart === '1' && req.query.interval === '10m') {
+    const appKey = process.env.KIS_APP_KEY, appSecret = process.env.KIS_APP_SECRET;
+    if (!appKey || !appSecret) return res.status(500).json({ error: 'KIS API 키 미설정' });
+    try {
+      if (!_kisTokenCache || _kisTokenCache.expires <= Date.now() + 60_000) {
+        let base = kisBase(), token;
+        try { token = await _kisToken(base, appKey, appSecret); }
+        catch (e) {
+          if (e.message.includes('403') && base !== kisBasePaper()) { base = kisBasePaper(); token = await _kisToken(base, appKey, appSecret); }
+          else throw e;
+        }
+        _kisTokenCache = { token, base, expires: Date.now() + 86_400_000 };
+      }
+      const { token, base } = _kisTokenCache;
+
+      const kst = new Date(Date.now() + 9 * 3600 * 1000);
+      let hour1 = String(kst.getUTCHours()).padStart(2, '0') + String(kst.getUTCMinutes()).padStart(2, '0') + '00';
+      const oneMin = []; // {time:'HH:MM:SS', open, high, low, close}
+      const seenHours = new Set();
+      for (let page = 0; page < 12; page++) {
+        const params = new URLSearchParams({
+          FID_COND_MRKT_DIV_CODE: 'J', FID_INPUT_ISCD: ticker,
+          FID_INPUT_HOUR_1: hour1, FID_PW_DATA_INCU_YN: 'Y', FID_ETC_CLS_CODE: '',
+        });
+        const r = await fetch(`${base}/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice?${params}`, {
+          headers: {
+            'content-type': 'application/json; charset=utf-8',
+            authorization: `Bearer ${token}`, appkey: appKey, appsecret: appSecret,
+            tr_id: 'FHKST03010200', custtype: 'P',
+          },
+        });
+        if (!r.ok) break;
+        const d = await r.json();
+        if (d.rt_cd !== '0' || !Array.isArray(d.output2) || !d.output2.length) break;
+        let earliest = null;
+        for (const row of d.output2) {
+          const t = row.stck_cntg_hour; // HHMMSS
+          if (seenHours.has(t)) continue;
+          seenHours.add(t);
+          oneMin.push({
+            date: row.stck_bsop_date, time: t,
+            open: Number(row.stck_oprc), high: Number(row.stck_hgpr),
+            low: Number(row.stck_lwpr), close: Number(row.stck_prpr),
+          });
+          if (earliest === null || t < earliest) earliest = t;
+        }
+        if (oneMin.length >= 360 || !earliest || earliest === hour1) break;
+        // 다음 페이지는 이번 페이지의 가장 이른 시각 1분 전부터
+        const h = Number(earliest.slice(0, 2)), m = Number(earliest.slice(2, 4));
+        const totalMin = h * 60 + m - 1;
+        if (totalMin < 0) break; // 자정 이전 — 더 갈 데 없음
+        hour1 = String(Math.floor(totalMin / 60)).padStart(2, '0') + String(totalMin % 60).padStart(2, '0') + '00';
+      }
+
+      // 시간 오름차순 정렬 후 10분 단위로 집계
+      oneMin.sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
+      const buckets = new Map(); // "YYYYMMDDHHMM0"(10분 버킷) → candle
+      for (const bar of oneMin) {
+        const h = bar.time.slice(0, 2), m = bar.time.slice(2, 4);
+        const bucketMin = String(Math.floor(Number(m) / 10) * 10).padStart(2, '0');
+        const key = `${bar.date}${h}${bucketMin}`;
+        if (!buckets.has(key)) {
+          buckets.set(key, { key, open: bar.open, high: bar.high, low: bar.low, close: bar.close });
+        } else {
+          const b = buckets.get(key);
+          b.high = Math.max(b.high, bar.high);
+          b.low  = Math.min(b.low, bar.low);
+          b.close = bar.close; // 1분봉이 시간 오름차순이므로 마지막 값이 종가
+        }
+      }
+      const candles = [...buckets.values()]
+        .sort((a, b) => a.key.localeCompare(b.key))
+        .map(b => {
+          const y = b.key.slice(0, 4), mo = b.key.slice(4, 6), d = b.key.slice(6, 8), h = b.key.slice(8, 10), mi = b.key.slice(10, 12);
+          const utcMs = Date.parse(`${y}-${mo}-${d}T${h}:${mi}:00+09:00`);
+          return { time: Math.floor(utcMs / 1000), open: b.open, high: b.high, low: b.low, close: b.close };
+        });
+
+      res.setHeader('Cache-Control', 'no-store');
       return res.status(200).json({ candles });
     } catch (e) {
       return res.status(500).json({ error: e.message });
