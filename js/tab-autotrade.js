@@ -1303,6 +1303,7 @@ function agRenderJobs() {
         <span>범위 ${(job.lower_price||0).toLocaleString()}~${(job.upper_price||0).toLocaleString()}원</span>
         <span>간격 ${job.grid_pct||1.5}%</span>
         <span>격자당 ${(job.krw_per_grid||0).toLocaleString()}원</span>
+        <span style="color:var(--primary)">이탈재설정 ${job.auto_reinit_minutes || GRID_STOP_LOSS_DEFAULT_WAIT_MIN}분${job.auto_reinit_minutes ? '' : '(기본)'}</span>
       </div>
       ${grids.length ? `<div style="font-size:11px;color:var(--text);margin-top:6px;display:flex;gap:12px;flex-wrap:wrap">
         <span style="color:var(--primary)">매수대기 ${buyCnt}개</span>

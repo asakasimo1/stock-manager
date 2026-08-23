@@ -452,16 +452,18 @@ async function renderGridChart(containerId, job, curPrice, qtyField, ticker, isC
     borderUpColor: '#16a34a', borderDownColor: '#dc2626',
     wickUpColor: '#16a34a', wickDownColor: '#dc2626',
     priceLineVisible: false,  // 현재가는 아래에서 별도 라인으로 직접 표시(더 실시간)
-    lastValueVisible: true,
+    lastValueVisible: false,  // 캔들 라이브러리 기본 "마지막 종가" 배지 — 10분봉 마감가라
+                               // 실시간 폴링 현재가("현재" 점선)와 다른 값이 동시에 떠서
+                               // 혼동을 줌(사용자 실측: "빨간바탕 흰색 2013이 뭐냐" 질문).
+                               // 실시간 현재가는 이미 아래 "현재" 라인이 대신하므로 끈다.
   });
   if (candles.length) series.setData(candles);
 
   // 매수/매도 대기 기준가 — 실제 캔들 위에 바로 겹쳐서 "지금 가격 흐름 대비
-  // 내 주문이 어디 걸려있는지"가 한눈에 보이도록.
-  // 매수대기 금액은 격자당 금액(job.krw_per_grid)으로 항상 동일해서 레벨마다
-  // 반복 표시하면 "40,000원"이 여러 줄에 중복으로 보임 — 위 정보 줄의
-  // "격자당 X원"에 이미 나와 있으니 차트에서는 가격만 표시. 매도대기는
-  // 레벨마다 보유수량×매도가로 금액이 다 달라서 실제 정보이므로 유지.
+  // 내 주문이 어디 걸려있는지"가 한눈에 보이도록. 금액은 매수대기는 격자당
+  // 금액(job.krw_per_grid)으로 항상 동일하고, 매도대기는 레벨마다 달라서
+  // 표시 여부가 갈렸었는데 — 통일성을 위해 둘 다 라벨 없이 가격선만 표시
+  // (금액은 위 정보줄의 "격자당 X원"으로 충분).
   const levels = _gridLevelsNormalize(job, qtyField);
   for (const l of levels) {
     if (l.state === 'idle') continue;
@@ -472,7 +474,7 @@ async function renderGridChart(containerId, job, curPrice, qtyField, ticker, isC
       lineWidth: 2,
       lineStyle: LightweightCharts.LineStyle.Solid,
       axisLabelVisible: true,
-      title: isBuy ? '매수' : `매도 ${Math.round(l.amount).toLocaleString()}원`,
+      title: isBuy ? '매수' : '매도',
     });
   }
 

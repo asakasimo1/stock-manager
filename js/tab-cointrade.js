@@ -1023,7 +1023,7 @@ function ctRenderGridJobs() {
         범위: ${Number(j.lower_price).toLocaleString()} ~ ${Number(j.upper_price).toLocaleString()}원
         &nbsp;|&nbsp; 간격: ${j.grid_pct}%
         &nbsp;|&nbsp; 격자당: ${Number(j.krw_per_grid).toLocaleString()}원
-        ${j.auto_reinit_minutes ? `&nbsp;|&nbsp; <span style="color:var(--primary)">이탈재설정 ${j.auto_reinit_minutes}분</span>` : ''}
+        &nbsp;|&nbsp; <span style="color:var(--primary)">이탈재설정 ${j.auto_reinit_minutes || GRID_STOP_LOSS_DEFAULT_WAIT_MIN}분${j.auto_reinit_minutes ? '' : '(기본)'}</span>
       </div>
       <div id="ct-grid-chart-${j.id}" style="height:220px;margin-bottom:8px"></div>
       <div style="display:flex;justify-content:space-between;font-size:12px">
