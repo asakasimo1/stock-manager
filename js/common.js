@@ -436,10 +436,30 @@ async function renderGridChart(containerId, job, curPrice, qtyField, ticker, isC
   const borderColor = cs.getPropertyValue('--border').trim()     || '#EBEBEB';
   const textColor    = cs.getPropertyValue('--muted').trim()      || '#9EA3B0';
 
+  // lightweight-charts는 숫자 타임스탬프를 기본적으로 UTC 기준으로 축에
+  // 표시한다(브라우저 로컬시간이 아님) — 그래서 KST 13:40 캔들이 "04:40"으로
+  // 보여 "새벽 시간대가 나온다"는 문제가 생겼음(실측: 값 자체는 정확한 KST
+  // 절대시각의 UTC epoch였고, 표시 포맷팅만 UTC였음). tickMarkFormatter/
+  // timeFormatter로 Asia/Seoul 기준 표기를 강제한다.
+  const _kstFmt = (opts) => (time) => new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', ...opts }).format(new Date(time * 1000));
+  const _kstTimeLabel = _kstFmt({ hour: '2-digit', minute: '2-digit', hour12: false });
+  const _kstDayLabel  = _kstFmt({ day: 'numeric' });
+
   const chart = LightweightCharts.createChart(container, {
     layout: { background: { type: LightweightCharts.ColorType.Solid, color: 'transparent' }, textColor },
     grid: { vertLines: { color: borderColor }, horzLines: { color: borderColor } },
-    timeScale: { borderColor, timeVisible: true, secondsVisible: false },
+    timeScale: {
+      borderColor, timeVisible: true, secondsVisible: false,
+      tickMarkFormatter: (time, tickMarkType) => {
+        const isDayMark = tickMarkType === LightweightCharts.TickMarkType.DayOfMonth
+          || tickMarkType === LightweightCharts.TickMarkType.Month
+          || tickMarkType === LightweightCharts.TickMarkType.Year;
+        return (isDayMark ? _kstDayLabel : _kstTimeLabel)(time);
+      },
+    },
+    localization: {
+      timeFormatter: (time) => `${_kstDayLabel(time)}일 ${_kstTimeLabel(time)}`,
+    },
     rightPriceScale: { borderColor },
     crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
     width: container.clientWidth,
