@@ -44,56 +44,127 @@ def build_levels(lower: float, upper: float, grid_pct: float) -> list:
 
 UPBIT_MIN_ORDER = 5000  # 업비트 최소 주문금액(원)
 MAX_ACTIVE_BUYS = 10   # 동시 매수 대기 주문 최대 개수
-GRID_DRIFT_INTERVAL_MIN = 5  # 격자 드리프트(트레일링 이동) 최소 재실행 간격(분)
+REBALANCE_GRID_STEPS = 3  # 실시간 추적/손절 판단 기준 — "N격자 이상 벌어지면"
 _escape_times: dict = {}  # Gist 저장 실패 대비 메모리 이탈 타이머 (ticker→escaped_at_str)
 
 
-def _maybe_drift_grid(job: dict, grid: dict, grids: list, cur_price: float) -> bool:
-    """매도 체결로 방금 idle이 된 격자가 사다리 양 끝(최저/최고가)이면, 가격이 그 격자를
-    확실히 지나쳐갔을 때 그 자리에서 재등록하는 대신 반대편 끝 바깥으로 옮겨서 격자
-    개수를 유지한 채 현재가 주변에 계속 격자가 몰려있게 한다(2026-08-23, 사용자 요청 —
-    "고정범위 그리드"라 현재가가 범위 상단으로 올라가도 하단 격자가 방치된다는 리포트).
-    잡 단위로 GRID_DRIFT_INTERVAL_MIN(5분)에 한 번만 판단 — 매 체결마다 옮기면 너무
-    잦은 이동이 됨. 조건 불충족 시 False → 호출부가 기존처럼 동일 격자 재등록으로 폴백."""
-    last_at = job.get("last_grid_shift_at")
-    if last_at:
+def _rebalance_grid(job: dict, grids: list, cur_price: float) -> bool:
+    """매 사이클(30초)마다 실시간으로 가격을 따라가도록 두 가지를 처리한다
+    (2026-08-23, 사용자 요청 — "계속 따라다니면서 걸어줘, 손절도 해도 되는 것으로".
+    이전엔 매도체결로 완료된 격자만 5분에 한 번 옮기는 소극적인 버전(_maybe_drift_grid)
+    이었는데, 그보다 훨씬 적극적인 버전으로 대체함):
+
+    1) 아직 체결 안 된 매수 대기 주문이 현재가보다 REBALANCE_GRID_STEPS(3)격자 이상
+       아래로 뒤처지면 취소하고 사다리 최상단 위로 재배치.
+    2) 보유 중인(매도 대기) 포지션이 매수가 대비 REBALANCE_GRID_STEPS(3)격자 이상
+       손실이면 시장가로 손절하고 사다리 최하단 아래로 재배치.
+
+    취소 직후 실제로는 이미 체결됐을 수 있어(레이스 컨디션 — upbit_api.cancel_order는
+    "이미 체결됨"에도 예외 없이 그냥 False/True만 반환) cancel 후 반드시 get_order로
+    재확인한다 — done이면 손대지 않고 이 함수 호출 뒤에 도는 일반 체결감지 루프가
+    정상 처리하게 둔다(중복 처리·이중 매도 방지)."""
+    if cur_price is None or len(grids) < 2:
+        return False
+    ticker     = job["ticker"]
+    grid_pct   = float(job["grid_pct"])
+    step_ratio = (1 + grid_pct / 100) ** REBALANCE_GRID_STEPS
+    changed    = False
+
+    # ── 너무 뒤처진 미체결 매수 대기 주문 재배치 ──────────────────
+    for grid in grids:
+        if grid.get("state") != "buy_waiting":
+            continue
+        level = float(grid["level"])
+        if cur_price < level * step_ratio:
+            continue
+        buy_uuid = grid.get("buy_uuid", "")
+        if not buy_uuid:
+            continue
         try:
-            elapsed_min = (datetime.now(KST) - datetime.strptime(last_at, "%Y-%m-%d %H:%M").replace(tzinfo=KST)).total_seconds() / 60
-        except (ValueError, TypeError):
-            elapsed_min = GRID_DRIFT_INTERVAL_MIN  # 파싱 실패 시 안전하게 이동 허용
-        if elapsed_min < GRID_DRIFT_INTERVAL_MIN:
-            return False
+            upbit_api.cancel_order(buy_uuid)
+            order = upbit_api.get_order(buy_uuid)
+        except Exception as e:
+            logger.error("  재배치용 매수취소 확인 실패 %s원: %s", f"{level:,.0f}", e)
+            continue
+        if order.get("state") == "done":
+            continue  # 취소 직전 체결됨 — 손대지 않고 일반 체결감지 루프에 맡김
 
-    levels = sorted(float(g["level"]) for g in grids)
-    if len(levels) < 2:
-        return False
-    grid_pct = float(job["grid_pct"])
-    level    = float(grid["level"])
+        top = max(float(g["level"]) for g in grids)
+        new_level = upbit_api.round_bid_price(top * (1 + grid_pct / 100))
+        grid.update(level=new_level, state="idle", buy_uuid="", sell_uuid="",
+                    coin_qty=0, last_buy_price=0, last_sell_price=0)
+        changed = True
+        logger.info("↗ 미체결 매수 재배치: %s %s원 → %s원  (현재가 %s원, %d격자 이상 뒤처짐)",
+                    job.get("name", ticker), f"{level:,.0f}", f"{new_level:,.0f}",
+                    f"{cur_price:,.0f}", REBALANCE_GRID_STEPS)
 
-    if level == levels[0] and cur_price > levels[1]:
-        new_level = upbit_api.round_bid_price(levels[-1] * (1 + grid_pct / 100))
-        direction = "위"
-    elif level == levels[-1] and cur_price < levels[-2]:
-        new_level = upbit_api.round_bid_price(levels[0] / (1 + grid_pct / 100))
-        direction = "아래"
-    else:
-        return False
+    # ── N격자 이상 손실 난 보유 포지션 손절 ────────────────────
+    for grid in grids:
+        if grid.get("state") != "sell_waiting":
+            continue
+        buy_price = float(grid.get("last_buy_price", 0) or 0)
+        if buy_price <= 0:
+            continue
+        if cur_price > buy_price / step_ratio:
+            continue
+        sell_uuid = grid.get("sell_uuid", "")
+        if not sell_uuid:
+            continue
+        try:
+            upbit_api.cancel_order(sell_uuid)
+            order = upbit_api.get_order(sell_uuid)
+        except Exception as e:
+            logger.error("  손절용 매도취소 확인 실패 %s원: %s", f"{buy_price:,.0f}", e)
+            continue
+        if order.get("state") == "done":
+            continue  # 취소 직전 목표가에 정상 체결됨 — 손절 안 함(이중매도 방지)
 
-    old_level = grid["level"]
-    # 호출 시점엔 아직 state가 "sell_waiting"(sell_uuid만 빈 문자열로 비워진 상태)로
-    # 남아있음 — 매수/매도 필드도 함께 초기화해서 initialize_grid()가 만드는 새
-    # idle 격자와 동일한 모양으로 맞춘다(그대로 두면 다음 사이클에 "sell_uuid 없는
-    # sell_waiting"으로 걸려서 영구히 무시되는 격자가 됨).
-    grid.update(level=new_level, state="idle", buy_uuid="", sell_uuid="",
-                coin_qty=0, last_buy_price=0, last_sell_price=0)
-    job["lower_price"] = min(float(g["level"]) for g in grids)
-    job["upper_price"] = max(float(g["level"]) for g in grids)
-    job["last_grid_shift_at"] = now_kst()
-    logger.info("↕ 그리드 드리프트(%s): %s %s원(idle) → %s원  (현재가 %s원, 범위 %s~%s원 갱신)",
-                direction, job.get("name", job.get("ticker")),
-                f"{old_level:,.0f}", f"{new_level:,.0f}", f"{cur_price:,.0f}",
-                f"{job['lower_price']:,.0f}", f"{job['upper_price']:,.0f}")
-    return True
+        coin_qty = grid.get("coin_qty", 0)
+        try:
+            r = upbit_api.place_order(market=ticker, side="ask", ord_type="market", volume=coin_qty)
+            time.sleep(0.3)
+            fill = upbit_api.get_order(r["uuid"])
+            sell_exec = fill.get("avg_price") or cur_price
+        except Exception as e:
+            logger.error("  !!! 손절 시장가 매도 실패 %s %s원 %s개: %s — 지정가 재등록 시도",
+                        ticker, f"{buy_price:,.0f}", coin_qty, e)
+            try:
+                fallback_price = upbit_api.round_ask_price(
+                    grid.get("last_sell_price") or buy_price * (1 + grid_pct / 100))
+                r2 = upbit_api.place_order(market=ticker, side="ask", ord_type="limit",
+                                            price=fallback_price, volume=coin_qty)
+                grid.update(sell_uuid=r2["uuid"])
+            except Exception as e2:
+                grid.update(sell_uuid="")
+                logger.error("  !!! 손절 실패 + 지정가 재등록도 실패 — 무방비 포지션: %s %s개 @ %s원: %s",
+                            ticker, coin_qty, f"{buy_price:,.0f}", e2)
+            continue
+
+        pnl = (sell_exec * (1 - SELL_FEE) - buy_price * (1 + BUY_FEE)) * coin_qty
+        job["total_profit_krw"] = round(job.get("total_profit_krw", 0) + pnl, 2)
+        job["trade_count"]      = job.get("trade_count", 0) + 1
+        job["grid_owned_qty"]   = round(max(0, job.get("grid_owned_qty", 0) - coin_qty), 8)
+        _now = datetime.now(KST).strftime("%Y-%m-%d %H:%M")
+        hist = job.setdefault("trade_history", [])
+        hist.append({"date": _now[:10], "time": _now[11:],
+                     "buy_time": grid.get("buy_time", ""),
+                     "buy_price": round(buy_price, 2), "sell_price": round(sell_exec, 2),
+                     "qty": round(coin_qty, 8), "profit": round(pnl, 2), "reason": "손절"})
+        if len(hist) > 500:
+            job["trade_history"] = hist[-500:]
+        logger.info("★ 손절체결 @ %s원 손익 %+.0f원 (매수가 %s원, %d격자 이상 손실)",
+                    f"{sell_exec:,.0f}", pnl, f"{buy_price:,.0f}", REBALANCE_GRID_STEPS)
+
+        bottom = min(float(g["level"]) for g in grids)
+        new_level = upbit_api.round_bid_price(bottom / (1 + grid_pct / 100))
+        grid.update(level=new_level, state="idle", buy_uuid="", sell_uuid="",
+                    coin_qty=0, last_buy_price=0, last_sell_price=0)
+        changed = True
+
+    if changed:
+        job["lower_price"] = min(float(g["level"]) for g in grids)
+        job["upper_price"] = max(float(g["level"]) for g in grids)
+    return changed
 
 
 def _buy_qty(krw: float, price: float) -> float:
@@ -310,6 +381,12 @@ def process_grid(job: dict) -> bool:
         if job.get("status") == "reinit":
             return changed  # 재초기화 예약됨 — 이번 사이클 격자 처리 중단
 
+    # 실시간 가격 추적/손절 — 매 사이클마다 판단(2026-08-23). 아래 본 루프가 이번
+    # 사이클에 재배치된 idle 격자를 곧바로 idle 보충 로직으로 집어갈 수 있도록
+    # 본 루프 시작 전에 실행한다.
+    if _rebalance_grid(job, grids, cur_price):
+        changed = True
+
     for i, grid in enumerate(grids):
         state = grid.get("state", "idle")
         level = float(grid["level"])
@@ -402,30 +479,26 @@ def process_grid(job: dict) -> bool:
                             f"{sell_exec:,.0f}", pnl,
                             job["total_profit_krw"], job["trade_count"])
 
-                if _maybe_drift_grid(job, grid, grids, sell_exec):
-                    # 사다리 반대편 끝으로 이동 — 새 레벨은 idle 그대로 두고, 기존
-                    # idle 재등록 경로(이 루프의 idle 분기 또는 다음 사이클)가 가격이
-                    # 닿으면 알아서 매수 등록하게 둔다(여기서 별도 주문 로직 안 만듦).
-                    changed = True
-                else:
-                    # 동일 격자에 매수 주문 재등록
-                    try:
-                        order_price = upbit_api.round_bid_price(level)
-                        coin_qty2   = _buy_qty(krw_per_grid, order_price)
-                        r = upbit_api.place_order(
-                            market=ticker, side="bid", ord_type="limit",
-                            price=order_price, volume=coin_qty2
-                        )
-                        grid.update(state="buy_waiting", buy_uuid=r["uuid"],
-                                    coin_qty=coin_qty2, last_buy_price=order_price)
-                        logger.info("  재매수 등록 %s원 UUID:%s", f"{order_price:,.0f}", r["uuid"][:8])
-                        # 재매수 후에도 슬롯 여유가 있으면 idle 보충
-                        if buy_waiting_count() < MAX_ACTIVE_BUYS:
-                            if _fill_one_idle(grids, ticker, sell_exec, krw_per_grid):
-                                changed = True
-                    except Exception as e:
-                        grid.update(state="idle")
-                        logger.error("  격자 %s원 재매수 실패: %s", f"{level:,.0f}", e)
+                # 동일 격자에 매수 주문 재등록 — 이 격자가 현재가와 너무 멀어지면
+                # (REBALANCE_GRID_STEPS 이상) 다음 사이클의 _rebalance_grid가
+                # 알아서 취소 후 재배치하므로, 여기서는 항상 동일 레벨로만 재등록한다.
+                try:
+                    order_price = upbit_api.round_bid_price(level)
+                    coin_qty2   = _buy_qty(krw_per_grid, order_price)
+                    r = upbit_api.place_order(
+                        market=ticker, side="bid", ord_type="limit",
+                        price=order_price, volume=coin_qty2
+                    )
+                    grid.update(state="buy_waiting", buy_uuid=r["uuid"],
+                                coin_qty=coin_qty2, last_buy_price=order_price)
+                    logger.info("  재매수 등록 %s원 UUID:%s", f"{order_price:,.0f}", r["uuid"][:8])
+                    # 재매수 후에도 슬롯 여유가 있으면 idle 보충
+                    if buy_waiting_count() < MAX_ACTIVE_BUYS:
+                        if _fill_one_idle(grids, ticker, sell_exec, krw_per_grid):
+                            changed = True
+                except Exception as e:
+                    grid.update(state="idle")
+                    logger.error("  격자 %s원 재매수 실패: %s", f"{level:,.0f}", e)
 
             elif order["state"] == "cancel":
                 logger.info("  격자 %s원 매도 취소 → 재등록", f"{level:,.0f}")

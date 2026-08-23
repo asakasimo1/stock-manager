@@ -56,59 +56,128 @@ def _buy_qty(krw: float, price: int) -> int:
     return max(MIN_QTY, int(krw / price))
 
 
-GRID_DRIFT_INTERVAL_MIN = 5  # 격자 드리프트(트레일링 이동) 최소 재실행 간격(분)
+REBALANCE_GRID_STEPS = 3  # 실시간 추적/손절 판단 기준 — "N격자 이상 벌어지면"
 
 
-def _maybe_drift_grid(job: dict, grid: dict, grids: list, cur_price: float) -> bool:
-    """매도 체결로 방금 idle이 된 격자가 사다리 양 끝(최저/최고가)이면, 가격이 그 격자를
-    확실히 지나쳐갔을 때 그 자리에서 재등록하는 대신 반대편 끝 바깥으로 옮겨서 격자
-    개수를 유지한 채 현재가 주변에 계속 격자가 몰려있게 한다(2026-08-23, 사용자 요청 —
-    코인 그리드(job_coin_grid.py)와 동일 로직). 잡 단위로 GRID_DRIFT_INTERVAL_MIN(5분)에
-    한 번만 판단. 조건 불충족 시 False → 호출부가 기존처럼 동일 격자 재등록으로 폴백.
+def _rebalance_grid(job: dict, grids: list, cur_price: float, market_open: bool) -> bool:
+    """매 사이클(30초)마다 실시간으로 가격을 따라가도록 두 가지를 처리한다
+    (2026-08-23, 사용자 요청 — "계속 따라다니면서 걸어줘, 손절도 해도 되는 것으로".
+    코인 그리드(job_coin_grid.py)와 동일 로직, KIS API 차이만 반영):
 
-    주식은 코인의 _grid_range() 같은 "실제 격자 범위로 자동 확장" 로직이 없고
-    _check_out_of_range()가 job['lower_price']/upper_price'를 그대로 신뢰하므로,
-    여기서 그 두 필드를 반드시 갱신해야 이탈감지가 어긋나지 않는다."""
-    last_at = job.get("last_grid_shift_at")
-    if last_at:
+    1) 아직 체결 안 된 매수 대기 주문이 현재가보다 REBALANCE_GRID_STEPS(3)격자 이상
+       아래로 뒤처지면 취소하고 사다리 최상단 위로 재배치.
+    2) 보유 중인(매도 대기) 포지션이 매수가 대비 REBALANCE_GRID_STEPS(3)격자 이상
+       손실이면 시장가로 손절하고 사다리 최하단 아래로 재배치.
+
+    KIS는 Upbit의 get_order 같은 "체결가 즉시 재조회" 수단이 없어(기존 체결감지도
+    미체결 목록 소멸 여부로만 판단) 취소 레이스 확인을 미체결 목록(pending) 재조회로
+    대신한다: 취소 시도 *전*에 이미 pending에 없으면 건드리지 않고(이미 체결/취소된
+    것) 그대로 두어 아래 일반 체결감지 루프에 맡기고, 취소 *후*에도 pending 캐시를
+    무효화하고 다시 확인해서 실제로 사라졌을 때만 재배치를 진행한다. 손절 체결가는
+    시장가 주문의 실제 체결가를 바로 재조회할 방법이 없어 이번 사이클의 cur_price로
+    근사한다(시장가라 큰 괴리는 없을 것으로 봄 — 필요시 추후 정교화)."""
+    if not market_open or cur_price is None or len(grids) < 2:
+        return False
+    ticker     = job["ticker"]
+    grid_pct   = float(job["grid_pct"])
+    today_str  = datetime.now(KST).strftime("%Y-%m-%d")
+    step_ratio = (1 + grid_pct / 100) ** REBALANCE_GRID_STEPS
+    changed    = False
+
+    # ── 너무 뒤처진 미체결 매수 대기 주문 재배치 ──────────────────
+    for grid in grids:
+        if grid.get("state") != "buy_waiting":
+            continue
+        level = float(grid["level"])
+        if cur_price < level * step_ratio:
+            continue
+        order_no = grid.get("order_no", "")
+        if not order_no or order_no not in _get_pending_set():
+            continue  # 이미 체결/취소됨 — 일반 체결감지 루프에 맡김
         try:
-            elapsed_min = (datetime.now(KST) - datetime.strptime(last_at, "%Y-%m-%d %H:%M").replace(tzinfo=KST)).total_seconds() / 60
-        except (ValueError, TypeError):
-            elapsed_min = GRID_DRIFT_INTERVAL_MIN  # 파싱 실패 시 안전하게 이동 허용
-        if elapsed_min < GRID_DRIFT_INTERVAL_MIN:
-            return False
+            kis_api.cancel_order(order_no, grid.get("org_no", ""))
+        except Exception as e:
+            logger.error("  재배치용 매수취소 실패 %s원: %s", f"{level:,}", e)
+            continue
+        _invalidate_pending()
+        if order_no in _get_pending_set():
+            logger.warning("  재배치용 매수취소 확인 실패(여전히 미체결 목록에 있음) %s원", f"{level:,}")
+            continue
 
-    levels = sorted(float(g["level"]) for g in grids)
-    if len(levels) < 2:
-        return False
-    grid_pct = float(job["grid_pct"])
-    level    = float(grid["level"])
+        top = max(float(g["level"]) for g in grids)
+        new_level = kis_api.round_price(top * (1 + grid_pct / 100))
+        grid.update(level=new_level, state="idle", order_no="", org_no="",
+                    qty=0, last_buy_price=0, last_sell_price=0)
+        changed = True
+        logger.info("↗ 미체결 매수 재배치: %s %s원 → %s원  (현재가 %s원, %d격자 이상 뒤처짐)",
+                    job.get("name", ticker), f"{level:,}", f"{new_level:,}",
+                    f"{cur_price:,}", REBALANCE_GRID_STEPS)
 
-    if level == levels[0] and cur_price > levels[1]:
-        new_level = kis_api.round_price(levels[-1] * (1 + grid_pct / 100))
-        direction = "위"
-    elif level == levels[-1] and cur_price < levels[-2]:
-        new_level = kis_api.round_price(levels[0] / (1 + grid_pct / 100))
-        direction = "아래"
-    else:
-        return False
+    # ── N격자 이상 손실 난 보유 포지션 손절 ────────────────────
+    for grid in grids:
+        if grid.get("state") != "sell_waiting":
+            continue
+        buy_price = float(grid.get("last_buy_price", 0) or 0)
+        if buy_price <= 0:
+            continue
+        if cur_price > buy_price / step_ratio:
+            continue
+        order_no = grid.get("order_no", "")
+        if not order_no or order_no not in _get_pending_set():
+            continue  # 이미 목표가 체결/취소됨 — 일반 체결감지 루프에 맡김(이중매도 방지)
+        try:
+            kis_api.cancel_order(order_no, grid.get("org_no", ""))
+        except Exception as e:
+            logger.error("  손절용 매도취소 실패 %s원: %s", f"{buy_price:,}", e)
+            continue
+        _invalidate_pending()
+        if order_no in _get_pending_set():
+            logger.warning("  손절용 매도취소 확인 실패(여전히 미체결 목록에 있음) %s원", f"{buy_price:,}")
+            continue
 
-    old_level = grid["level"]
-    # 호출 시점엔 아직 state가 "sell_waiting"(order_no만 빈 문자열로 비워진 상태)로
-    # 남아있음 — 그대로 두면 다음 사이클에 "order_no 없는 sell_waiting"으로 걸려서
-    # (elif state=="sell_waiting" and not order_no: 분기, L396) 보유물량 없는 격자에
-    # 매도 재등록을 시도하는 오동작이 남. 매수/매도 필드도 함께 초기화해서
-    # initialize_grid()가 만드는 새 idle 격자와 동일한 모양으로 맞춘다.
-    grid.update(level=new_level, state="idle", order_no="", org_no="",
-                qty=0, last_buy_price=0, last_sell_price=0)
-    job["lower_price"] = min(float(g["level"]) for g in grids)
-    job["upper_price"] = max(float(g["level"]) for g in grids)
-    job["last_grid_shift_at"] = now_kst()
-    logger.info("↕ 그리드 드리프트(%s): %s %s원(idle) → %s원  (현재가 %s원, 범위 %s~%s원 갱신)",
-                direction, job.get("name", job.get("ticker")),
-                f"{old_level:,.0f}", f"{new_level:,.0f}", f"{cur_price:,.0f}",
-                f"{job['lower_price']:,.0f}", f"{job['upper_price']:,.0f}")
-    return True
+        qty = grid.get("qty", 0)
+        try:
+            r = kis_api.place_order(ticker, "SELL", qty, order_type="market")
+            _invalidate_pending()
+        except Exception as e:
+            logger.error("  !!! 손절 시장가 매도 실패 %s %s원 %d주: %s — 지정가 재등록 시도",
+                        ticker, f"{buy_price:,}", qty, e)
+            try:
+                fallback_price = int(grid.get("last_sell_price") or buy_price * (1 + grid_pct / 100))
+                r2 = kis_api.place_order(ticker, "SELL", qty, fallback_price, "limit")
+                grid.update(order_no=r2["order_no"], org_no=r2.get("org_no", ""), order_date=today_str)
+                _invalidate_pending()
+            except Exception as e2:
+                grid.update(order_no="", org_no="")
+                logger.error("  !!! 손절 실패 + 지정가 재등록도 실패 — 무방비 포지션: %s %d주 @ %s원: %s",
+                            ticker, qty, f"{buy_price:,}", e2)
+            continue
+
+        sell_exec = cur_price  # KIS 시장가 체결가 즉시 재조회 수단이 없어 근사(위 docstring 참고)
+        pnl = (sell_exec * (1 - kis_api.SELL_FEE) - buy_price * (1 + kis_api.BUY_FEE)) * qty
+        job["total_profit_krw"] = round(job.get("total_profit_krw", 0) + pnl, 0)
+        job["trade_count"]      = job.get("trade_count", 0) + 1
+        _now = datetime.now(KST).strftime("%Y-%m-%d %H:%M")
+        hist = job.setdefault("trade_history", [])
+        hist.append({"date": _now[:10], "time": _now[11:],
+                     "buy_time": grid.get("buy_time", ""),
+                     "buy_price": round(buy_price, 2), "sell_price": round(sell_exec, 2),
+                     "qty": qty, "profit": round(pnl, 2), "reason": "손절"})
+        if len(hist) > 500:
+            job["trade_history"] = hist[-500:]
+        logger.info("★ 손절체결 @ %s원 손익 %+.0f원 (매수가 %s원, %d격자 이상 손실)",
+                    f"{sell_exec:,}", pnl, f"{buy_price:,}", REBALANCE_GRID_STEPS)
+
+        bottom = min(float(g["level"]) for g in grids)
+        new_level = kis_api.round_price(bottom / (1 + grid_pct / 100))
+        grid.update(level=new_level, state="idle", order_no="", org_no="",
+                    qty=0, last_buy_price=0, last_sell_price=0)
+        changed = True
+
+    if changed:
+        job["lower_price"] = min(float(g["level"]) for g in grids)
+        job["upper_price"] = max(float(g["level"]) for g in grids)
+    return changed
 
 
 _pending_cache: dict = {}
@@ -281,7 +350,6 @@ def process_grid(job: dict, cur_price: int = None) -> bool:
     max_active   = int(job.get("max_active_orders", DEFAULT_MAX_ACTIVE_ORDERS))
     grids        = job.get("grids", [])
     changed      = False
-    pending      = _get_pending_set()
 
     _now_kst    = datetime.now(KST)
     today_str   = _now_kst.strftime("%Y-%m-%d")
@@ -290,6 +358,14 @@ def process_grid(job: dict, cur_price: int = None) -> bool:
     #  존재하지 않는 ORD_SVR_DVSN_CD 필드 사용 때문이었음 — place_order()/cancel_order()를
     #  신TR_ID(TTTC0012U/0011U) + EXCG_ID_DVSN_CD로 수정하여 근본 해결, 실거래로 검증됨)
     market_open = kis_api.is_any_market_open()
+
+    # 실시간 가격 추적/손절 — 매 사이클마다 판단(2026-08-23). 아래 pending 스냅샷을
+    # 뜨기 전에 실행해서, 재배치로 취소된 주문이 아래 일반 체결감지 루프에서 stale한
+    # pending 값 때문에 잘못 처리되지 않게 한다.
+    if _rebalance_grid(job, grids, cur_price, market_open):
+        changed = True
+
+    pending = _get_pending_set()
 
     def bwc():
         return sum(1 for g in grids if g.get("state") in ("buy_waiting", "sell_waiting"))
@@ -386,24 +462,22 @@ def process_grid(job: dict, cur_price: int = None) -> bool:
                         _invalidate_pending()
                         logger.info("★매도체결 %s원 수익 %+.0f원 (누적 %+.0f원 %d회)",
                                     f"{sell_exec:,}", pnl, job["total_profit_krw"], job["trade_count"])
-                        if _maybe_drift_grid(job, grid, grids, sell_exec):
-                            # 사다리 반대편 끝으로 이동 — 새 레벨은 idle 그대로 두고,
-                            # 기존 idle 재등록 경로(_fill_idle, 이 함수 끝에서 매
-                            # 사이클 호출됨)가 가격이 닿으면 알아서 매수 등록하게 둔다.
-                            pass
-                        else:
-                            qty2 = _buy_qty(krw_per_grid, level)
-                            try:
-                                time.sleep(0.25)
-                                r = kis_api.place_order(ticker, "BUY", qty2, level, "limit")
-                                grid.update(state="buy_waiting", order_no=r["order_no"],
-                                            org_no=r.get("org_no",""), qty=qty2,
-                                            last_buy_price=level, order_date=today_str)
-                                _invalidate_pending()
-                                logger.info("  재매수등록 %s원 %d주", f"{level:,}", qty2)
-                            except Exception as e:
-                                grid.update(state="idle")
-                                logger.error("재매수실패 %s원: %s", f"{level:,}", e)
+                        # 동일 격자에 매수 주문 재등록 — 이 격자가 현재가와 너무
+                        # 멀어지면(REBALANCE_GRID_STEPS 이상) 다음 사이클의
+                        # _rebalance_grid가 알아서 취소 후 재배치하므로, 여기서는
+                        # 항상 동일 레벨로만 재등록한다.
+                        qty2 = _buy_qty(krw_per_grid, level)
+                        try:
+                            time.sleep(0.25)
+                            r = kis_api.place_order(ticker, "BUY", qty2, level, "limit")
+                            grid.update(state="buy_waiting", order_no=r["order_no"],
+                                        org_no=r.get("org_no",""), qty=qty2,
+                                        last_buy_price=level, order_date=today_str)
+                            _invalidate_pending()
+                            logger.info("  재매수등록 %s원 %d주", f"{level:,}", qty2)
+                        except Exception as e:
+                            grid.update(state="idle")
+                            logger.error("재매수실패 %s원: %s", f"{level:,}", e)
 
         elif state == "sell_waiting" and not order_no:
             # 이월물량 매도등록 실패분 재시도 (재초기화 시 보유물량 이월 과정에서
