@@ -385,6 +385,7 @@ const GRID_CHART_CACHE_MS = 150000; // 캔들 데이터 캐시 2.5분 — 코인
 // 무거운 호출이라 렌더 주기(15~30초)마다 매번 새로 부르면 과함.
 const _gridChartCandleCache = {};   // ticker → {candles, ts}
 const _gridChartInstances   = {};   // containerId → lightweight-charts 인스턴스(재렌더 시 정리용)
+const _gridChartToken       = {};   // containerId → 최신 렌더 호출 토큰(경쟁 상태 방지)
 
 async function _fetchGridCandles(ticker, isCoin) {
   const cached = _gridChartCandleCache[ticker];
@@ -409,14 +410,25 @@ async function _fetchGridCandles(ticker, isCoin) {
 async function renderGridChart(containerId, job, curPrice, qtyField, ticker, isCoin) {
   if (typeof LightweightCharts === 'undefined') return;
 
+  // 초기 로딩 시 agRenderJobs/ctRenderGridJobs가 동기 1회 + 가격 폴링 완료 후
+  // 1회, 총 2번 거의 동시에 호출되는 경우가 있다 — 둘 다 아래 await 시점에
+  // 컨테이너에 아직 인스턴스가 없는 걸 보고 통과해버려서 같은 컨테이너에
+  // 차트가 2개 겹쳐 그려짐(실측: 첫 진입 시 2개, 탭 이동 후 재진입하면 1개
+  // — 그때는 호출이 1번만 일어나서). 호출마다 토큰을 발급하고, await 이후
+  // 가장 최근 토큰이 아니면 그리지 않고 조용히 포기한다.
+  const myToken = (_gridChartToken[containerId] = (_gridChartToken[containerId] || 0) + 1);
+
+  const candles = await _fetchGridCandles(ticker, isCoin);
+  if (_gridChartToken[containerId] !== myToken) return; // 더 최신 호출이 있었음 — 이 호출은 폐기
+
+  const container = document.getElementById(containerId);
+  if (!container || !document.body.contains(container)) return; // 그 사이 탭 이동 등으로 DOM에서 사라졌을 수 있음
+
   if (_gridChartInstances[containerId]) {
     try { _gridChartInstances[containerId].remove(); } catch (_) {}
     delete _gridChartInstances[containerId];
   }
-
-  const candles = await _fetchGridCandles(ticker, isCoin);
-  const container = document.getElementById(containerId);
-  if (!container || !document.body.contains(container)) return; // 그 사이 탭 이동 등으로 DOM에서 사라졌을 수 있음
+  container.innerHTML = ''; // 방어적으로 잔여 DOM 제거
 
   const cs = getComputedStyle(document.body);
   const buyColor    = cs.getPropertyValue('--primary').trim()    || '#3D5AFE';
@@ -446,6 +458,10 @@ async function renderGridChart(containerId, job, curPrice, qtyField, ticker, isC
 
   // 매수/매도 대기 기준가 — 실제 캔들 위에 바로 겹쳐서 "지금 가격 흐름 대비
   // 내 주문이 어디 걸려있는지"가 한눈에 보이도록.
+  // 매수대기 금액은 격자당 금액(job.krw_per_grid)으로 항상 동일해서 레벨마다
+  // 반복 표시하면 "40,000원"이 여러 줄에 중복으로 보임 — 위 정보 줄의
+  // "격자당 X원"에 이미 나와 있으니 차트에서는 가격만 표시. 매도대기는
+  // 레벨마다 보유수량×매도가로 금액이 다 달라서 실제 정보이므로 유지.
   const levels = _gridLevelsNormalize(job, qtyField);
   for (const l of levels) {
     if (l.state === 'idle') continue;
@@ -456,7 +472,7 @@ async function renderGridChart(containerId, job, curPrice, qtyField, ticker, isC
       lineWidth: 2,
       lineStyle: LightweightCharts.LineStyle.Solid,
       axisLabelVisible: true,
-      title: `${isBuy ? '매수' : '매도'} ${Math.round(l.amount).toLocaleString()}원`,
+      title: isBuy ? '매수' : `매도 ${Math.round(l.amount).toLocaleString()}원`,
     });
   }
 
