@@ -373,17 +373,21 @@ async function ctRefreshPrices() {
     }
 
     // 그리드 잡 헤더의 현재가 배지(시인성용 — 매수/매도 대기 기준가와 눈으로 비교하기 위함)
+    let gridPriceUpdated = false;
     for (const job of activeGrids) {
       const d = priceMap[job.ticker];
       if (!d) continue;
       const cur       = d.trade_price;
       const chgPct    = (d.signed_change_rate * 100).toFixed(2);
       const priceText = `${cur.toLocaleString()}원 (${chgPct >= 0 ? '+' : ''}${chgPct}%)`;
-      _ctPriceCache[job.ticker] = { ..._ctPriceCache[job.ticker], priceText };
+      _ctPriceCache[job.ticker] = { ..._ctPriceCache[job.ticker], priceText, cur };
 
       const curEl = document.getElementById(`ct-grid-curprice-${job.id}`);
       if (curEl) curEl.textContent = `현재가 ${priceText}`;
+      gridPriceUpdated = true;
     }
+    // 이탈 배지의 경과시간을 갱신하려면 재렌더 필요 — 잡당 한 번이 아니라 한 번만
+    if (gridPriceUpdated) ctRenderGridJobs();
   } catch (_) {}
 }
 
@@ -977,6 +981,28 @@ function ctRenderGridJobs() {
     const pnlClr = pnl >= 0 ? 'var(--green)' : 'var(--red)';
     const canStop = ['active', 'init', 'reinit'].includes(j.status);
 
+    // 범위 이탈 중이면 이탈 시각·경과·자동재설정까지 남은 시간 표시.
+    // canStop(=활성 상태) 잡만 대상 — 중단된 잡은 백엔드가 더 이상 이탈을
+    // 재평가하지 않아 escaped_at/out_of_range_since가 몇 주 전 값으로 그대로
+    // 남아있을 수 있음(실측: 중단된 주식 그리드 하나가 2026-07-13 이탈 기록을
+    // 그대로 갖고 있었음) — 그걸 그대로 보여주면 이미 안 도는 잡에 "이탈 중"
+    // 경고가 잘못 뜬다.
+    const escInfo = canStop ? _gridEscapeInfo(j) : null;
+    let escapeHtml = '';
+    if (escInfo) {
+      const curPrice = _ctPriceCache[j.ticker]?.cur;
+      const dir = curPrice != null
+        ? (curPrice < j.lower_price ? '하단 이탈 🔻' : curPrice > j.upper_price ? '상단 돌파 🔺' : '범위 이탈')
+        : '범위 이탈';
+      const remain = escInfo.autoMin ? escInfo.waitMin - escInfo.elapsedMin : null;
+      const reinitText = escInfo.autoMin
+        ? (remain > 0 ? `재설정까지 ${remain}분` : '재설정 대기중')
+        : '자동재설정 미설정(수동)';
+      escapeHtml = `<div style="font-size:11px;color:#ef4444;font-weight:600;margin-bottom:6px">
+        ⚠️ ${dir} — ${escInfo.timeLabel}부터 · ${escInfo.elapsedMin}분 경과 · ${reinitText}
+      </div>`;
+    }
+
     // 그리드 미니 시각화 (최대 20칸)
     const visGrids = grids.slice(0, 20);
     const barHtml  = visGrids.map(g => {
@@ -1018,6 +1044,7 @@ function ctRenderGridJobs() {
             style="padding:2px 9px;border:1px solid var(--red);border-radius:5px;background:none;font-size:11px;color:var(--red);cursor:pointer">중단</button>` : ''}
         </div>
       </div>
+      ${escapeHtml}
       <div style="font-size:12px;color:var(--muted);margin-bottom:6px">
         범위: ${Number(j.lower_price).toLocaleString()} ~ ${Number(j.upper_price).toLocaleString()}원
         &nbsp;|&nbsp; 간격: ${j.grid_pct}%

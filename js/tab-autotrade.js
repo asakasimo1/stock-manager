@@ -79,17 +79,21 @@ async function atRefreshPrices() {
 
   // 그리드 잡 헤더의 현재가 배지(시인성용 — 매수/매도 대기 기준가와 눈으로 비교하기 위함)
   const activeGrids = (Array.isArray(_agJobs) ? _agJobs : []).filter(j => ['init','active','reinit','stopping'].includes(j.status));
+  let gridPriceUpdated = false;
   for (const job of activeGrids) {
     try {
       const r = await fetch(`/api/stock?ticker=${job.ticker}`);
       const d = await r.json();
       if (!d.price) continue;
       const priceText = `${d.price.toLocaleString()}원 (${d.chgPct >= 0 ? '+' : ''}${d.chgPct}%)`;
-      _ctPriceCache[job.ticker] = { ..._ctPriceCache[job.ticker], priceText };
+      _ctPriceCache[job.ticker] = { ..._ctPriceCache[job.ticker], priceText, cur: d.price };
       const curEl = document.getElementById(`ag-grid-curprice-${job.ticker}`);
       if (curEl) curEl.textContent = `현재가 ${priceText}`;
+      gridPriceUpdated = true;
     } catch (_) {}
   }
+  // 이탈 배지의 경과시간을 갱신하려면 재렌더 필요 — 잡당 한 번이 아니라 한 번만
+  if (gridPriceUpdated) agRenderJobs();
 }
 
 async function atLoadAll() {
@@ -1277,6 +1281,27 @@ function agRenderJobs() {
         ${sellWaitGrids.length ? `<div><span style="color:var(--orange);font-weight:600">매도대기</span> ${sellWaitGrids.map(fmtSellWait).join(' · ')}</div>` : ''}
       </div>` : '';
 
+    // 범위 이탈 중이면 이탈 시각·경과·자동재설정까지 남은 시간 표시.
+    // canStop(=활성 상태) 잡만 대상 — 중단된 잡은 백엔드가 더 이상 이탈을
+    // 재평가하지 않아 out_of_range_since가 몇 주 전 값으로 그대로 남아있을
+    // 수 있음(실측: 빅텍 그리드가 2026-07-13 이탈 기록을 그대로 갖고 있었음)
+    // — 그걸 그대로 보여주면 이미 안 도는 잡에 "이탈 중" 경고가 잘못 뜬다.
+    const escInfo = canStop ? _gridEscapeInfo(job) : null;
+    let escapeHtml = '';
+    if (escInfo) {
+      const curPrice = _ctPriceCache[job.ticker]?.cur;
+      const dir = curPrice != null
+        ? (curPrice < job.lower_price ? '하단 이탈 🔻' : curPrice > job.upper_price ? '상단 돌파 🔺' : '범위 이탈')
+        : '범위 이탈';
+      const remain = escInfo.autoMin ? escInfo.waitMin - escInfo.elapsedMin : null;
+      const reinitText = escInfo.autoMin
+        ? (remain > 0 ? `재설정까지 ${remain}분` : '재설정 대기중')
+        : '자동재설정 미설정(수동)';
+      escapeHtml = `<div style="font-size:11px;color:#ef4444;font-weight:600;margin-top:4px">
+        ⚠️ ${dir} — ${escInfo.timeLabel}부터 · ${escInfo.elapsedMin}분 경과 · ${reinitText}
+      </div>`;
+    }
+
     return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
         <div>
@@ -1287,6 +1312,7 @@ function agRenderJobs() {
         </div>
         ${canStop ? `<button onclick="agStop('${job.id}')" style="padding:3px 10px;background:none;border:1px solid var(--red);border-radius:6px;font-size:11px;color:var(--red);cursor:pointer">중단</button>` : ''}
       </div>
+      ${escapeHtml}
       <div style="font-size:11px;color:var(--muted);display:flex;gap:12px;flex-wrap:wrap">
         <span>범위 ${(job.lower_price||0).toLocaleString()}~${(job.upper_price||0).toLocaleString()}원</span>
         <span>간격 ${job.grid_pct||1.5}%</span>

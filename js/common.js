@@ -321,3 +321,30 @@ setTimeout(() => { _fetchGistData(); _fetchBinData(); }, 0);
 let _dashData = null;
 let _ipoRecords = [];   // ← Script 1에서 선언: initDashboard·markSubscribed 모두 이 변수 공유
 
+// ══════════════════════════════════════════════════════════
+// 그리드 범위 이탈 공용 헬퍼 (코인/주식 그리드 탭 공유)
+// ══════════════════════════════════════════════════════════
+// 코인(job_coin_grid.py)은 2026-08-22 리팩터로 escaped_at 필드를 쓰고,
+// 주식(job_stock_grid.py)은 같은 날 같은 버그를 out_of_range_since 필드를
+// 유지한 채로 고쳤음 — 필드명이 갈라져 있어 둘 다 확인한다. 백엔드의
+// wait_min = auto_reinit_minutes || 15(STOP_LOSS_DEFAULT_WAIT_MIN)와
+// 반드시 같은 상수를 써야 함 — 다르면 UI 카운트다운이 실제 손절/재설정
+// 타이밍과 어긋난다.
+const GRID_STOP_LOSS_DEFAULT_WAIT_MIN = 15;
+
+function _gridEscapeInfo(job) {
+  const sinceStr = job.escaped_at || job.out_of_range_since;
+  if (!sinceStr) return null;
+
+  // "YYYY-MM-DD HH:MM" (KST, 타임존 표기 없음) → 명시적으로 KST로 파싱
+  const since = new Date(sinceStr.replace(' ', 'T') + ':00+09:00');
+  if (isNaN(since.getTime())) return null;
+
+  const elapsedMin = Math.max(0, Math.floor((Date.now() - since.getTime()) / 60000));
+  const timeLabel  = sinceStr.slice(11);  // "HH:MM"
+  const autoMin    = job.auto_reinit_minutes;
+  const waitMin    = autoMin || GRID_STOP_LOSS_DEFAULT_WAIT_MIN;
+
+  return { since, sinceStr, timeLabel, elapsedMin, autoMin, waitMin };
+}
+
