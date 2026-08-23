@@ -333,14 +333,15 @@ function ctRenderAccount() {
 // ── 현재가 갱신 ──────────────────────────────────────────
 async function ctRefreshPrices() {
   const activeSell  = _ctSellJobs.filter(j => j.status === 'active');
+  const activeGrids = (Array.isArray(_ctGridJobs) ? _ctGridJobs : []).filter(j => j.status !== 'stopped');
   const all = [...activeSell];
   // 앱 탭이 활성화된 동안 coin-runner를 서버사이드에서 트리거 (매매 자동 실행)
   if (all.length > 0) {
     fetch('/api/data?mode=trigger_coin_runner&runner_mode=sell').catch(() => {});
   }
-  if (!all.length) return;
+  if (!all.length && !activeGrids.length) return;
 
-  const tickers = [...new Set(all.map(j => j.ticker))];
+  const tickers = [...new Set([...all.map(j => j.ticker), ...activeGrids.map(j => j.ticker)])];
   try {
     const r = await fetch(`/api/coin-price?markets=${tickers.join(',')}`);
     const data = await r.json();
@@ -369,6 +370,19 @@ async function ctRefreshPrices() {
       const pnlEl   = document.getElementById(`ct-pnl-${uid}`);
       if (priceEl) priceEl.textContent = priceText;
       if (pnlEl && pnlHtml) pnlEl.innerHTML = pnlHtml;
+    }
+
+    // 그리드 잡 헤더의 현재가 배지(시인성용 — 매수/매도 대기 기준가와 눈으로 비교하기 위함)
+    for (const job of activeGrids) {
+      const d = priceMap[job.ticker];
+      if (!d) continue;
+      const cur       = d.trade_price;
+      const chgPct    = (d.signed_change_rate * 100).toFixed(2);
+      const priceText = `${cur.toLocaleString()}원 (${chgPct >= 0 ? '+' : ''}${chgPct}%)`;
+      _ctPriceCache[job.ticker] = { ..._ctPriceCache[job.ticker], priceText };
+
+      const curEl = document.getElementById(`ct-grid-curprice-${job.id}`);
+      if (curEl) curEl.textContent = `현재가 ${priceText}`;
     }
   } catch (_) {}
 }
@@ -994,6 +1008,7 @@ function ctRenderGridJobs() {
         <div>
           <span style="font-weight:700">${j.name}</span>
           <span style="color:var(--muted);font-size:11px;margin-left:6px">${j.ticker}</span>
+          <span id="ct-grid-curprice-${j.id}" style="color:#8b5cf6;font-size:12px;font-weight:700;margin-left:8px">${_ctPriceCache[j.ticker]?.priceText ? `현재가 ${_ctPriceCache[j.ticker].priceText}` : '현재가 조회중...'}</span>
         </div>
         <div style="display:flex;gap:6px;align-items:center">
           <span style="color:${statusColor};font-size:12px;font-weight:600">${statusLabel}</span>

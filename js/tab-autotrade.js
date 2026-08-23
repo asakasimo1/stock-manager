@@ -76,6 +76,20 @@ async function atRefreshPrices() {
       }
     } catch (_) {}
   }
+
+  // 그리드 잡 헤더의 현재가 배지(시인성용 — 매수/매도 대기 기준가와 눈으로 비교하기 위함)
+  const activeGrids = (Array.isArray(_agJobs) ? _agJobs : []).filter(j => ['init','active','reinit','stopping'].includes(j.status));
+  for (const job of activeGrids) {
+    try {
+      const r = await fetch(`/api/stock?ticker=${job.ticker}`);
+      const d = await r.json();
+      if (!d.price) continue;
+      const priceText = `${d.price.toLocaleString()}원 (${d.chgPct >= 0 ? '+' : ''}${d.chgPct}%)`;
+      _ctPriceCache[job.ticker] = { ..._ctPriceCache[job.ticker], priceText };
+      const curEl = document.getElementById(`ag-grid-curprice-${job.ticker}`);
+      if (curEl) curEl.textContent = `현재가 ${priceText}`;
+    } catch (_) {}
+  }
 }
 
 async function atLoadAll() {
@@ -1269,6 +1283,7 @@ function agRenderJobs() {
           <span style="font-weight:700;font-size:13px">${job.name || job.ticker}</span>
           <span style="font-size:11px;color:var(--muted);margin-left:6px">${job.ticker}</span>
           <span style="font-size:11px;color:${statusColor[job.status]};margin-left:6px;font-weight:600">${statusLabel[job.status]||job.status}</span>
+          <span id="ag-grid-curprice-${job.ticker}" style="color:#8b5cf6;font-size:11px;font-weight:700;margin-left:8px">${_ctPriceCache[job.ticker]?.priceText ? `현재가 ${_ctPriceCache[job.ticker].priceText}` : '현재가 조회중...'}</span>
         </div>
         ${canStop ? `<button onclick="agStop('${job.id}')" style="padding:3px 10px;background:none;border:1px solid var(--red);border-radius:6px;font-size:11px;color:var(--red);cursor:pointer">중단</button>` : ''}
       </div>
