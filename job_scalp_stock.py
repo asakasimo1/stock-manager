@@ -564,6 +564,16 @@ def main():
             continue
 
         # ── holding: 청산 판단 ──────────────────────────────────
+        # 2026-08-24 — 유령 포지션 복구 잡(discovery_mode=="recovered")은 이 자동청산
+        # 로직을 절대 태우면 안 됨. 실측 사고: 복구 시점의 buy_price를 원래(며칠 전)
+        # 평단가로 그대로 넣었는데, 그 사이 실제 주가가 이미 크게 움직여 있어서
+        # 복구되자마자 손절 기준(-1~1.5%)을 훨씬 초과한 상태로 평가되어 1초 만에
+        # 강제 손절매됨(코오롱생명과학 -9,990원, 아스플로 -32,064원 실현손실). 회복된
+        # 포지션은 사용자가 직접 검토·매도잡 등록할 때까지 그냥 "추적만" 하고 절대
+        # 스스로 팔지 않는다 — 유령 상태를 없애는 게 목적이지, 자동매도가 목적이 아님.
+        if job.get("phase") == "holding" and job.get("discovery_mode") == "recovered":
+            continue
+
         if job.get("phase") == "holding":
             buy_price  = float(job.get("buy_price", 0))
             entered_at = float(job.get("entered_at", 0))
