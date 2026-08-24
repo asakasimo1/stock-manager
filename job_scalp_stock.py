@@ -67,6 +67,98 @@ def _should_run_discovery(now_epoch: float) -> bool:
     return True
 
 
+RECONCILE_INTERVAL_SEC = 60  # 유령 포지션 점검 주기 — 실시간성 불필요, 60초면 충분
+_last_reconcile_at = 0.0
+
+
+def _should_run_reconcile(now_epoch: float) -> bool:
+    global _last_reconcile_at
+    if now_epoch - _last_reconcile_at < RECONCILE_INTERVAL_SEC:
+        return False
+    _last_reconcile_at = now_epoch
+    return True
+
+
+def _reconcile_orphan_positions(jobs: list, auto_cfg: dict, now_epoch: float) -> None:
+    """실제 KIS 계좌 잔고에는 있는데 추적하는 잡이 없는 '유령 포지션'을 감지해 holding
+    잡으로 재생성한다. job_scalp_coin.py의 동일 함수와 같은 이유(2026-08-24) — 매수 직후
+    Gist 저장이 GitHub API 레이트리밋(403)으로 실패하면 매수 체결(되돌릴 수 없음)은
+    성공했는데 이를 기록하는 잡만 유실되어 아무도 매도를 관리하지 않는 상태가 됨. 그리드
+    매매가 관리중인 종목과 profit_sell_jobs.json에 사용자가 직접 등록한 매도 목표가 있는
+    종목은 건드리지 않음(이중 관리 방지)."""
+    try:
+        bal = kis_api.get_balance()
+    except Exception as e:
+        logger.warning("[유령 포지션 점검] 잔고 조회 실패: %s", e)
+        return
+
+    try:
+        grid_jobs = gist_writer._read_gist_file("stock_grid_jobs.json") or []
+        grid_tickers = {j.get("ticker") for j in grid_jobs if j.get("status") not in ("done", "stopped")}
+    except Exception as e:
+        logger.warning("[유령 포지션 점검] 그리드 잡 조회 실패 — 안전하게 건너뜀: %s", e)
+        return
+
+    try:
+        sell_jobs = gist_writer._read_gist_file("profit_sell_jobs.json") or []
+        manual_sell_tickers = {j.get("ticker") for j in sell_jobs if j.get("status") in ("active", "submitted")}
+    except Exception as e:
+        logger.warning("[유령 포지션 점검] 매도 잡 조회 실패 — 안전하게 건너뜀: %s", e)
+        return
+
+    tracked_tickers = {j["ticker"] for j in jobs if j.get("status") not in ("stopped", "done")}
+    recovered = []
+
+    for h in bal["holdings"]:
+        ticker = h["ticker"]
+        if ticker in tracked_tickers or ticker in grid_tickers or ticker in manual_sell_tickers:
+            continue
+        qty = h["qty"]
+        if qty <= 0 or h["eval_price"] * qty < 10000:  # 최소주문금액 미만 잔량(dust)은 무시
+            continue
+
+        logger.warning("👻 [유령 포지션 발견] %s(%s) %d주 @ 평단 %s원 — 추적 잡 없음, holding 잡으로 복구",
+                        h["name"], ticker, qty, f"{h['avg_price']:,.0f}")
+        jobs.append({
+            "id":                 f"recovered-{ticker}-{int(now_epoch)}",
+            "ticker":             ticker,
+            "name":               h["name"],
+            "status":             "active",
+            "phase":              "holding",
+            "source":             "auto",
+            "discovery_mode":     "recovered",
+            "entry_momentum_pct": auto_cfg.get("entry_momentum_pct", 0.4),
+            "lookback_sec":       auto_cfg.get("lookback_sec", 30),
+            "max_day_chg_pct":    auto_cfg.get("max_day_chg_pct", 5.0),
+            "take_profit_pct":    auto_cfg.get("take_profit_pct", 0.6),
+            "stop_loss_pct":      _time_based_stop_loss_pct(auto_cfg),
+            "time_stop_sec":      auto_cfg.get("time_stop_sec", 180),
+            "time_stop_loss_pct": auto_cfg.get("time_stop_loss_pct", 0.5),
+            "fast_rise_momentum_pct":     auto_cfg.get("fast_rise_momentum_pct", 0),
+            "fast_rise_take_profit_pct":  auto_cfg.get("fast_rise_take_profit_pct", 0),
+            "fast_rise_trailing_giveback_pct": auto_cfg.get("fast_rise_trailing_giveback_pct", 0),
+            "fast_decline_momentum_pct":  auto_cfg.get("fast_decline_momentum_pct", 0),
+            "fast_decline_stop_loss_pct": auto_cfg.get("fast_decline_stop_loss_pct", 0),
+            "amount":             auto_cfg.get("amount", 0),
+            "qty":                qty,
+            "max_daily_loss_krw": float(auto_cfg.get("max_daily_loss_krw", -30000)),
+            "watch_timeout_sec":  auto_cfg.get("watch_timeout_sec", 300),
+            "min_volume_surge_ratio": auto_cfg.get("min_volume_surge_ratio", 1.3),
+            "extreme_volume_surge_ratio": auto_cfg.get("extreme_volume_surge_ratio", 0),
+            "extreme_volume_baseline_2min": auto_cfg.get("extreme_volume_baseline_2min", 0),
+            "discovered_at":      now_epoch,
+            "buy_price": h["avg_price"], "buy_qty": qty, "entered_at": now_epoch,
+            "trades_today": 0, "realized_pnl_today": 0, "stats_date": _today_str(),
+            "created_at":    datetime.now(KST).strftime("%Y-%m-%d %H:%M"),
+            "recovered_at":  datetime.now(KST).strftime("%Y-%m-%d %H:%M"),
+        })
+        recovered.append(ticker)
+
+    if recovered:
+        _save_jobs(jobs)
+        logger.info("👻 유령 포지션 %d건 복구 완료: %s", len(recovered), recovered)
+
+
 def _today_str() -> str:
     return datetime.now(KST).strftime("%Y-%m-%d")
 
@@ -412,6 +504,9 @@ def main():
     auto_cfg = _load_auto_config()
     now_epoch = time.time()
     changed = False
+
+    if stock_enabled and _should_run_reconcile(now_epoch):
+        _reconcile_orphan_positions(jobs, auto_cfg, now_epoch)
 
     if _auto_discover(jobs, auto_cfg, stock_enabled, now_epoch):
         changed = True
