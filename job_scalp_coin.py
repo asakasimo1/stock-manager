@@ -48,6 +48,104 @@ DISCOVERY_INTERVAL_SEC = 30  # 자동발굴 스캔 주기 하한 — 5초마다 
                               # GitHub Gist API 쓰기 레이트리밋(secondary rate limit)에 걸림
 _last_discover_at = 0.0
 
+RECONCILE_INTERVAL_SEC = 60  # 유령 포지션 점검 주기 — 실시간성 불필요, 60초면 충분
+_last_reconcile_at = 0.0
+
+
+def _should_run_reconcile(now_epoch: float) -> bool:
+    global _last_reconcile_at
+    if now_epoch - _last_reconcile_at < RECONCILE_INTERVAL_SEC:
+        return False
+    _last_reconcile_at = now_epoch
+    return True
+
+
+def _reconcile_orphan_positions(jobs: list, auto_cfg: dict, now_epoch: float) -> None:
+    """실제 Upbit 잔고에는 있는데 추적하는 잡이 없는 '유령 포지션'을 감지해 holding
+    잡으로 재생성한다.
+
+    2026-08-24 실측 — 여러 종목이 거의 동시에 매수되며 Gist 쓰기가 몰리던 중 GitHub API
+    레이트리밋(403)이 2분 넘게 지속됐고, _save_jobs()의 재시도(최대 수 초)로는 이걸
+    못 버텨서 리플/오리진트레일/멀티버스엑스/프롬 매수 체결(되돌릴 수 없음)은
+    성공했는데 이를 기록하는 잡만 유실되어 아무도 매도를 관리하지 않는 상태가 됐음.
+    재시도를 더 늘리는 방향은 근본 해결이 안 됨(레이트리밋이 몇 분씩 갈 수도 있고,
+    그동안 5초 주기 데몬을 블로킹할 수도 없음) — 대신 매 사이클 실제 잔고와 잡 목록을
+    대조해서, 잔고엔 있는데 추적 잡이 없는 코인을 발견하면 그 자리에서 holding 잡을
+    새로 만들어 즉시 저장한다. 이러면 유실 자체는 못 막아도 다음 정상 사이클(최대
+    60초) 안에 자동으로 복구되어, 기존 익절/손절/시간초과 청산 로직이 정상적으로
+    그 포지션을 관리하게 된다. 그리드 매매가 이미 들고 있는 코인은 건드리지 않음."""
+    try:
+        bal = upbit_api.get_balance()
+    except Exception as e:
+        logger.warning("[유령 포지션 점검] 잔고 조회 실패: %s", e)
+        return
+
+    try:
+        grid_jobs = gist_writer._read_gist_file("coin_grid_jobs.json") or []
+        grid_tickers = {j.get("ticker") for j in grid_jobs if j.get("status") not in ("done", "stopped")}
+    except Exception as e:
+        logger.warning("[유령 포지션 점검] 그리드 잡 조회 실패 — 안전하게 건너뜀: %s", e)
+        return
+
+    # coin_sell_jobs.json에 사용자가 직접 등록한 매도 목표가 이미 있는 티커도 건드리지
+    # 않음 — 여기서 holding 잡을 또 만들면 기본 익절/손절%(auto_cfg)가 사용자가 지정한
+    # 목표가보다 먼저 발동해서 의도와 다르게 조기 매도될 수 있음(2026-08-24).
+    try:
+        sell_jobs = gist_writer._read_gist_file("coin_sell_jobs.json") or []
+        manual_sell_tickers = {j.get("ticker") for j in sell_jobs if j.get("status") in ("active", "submitted")}
+    except Exception as e:
+        logger.warning("[유령 포지션 점검] 매도 잡 조회 실패 — 안전하게 건너뜀: %s", e)
+        return
+
+    tracked_tickers = {j["ticker"] for j in jobs if j.get("status") not in ("stopped", "done")}
+    recovered = []
+
+    for h in bal["holdings"]:
+        ticker = h["ticker"]
+        if ticker in tracked_tickers or ticker in grid_tickers or ticker in manual_sell_tickers:
+            continue
+        if h["qty"] <= 0 or h["eval_amount"] < 5000:  # 업비트 최소주문금액 미만 잔량(dust)은 매도도 안 되므로 무시
+            continue
+
+        logger.warning("👻 [유령 포지션 발견] %s(%s) %.8f개 @ 평단 %s원 — 추적 잡 없음, holding 잡으로 복구",
+                        h["name"], ticker, h["qty"], f"{h['avg_price']:,.0f}")
+        jobs.append({
+            "id":                 f"recovered-{ticker}-{int(now_epoch)}",
+            "ticker":             ticker,
+            "name":               h["name"],
+            "status":             "active",
+            "phase":              "holding",
+            "source":             "auto",
+            "discovery_mode":     "recovered",
+            "entry_momentum_pct": auto_cfg.get("entry_momentum_pct", 0.4),
+            "lookback_sec":       auto_cfg.get("lookback_sec", 30),
+            "max_day_chg_pct":    auto_cfg.get("max_day_chg_pct", 5.0),
+            "take_profit_pct":    auto_cfg.get("take_profit_pct", 0.6),
+            "stop_loss_pct":      auto_cfg.get("stop_loss_pct", 0.4),
+            "time_stop_sec":      auto_cfg.get("time_stop_sec", 180),
+            "time_stop_loss_pct": auto_cfg.get("time_stop_loss_pct", 0.5),
+            "fast_rise_momentum_pct":     auto_cfg.get("fast_rise_momentum_pct", 0),
+            "fast_rise_take_profit_pct":  auto_cfg.get("fast_rise_take_profit_pct", 0),
+            "fast_decline_momentum_pct":  auto_cfg.get("fast_decline_momentum_pct", 0),
+            "fast_decline_stop_loss_pct": auto_cfg.get("fast_decline_stop_loss_pct", 0),
+            "krw_amount":         auto_cfg.get("krw_amount", 0),
+            "max_daily_loss_krw": float(auto_cfg.get("max_daily_loss_krw", -30000)),
+            "watch_timeout_sec":  auto_cfg.get("watch_timeout_sec", 300),
+            "min_volume_surge_ratio": auto_cfg.get("min_volume_surge_ratio", 1.3),
+            "discovered_at":      now_epoch,
+            "buy_price": h["avg_price"], "buy_qty": h["qty"], "entered_at": now_epoch, "buy_uuid": "",
+            "trades_today": 0, "realized_pnl_today": 0, "stats_date": _today_str(),
+            "created_at":    datetime.now(KST).strftime("%Y-%m-%d %H:%M"),
+            "recovered_at":  datetime.now(KST).strftime("%Y-%m-%d %H:%M"),
+        })
+        recovered.append(ticker)
+
+    if recovered:
+        # 이 사이클 뒤에서 벌어질 다른 처리(가격조회 실패, 다른 잡의 예외 등)와 무관하게
+        # 복구 사실 자체는 반드시 남겨야 하므로 즉시 저장(_save_jobs가 자체 재시도 포함).
+        _save_jobs(jobs)
+        logger.info("👻 유령 포지션 %d건 복구 완료: %s", len(recovered), recovered)
+
 
 def _should_run_discovery(now_epoch: float) -> bool:
     global _last_discover_at
@@ -377,6 +475,12 @@ def main():
     auto_cfg = _load_auto_config()
     now_epoch = time.time()
     changed = False
+
+    # 유령 포지션 자동 복구 — tickers/price_cache 흐름의 여러 조기 return과 무관하게
+    # 항상 기회를 줘야 하므로 그보다 먼저 체크. coin_enabled=false(킬스위치)일 때는
+    # 신규 포지션을 만들면 안 되므로 건너뜀.
+    if coin_enabled and _should_run_reconcile(now_epoch):
+        _reconcile_orphan_positions(jobs, auto_cfg, now_epoch)
 
     # 자동발굴은 30초 주기로만 스캔 (전체 마켓 조회 + Gist 쓰기를 5초마다 하면 GitHub 쓰기 레이트리밋에 걸림)
     # 이미 watching/holding 중인 티커는 이 주기와 무관하게 매 사이클(5초) 그대로 처리됨
