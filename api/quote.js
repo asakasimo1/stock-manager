@@ -299,16 +299,22 @@ export default async function handler(req, res) {
       // 극히 일부(약 1시간)만 모으고 조용히 중단됐음(2026-08-25 debug 계측으로
       // 확인: page 0/1은 정상, page 2에서 httpBreak:500). 페이지 사이 텀을 둬서
       // 회피.
-      async function fetchMarketBars(market, pages = maxPages) {
-        const kst = new Date(Date.now() + 9 * 3600 * 1000);
-        const nowMin = kst.getUTCHours() * 60 + kst.getUTCMinutes();
-        // KRX('J')는 15:30 마감 이후 "지금 시각"으로 조회하면 output2가 아예
-        // 빈 채로 와서(2026-08-25 실측: NXT 애프터마켓 중 KRX 쪽 통째로 유실,
-        // 화면엔 정규장 캔들이 하나도 안 보였음) 정규장 데이터를 못 모음 —
-        // hour1을 정규장 마감(15:30) 이내로 고정해 항상 실제 데이터가 있는
-        // 시점부터 페이징을 시작한다.
-        const anchorMin = (market === 'J' && nowMin > 15 * 60 + 30) ? 15 * 60 + 30 : nowMin;
-        let hour1 = String(Math.floor(anchorMin / 60)).padStart(2, '0') + String(anchorMin % 60).padStart(2, '0') + '00';
+      // startHour1을 넘기면 "지금 시각"이 아니라 그 시점부터 과거로 페이징
+      // 시작 — 점진적 백필(아래 getMarketBarsCached)이 기존 캐시의 가장 오래된
+      // 봉 이전부터 이어서 파고들 때 씀.
+      async function fetchMarketBars(market, pages = maxPages, startHour1 = null) {
+        let hour1 = startHour1;
+        if (!hour1) {
+          const kst = new Date(Date.now() + 9 * 3600 * 1000);
+          const nowMin = kst.getUTCHours() * 60 + kst.getUTCMinutes();
+          // KRX('J')는 15:30 마감 이후 "지금 시각"으로 조회하면 output2가 아예
+          // 빈 채로 와서(2026-08-25 실측: NXT 애프터마켓 중 KRX 쪽 통째로 유실,
+          // 화면엔 정규장 캔들이 하나도 안 보였음) 정규장 데이터를 못 모음 —
+          // hour1을 정규장 마감(15:30) 이내로 고정해 항상 실제 데이터가 있는
+          // 시점부터 페이징을 시작한다.
+          const anchorMin = (market === 'J' && nowMin > 15 * 60 + 30) ? 15 * 60 + 30 : nowMin;
+          hour1 = String(Math.floor(anchorMin / 60)).padStart(2, '0') + String(anchorMin % 60).padStart(2, '0') + '00';
+        }
         const bars = [];
         const seenHours = new Set();
         for (let page = 0; page < pages; page++) {
@@ -374,31 +380,59 @@ export default async function handler(req, res) {
       // 요청과 달라질 게 없는데도 매번 통째로 재수집하고 있던 게 원인. 모듈
       // 스코프 캐시(warm 인스턴스 간 재사용, _kisTokenCache와 동일 패턴)에
       // 시장별 원본 1분봉을 보관해뒀다가, TTL 이내면 KIS 호출 없이 즉시
-      // 반환하고, TTL이 지났어도 캐시가 있으면 최신 1페이지(최근 ~30분)만
-      // 새로 받아 이어붙인다 — 콜드 상태(서버 재시작 직후 등)일 때만 기존의
-      // 풀 백필을 탄다.
+      // 반환한다.
+      //
+      // 콜드 상태(캐시 자체가 없음 — 서버 재시작 직후 등)일 땐 목표 범위
+      // 전체(targetMin, 최대 12페이지)를 한 번에 채우려면 여전히 몇 초~십몇
+      // 초가 걸려서(2026-08-26 사용자 리포트: "3시간으로 줄여도 여전히 느림")
+      // 최초 응답은 1페이지(최근 ~30분)만 빠르게 받아 즉시 내려주고, 목표
+      // 범위에 못 미치는 동안은 매 갱신(TTL 만료)마다 (a) 최신 구간 1페이지
+      // 갱신 + (b) 캐시에 있는 가장 오래된 봉 이전부터 1페이지를 추가로 받아
+      // 과거 방향으로 넓혀간다 — 화면은 "최근 30분 → 점점 과거로 늘어나는"
+      // 모양으로 몇 번의 자동 새로고침(수십 초~수 분) 안에 목표 범위까지
+      // 자연스럽게 채워진다. 목표 범위에 도달한 뒤엔 최신 구간 1페이지만
+      // 갱신하는 기존 방식으로 돌아간다.
       async function getMarketBarsCached(market) {
         const cacheKey = `${ticker}:${ivl}:${market}`;
         const ttlMs = CANDLE_CACHE_TTL_MS[ivl] || 30_000;
         const cached = _marketBarsCache[cacheKey];
         if (cached && (Date.now() - cached.fetchedAt) < ttlMs) return cached.bars;
 
-        let bars;
-        if (cached && cached.bars.length) {
-          const fresh = await fetchMarketBars(market, 1);
-          const merged = [...cached.bars];
-          const seen = new Set(merged.map(b => b.date + b.time));
-          for (const bar of fresh) {
-            const key = bar.date + bar.time;
-            if (seen.has(key)) continue;
-            seen.add(key);
-            merged.push(bar);
-          }
-          merged.sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
-          bars = merged.length > targetMin * 2 ? merged.slice(-targetMin * 2) : merged;
-        } else {
-          bars = await fetchMarketBars(market);
+        if (!cached) {
+          const bars = await fetchMarketBars(market, 1);
+          _marketBarsCache[cacheKey] = { bars, fetchedAt: Date.now() };
+          return bars;
         }
+
+        const fresh = await fetchMarketBars(market, 1);
+        const merged = [...cached.bars];
+        const seen = new Set(merged.map(b => b.date + b.time));
+        for (const bar of fresh) {
+          const key = bar.date + bar.time;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          merged.push(bar);
+        }
+
+        if (merged.length < targetMin && merged.length) {
+          merged.sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
+          const oldest = merged[0];
+          const h = Number(oldest.time.slice(0, 2)), m = Number(oldest.time.slice(2, 4));
+          const totalMin = h * 60 + m - 1;
+          if (totalMin >= 0) {
+            const startHour1 = String(Math.floor(totalMin / 60)).padStart(2, '0') + String(totalMin % 60).padStart(2, '0') + '00';
+            const older = await fetchMarketBars(market, 1, startHour1);
+            for (const bar of older) {
+              const key = bar.date + bar.time;
+              if (seen.has(key)) continue;
+              seen.add(key);
+              merged.push(bar);
+            }
+          }
+        }
+
+        merged.sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
+        const bars = merged.length > targetMin * 2 ? merged.slice(-targetMin * 2) : merged;
         _marketBarsCache[cacheKey] = { bars, fetchedAt: Date.now() };
         return bars;
       }
