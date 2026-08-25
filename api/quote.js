@@ -272,8 +272,12 @@ export default async function handler(req, res) {
   if (req.query.chart === '1' && ['1m', '10m', '1h'].includes(req.query.interval)) {
     const ivl = req.query.interval;
     const bucketMin = ivl === '1m' ? 1 : ivl === '10m' ? 10 : 60;
-    const targetMin  = ivl === '1m' ? 120 : ivl === '10m' ? 360 : 420;
-    const maxPages   = ivl === '1m' ? 5 : ivl === '10m' ? 12 : 14;
+    // 10분봉은 KRX+NXT 둘 다 콜드 스타트 시 처음부터 백필해야 해서(Redis/KV
+    // 없이는 서버리스 인스턴스가 식으면 캐시가 사라짐, 2026-08-25 사용자와
+    // 상의) 목표 범위를 6시간→3시간으로 줄여 콜드 로딩 시간을 절반으로
+    // 낮춤(17~20초 → 8~10초 예상, 사용자 승인: "3시간으로 축소").
+    const targetMin  = ivl === '1m' ? 120 : ivl === '10m' ? 180 : 420;
+    const maxPages   = ivl === '1m' ? 5 : ivl === '10m' ? 6 : 14;
 
     const appKey = process.env.KIS_APP_KEY, appSecret = process.env.KIS_APP_SECRET;
     if (!appKey || !appSecret) return res.status(500).json({ error: 'KIS API 키 미설정' });
