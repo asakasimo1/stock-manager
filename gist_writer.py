@@ -304,7 +304,7 @@ def log_trade(
     logger.info("[Gist] 거래 버퍼에 추가: %s %s %d주 (버퍼 %d건)", trade_type, ticker, qty, len(_pending_trades))
 
 
-def flush_trades(extra_files: dict | None = None) -> bool:
+def flush_trades(extra_files: dict = None) -> bool:
     """버퍼에 쌓인 거래 내역을 시장별(코인/주식) 파일에 나눠서 Gist에 저장.
 
     2026-08-25 — extra_files 추가(레이트리밋 완화). 예전엔 호출부(job_scalp_coin.py 등)가
