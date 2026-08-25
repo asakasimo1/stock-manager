@@ -193,13 +193,27 @@ async function handleStockGridJobs(req, res, gistId, ghToken) {
     return res.status(ok ? 200 : 500).json(ok ? list[idx] : { error: '저장 실패' });
   }
 
+  // stock-grid 잡은 id가 없어(위 PATCH 주석 참고) ticker로 매칭한다 — 기존엔
+  // id로만 찾아서 항상 못 찾고도 ok:true를 반환, 실제로는 아무것도 안
+  // 지워지는 채 "중단"이 조용히 무효였던 버그(2026-08-25 발견: 씨에스윈드
+  // 그리드가 중단 클릭 후에도 계속 active로 남아있던 것으로 확인). coin-grid
+  // DELETE와 동일하게 활성 상태면 daemon이 미체결 주문을 정리할 수 있도록
+  // 즉시 삭제 대신 status='stopping'으로 전환.
   if (req.method === 'DELETE') {
-    const { id } = req.query;
-    if (!id) return res.status(400).json({ error: 'id 필수' });
+    const { ticker } = req.query;
+    if (!ticker) return res.status(400).json({ error: 'ticker 필수' });
     const jobs = await readGistFile(gistId, ghToken, FILENAME);
-    const list = (Array.isArray(jobs) ? jobs : []).filter(j => j.id !== id);
+    const list = Array.isArray(jobs) ? jobs : [];
+    const idx  = list.findIndex(j => j.ticker === ticker);
+    if (idx >= 0) {
+      if (['active', 'init', 'reinit'].includes(list[idx].status)) {
+        list[idx].status = 'stopping';
+      } else {
+        list.splice(idx, 1);
+      }
+    }
     const ok = await writeGistFile(gistId, ghToken, FILENAME, list);
-    return res.status(ok ? 200 : 500).json(ok ? { ok: true } : { error: '삭제 실패' });
+    return res.status(ok ? 200 : 500).json(ok ? { ok: true } : { error: '처리 실패' });
   }
   return res.status(405).json({ error: 'Method not allowed' });
 }

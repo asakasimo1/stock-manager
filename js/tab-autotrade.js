@@ -1332,9 +1332,12 @@ async function agSaveGridEdit(ticker) {
 }
 
 // ── 중단 ──────────────────────────────────────────────────────
-async function agStop(id) {
+// stock-grid 잡은 id가 없어 ticker로 식별한다(agSaveGridEdit/PATCH와 동일
+// 패턴) — 예전엔 job.id(=undefined)로 호출해서 서버가 못 찾고도 ok:true를
+// 반환, 클릭해도 실제로는 중단이 전혀 안 되던 버그였음.
+async function agStop(ticker) {
   if (!confirm('그리드를 중단하고 모든 미체결 주문을 취소하시겠습니까?')) return;
-  const r = await fetch(`/api/stock-grid?id=${id}`, { method: 'DELETE' });
+  const r = await fetch(`/api/stock-grid?ticker=${encodeURIComponent(ticker)}`, { method: 'DELETE' });
   if (r.ok) await atLoadAll();
 }
 
@@ -1396,7 +1399,7 @@ function agRenderJobs() {
         </div>
         <div style="display:flex;gap:6px">
           ${canStop ? `<button onclick="agToggleGridEdit('${job.ticker}')" style="padding:3px 10px;border:1px solid var(--border);border-radius:6px;background:none;font-size:11px;color:var(--muted);cursor:pointer">${_agEditingTicker === job.ticker ? '닫기' : '편집'}</button>` : ''}
-          ${canStop ? `<button onclick="agStop('${job.id}')" style="padding:3px 10px;background:none;border:1px solid var(--red);border-radius:6px;font-size:11px;color:var(--red);cursor:pointer">중단</button>` : ''}
+          ${canStop ? `<button onclick="agStop('${job.ticker}')" style="padding:3px 10px;background:none;border:1px solid var(--red);border-radius:6px;font-size:11px;color:var(--red);cursor:pointer">중단</button>` : ''}
         </div>
       </div>
       ${escapeHtml}
