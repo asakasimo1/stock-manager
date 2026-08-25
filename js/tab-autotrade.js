@@ -1135,6 +1135,7 @@ function ctCheckDaemonStatus() {
 // ═══════════════════════════════════════════════════════════════
 let _agJobs = [];
 let _agAcTimer = null;
+let _agCurrentPrice = 0;
 let _asJobs = [];  // 초단타(스캘핑) 잡 — 일별 손익현황 합산용
 
 // ── 종목 자동완성 ──────────────────────────────────────────────
@@ -1174,14 +1175,39 @@ function selectAgStock(ticker, name) {
   fetch(`/api/stock?ticker=${ticker}`).then(r=>r.json()).then(d=>{
     const el = document.getElementById('ag-price-hint');
     if (el && d.price) {
-      el.textContent = `현재가 ${d.price.toLocaleString()}원`;
-      // 상하한 자동 제안
-      const low  = Math.floor(d.price * 0.9 / 100) * 100;
-      const high = Math.ceil(d.price * 1.1 / 100) * 100;
-      const loEl = document.getElementById('ag-lower'); if(loEl && !loEl.value) loEl.value = low;
-      const hiEl = document.getElementById('ag-upper'); if(hiEl && !hiEl.value) hiEl.value = high;
+      el.textContent = `현재가 ${d.price.toLocaleString()}원 — 격자 수와 간격을 설정하면 범위가 자동 계산됩니다`;
+      _agCurrentPrice = d.price;
+      agGridPreview();
     }
   }).catch(()=>{});
+}
+
+// ── 격자 수 기반 범위 자동계산 (코인 그리드와 동일 방식) ────────
+function _agCalcRange(count, pct, curPrice) {
+  const nBelow = Math.ceil(count / 2);
+  const nAbove = count - nBelow;
+  const lower  = Math.round(curPrice / Math.pow(1 + pct / 100, nBelow) / 100) * 100;
+  const upper  = Math.round(curPrice * Math.pow(1 + pct / 100, nAbove + 1) / 100) * 100;
+  return { lower, upper };
+}
+
+function agGridPreview() {
+  const count = +document.getElementById('ag-count')?.value || 0;
+  const pct   = +document.getElementById('ag-pct')?.value   || 1.5;
+  const krw   = +document.getElementById('ag-krw')?.value   || 0;
+  const el    = document.getElementById('ag-preview');
+  if (!el) return;
+  if (!count || !_agCurrentPrice) { el.textContent = _agCurrentPrice ? '' : '종목을 먼저 선택하세요'; return; }
+  if (pct < 0.5) { el.textContent = '간격은 0.5% 이상이어야 합니다'; return; }
+
+  const { lower, upper } = _agCalcRange(count, pct, _agCurrentPrice);
+  const loEl = document.getElementById('ag-lower');
+  const hiEl = document.getElementById('ag-upper');
+  if (loEl) loEl.value = lower;
+  if (hiEl) hiEl.value = upper;
+
+  const totalKrw = count * krw;
+  el.innerHTML = `범위: <b>${lower.toLocaleString()}~${upper.toLocaleString()}원</b>${krw ? ` &nbsp;|&nbsp; 총 투자금: <b>${totalKrw.toLocaleString()}원</b>` : ''}`;
 }
 
 // ── 폼 토글 ───────────────────────────────────────────────────
@@ -1192,6 +1218,21 @@ function agToggleForm() {
   const open = form.style.display === 'none' || !form.style.display;
   form.style.display = open ? 'block' : 'none';
   if (btn) btn.textContent = open ? '✕ 닫기' : '+ 추가';
+  if (open) {
+    ['ag-name','ag-ticker','ag-lower','ag-upper','ag-krw','ag-reinit'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.value = '';
+    });
+    document.getElementById('ag-count').value = '20';
+    document.getElementById('ag-pct').value = '1.5';
+    _agCurrentPrice = 0;
+    const tickerDisp = document.getElementById('ag-ticker-display');
+    if (tickerDisp) tickerDisp.textContent = '—';
+    const hint = document.getElementById('ag-price-hint');
+    if (hint) hint.textContent = '';
+    document.getElementById('ag-preview').textContent = '';
+    document.getElementById('ag-msg').textContent = '';
+  }
 }
 
 // ── 등록 ──────────────────────────────────────────────────────
@@ -1351,7 +1392,7 @@ function agRenderJobs() {
           <span style="font-weight:700;font-size:13px">${job.name || job.ticker}</span>
           <span style="font-size:11px;color:var(--muted);margin-left:6px">${job.ticker}</span>
           <span style="font-size:11px;color:${statusColor[job.status]};margin-left:6px;font-weight:600">${statusLabel[job.status]||job.status}</span>
-          <span id="ag-grid-curprice-${job.ticker}" style="color:#8b5cf6;font-size:11px;font-weight:700;margin-left:8px">${_ctPriceCache[job.ticker]?.priceText ? `현재가 ${_ctPriceCache[job.ticker].priceText}` : '현재가 조회중...'}</span>
+          ${job.status !== 'stopped' ? `<span id="ag-grid-curprice-${job.ticker}" style="color:#8b5cf6;font-size:11px;font-weight:700;margin-left:8px">${_ctPriceCache[job.ticker]?.priceText ? `현재가 ${_ctPriceCache[job.ticker].priceText}` : '현재가 조회중...'}</span>` : ''}
         </div>
         <div style="display:flex;gap:6px">
           ${canStop ? `<button onclick="agToggleGridEdit('${job.ticker}')" style="padding:3px 10px;border:1px solid var(--border);border-radius:6px;background:none;font-size:11px;color:var(--muted);cursor:pointer">${_agEditingTicker === job.ticker ? '닫기' : '편집'}</button>` : ''}

@@ -902,27 +902,35 @@
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
           <div>
-            <div style="font-size:10px;color:var(--muted);margin-bottom:3px">하한 가격 (원) *</div>
+            <div style="font-size:10px;color:var(--muted);margin-bottom:3px">격자 수</div>
+            <input id="ag-count" type="number" value="20" min="4" max="100"
+              oninput="agGridPreview()"
+              style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:13px;box-sizing:border-box">
+          </div>
+          <div>
+            <div style="font-size:10px;color:var(--muted);margin-bottom:3px">격자 간격 (%)</div>
+            <input id="ag-pct" type="number" value="1.5" min="0.5" step="0.1"
+              oninput="agGridPreview()"
+              style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:13px;box-sizing:border-box">
+          </div>
+        </div>
+        <div id="ag-preview" style="font-size:11px;color:var(--muted);margin-bottom:8px;min-height:14px"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+          <div>
+            <div style="font-size:10px;color:var(--muted);margin-bottom:3px">하한 가격 (원) * <span style="color:var(--muted)">(자동계산, 수정 가능)</span></div>
             <input id="ag-lower" type="number" min="0" placeholder="예: 13000"
               style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:13px;box-sizing:border-box">
           </div>
           <div>
-            <div style="font-size:10px;color:var(--muted);margin-bottom:3px">상한 가격 (원) *</div>
+            <div style="font-size:10px;color:var(--muted);margin-bottom:3px">상한 가격 (원) * <span style="color:var(--muted)">(자동계산, 수정 가능)</span></div>
             <input id="ag-upper" type="number" min="0" placeholder="예: 17000"
               style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:13px;box-sizing:border-box">
           </div>
         </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
-          <div>
-            <div style="font-size:10px;color:var(--muted);margin-bottom:3px">격자 간격 (%)</div>
-            <input id="ag-pct" type="number" value="1.5" min="0.5" step="0.1"
-              style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:13px;box-sizing:border-box">
-          </div>
-          <div>
-            <div style="font-size:10px;color:var(--muted);margin-bottom:3px">격자당 금액 (원) *</div>
-            <input id="ag-krw" type="number" min="10000" step="10000" placeholder="예: 100000"
-              style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:13px;box-sizing:border-box">
-          </div>
+        <div style="margin-bottom:8px">
+          <div style="font-size:10px;color:var(--muted);margin-bottom:3px">격자당 금액 (원) *</div>
+          <input id="ag-krw" type="number" min="10000" step="10000" placeholder="예: 100000"
+            style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:13px;box-sizing:border-box">
         </div>
         <div style="margin-bottom:10px">
           <div style="font-size:10px;color:var(--muted);margin-bottom:3px">자동 재초기화 (분, 0=비활성)</div>
