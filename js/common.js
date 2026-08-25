@@ -540,6 +540,9 @@ async function renderGridChart(containerId, job, curPrice, qtyField, ticker, isC
                                // 실시간 폴링 현재가("현재" 점선)와 다른 값이 동시에 떠서
                                // 혼동을 줌(사용자 실측: "빨간바탕 흰색 2013이 뭐냐" 질문).
                                // 실시간 현재가는 이미 아래 "현재" 라인이 대신하므로 끈다.
+    priceFormat: { type: 'price', precision: 0, minMove: 1 },  // 원화는 소수점 단위가
+                               // 없는데 라이브러리 기본값이 소수 둘째자리(.00)까지
+                               // 표시해서 축·툴팁이 지저분했음 — 정수 단위로 고정.
   });
   if (candles.length) series.setData(candles);
 
