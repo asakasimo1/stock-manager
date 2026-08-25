@@ -7,6 +7,11 @@
 /** KIS API 토큰 캐시 (Naver API 실패 시 폴백용) */
 let _kisTokenCache = null;
 
+// 그리드 매매 분봉 차트용 — 시장(KRX/NXT)별 원본 1분봉 캐시. warm 인스턴스
+// 간 재사용(위 _kisTokenCache와 동일 패턴). "ticker:interval:market" → { bars, fetchedAt }.
+const _marketBarsCache = {};
+const CANDLE_CACHE_TTL_MS = { '1m': 20_000, '10m': 45_000, '1h': 90_000 };
+
 // 실계좌: openapi.koreainvestment.com:9443
 // 모의투자: openapivts.koreainvestment.com:29443 (PAPER_TRADE=true 시)
 // 실계좌 우선 시도 → 403 시 모의투자 자동 폴백
@@ -290,7 +295,7 @@ export default async function handler(req, res) {
       // 극히 일부(약 1시간)만 모으고 조용히 중단됐음(2026-08-25 debug 계측으로
       // 확인: page 0/1은 정상, page 2에서 httpBreak:500). 페이지 사이 텀을 둬서
       // 회피.
-      async function fetchMarketBars(market) {
+      async function fetchMarketBars(market, pages = maxPages) {
         const kst = new Date(Date.now() + 9 * 3600 * 1000);
         const nowMin = kst.getUTCHours() * 60 + kst.getUTCMinutes();
         // KRX('J')는 15:30 마감 이후 "지금 시각"으로 조회하면 output2가 아예
@@ -302,7 +307,7 @@ export default async function handler(req, res) {
         let hour1 = String(Math.floor(anchorMin / 60)).padStart(2, '0') + String(anchorMin % 60).padStart(2, '0') + '00';
         const bars = [];
         const seenHours = new Set();
-        for (let page = 0; page < maxPages; page++) {
+        for (let page = 0; page < pages; page++) {
           if (page > 0) await new Promise(r => setTimeout(r, 250));
           const params = new URLSearchParams({
             FID_COND_MRKT_DIV_CODE: market, FID_INPUT_ISCD: ticker,
@@ -359,11 +364,47 @@ export default async function handler(req, res) {
       // 거래시간이 거의 겹치지 않아(KRX 09:00~15:30, NXT 08:00~08:50/15:30~20:00)
       // 같은 분에 양쪽 다 봉이 있는 경우는 드물지만, 겹치면 KRX를 우선한다
       // (더 유동성이 큰 기준가로 간주).
+      // 코인 차트는 Upbit가 캔들을 한 번에 통째로 주는 반면, 이쪽은 매 요청마다
+      // KRX+NXT 각각 최대 12페이지(0.25~0.65초 텀 포함)를 처음부터 다시 훑어서
+      // 10초 넘게 걸림(2026-08-25 사용자 리포트) — 대부분의 과거 구간은 직전
+      // 요청과 달라질 게 없는데도 매번 통째로 재수집하고 있던 게 원인. 모듈
+      // 스코프 캐시(warm 인스턴스 간 재사용, _kisTokenCache와 동일 패턴)에
+      // 시장별 원본 1분봉을 보관해뒀다가, TTL 이내면 KIS 호출 없이 즉시
+      // 반환하고, TTL이 지났어도 캐시가 있으면 최신 1페이지(최근 ~30분)만
+      // 새로 받아 이어붙인다 — 콜드 상태(서버 재시작 직후 등)일 때만 기존의
+      // 풀 백필을 탄다.
+      async function getMarketBarsCached(market) {
+        const cacheKey = `${ticker}:${ivl}:${market}`;
+        const ttlMs = CANDLE_CACHE_TTL_MS[ivl] || 30_000;
+        const cached = _marketBarsCache[cacheKey];
+        if (cached && (Date.now() - cached.fetchedAt) < ttlMs) return cached.bars;
+
+        let bars;
+        if (cached && cached.bars.length) {
+          const fresh = await fetchMarketBars(market, 1);
+          const merged = [...cached.bars];
+          const seen = new Set(merged.map(b => b.date + b.time));
+          for (const bar of fresh) {
+            const key = bar.date + bar.time;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            merged.push(bar);
+          }
+          merged.sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
+          bars = merged.length > targetMin * 2 ? merged.slice(-targetMin * 2) : merged;
+        } else {
+          bars = await fetchMarketBars(market);
+        }
+        _marketBarsCache[cacheKey] = { bars, fetchedAt: Date.now() };
+        return bars;
+      }
+
       // 순차 호출 — KIS 초당 호출 한도 때문에(위 fetchMarketBars 주석 참고) 두
       // 시장을 동시에 페이징하면 합산 호출 빈도가 배로 늘어 같은 500 문제가
-      // 재발할 수 있어 병렬(Promise.all) 대신 순차로 처리한다.
-      const krxBars = await fetchMarketBars('J');
-      const nxtBars = await fetchMarketBars('NX');
+      // 재발할 수 있어 병렬(Promise.all) 대신 순차로 처리한다. 캐시 적중 시엔
+      // 어차피 KIS 호출이 아예 없어 순차 여부가 무의미해짐.
+      const krxBars = await getMarketBarsCached('J');
+      const nxtBars = await getMarketBarsCached('NX');
       const oneMin = [...krxBars];
       const seenKey = new Set(krxBars.map(b => b.date + b.time));
       for (const bar of nxtBars) {
