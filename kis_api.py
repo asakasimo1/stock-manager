@@ -539,6 +539,16 @@ def get_balance() -> dict:
     total_eval = int(output2.get("tot_evlu_amt", 0))    # 총 평가금액
     bfdy_total_eval = int(output2.get("bfdy_tot_asst_evlu_amt", 0))  # 전일 총자산평가금액
 
+    # inquire-balance(TR TTTC8434R)는 시장구분 파라미터가 없는 계좌 단위 API라
+    # prpr(현재가)이 KRX 정규장 종가에서 멈춘 채 NXT 애프터마켓 중엔 갱신이 안 됨
+    # (2026-08-25 실측: 두산에너빌리티 — 정규장 마감가 80,700원이 그대로 찍혀있고
+    # 실제 NXT 체결가는 79,500~80,200원대였는데, 잔고 로그만 계속 80,700원으로
+    # 고정 표시돼 사용자가 매도 미체결을 오해하는 원인이 됨). NXT 시간대에는
+    # 보유종목별로 get_price()(이미 NXT 우선 조회하도록 돼있음)로 현재가를
+    # 다시 받아온다 — 실패 시 balance API가 준 값을 그대로 씀(계좌 조회 자체를
+    # 막지 않기 위한 폴백).
+    refresh_live = _is_nxt_time()
+
     holdings = []
     for item in data.get("output1", []):
         qty = int(item.get("hldg_qty", 0))
@@ -546,6 +556,14 @@ def get_balance() -> dict:
             continue
         avg_price  = int(float(item.get("pchs_avg_pric", 0)))
         eval_price = int(item.get("prpr", 0))
+        if refresh_live:
+            try:
+                live = get_price(item.get("pdno"))
+                live_price = int(live.get("stck_prpr", 0))
+                if live_price > 0:
+                    eval_price = live_price
+            except Exception as e:
+                logger.debug("NXT 현재가 갱신 실패(%s) — balance API 값 유지: %s", item.get("pdno"), e)
         # KIS가 주는 evlu_pfls_rt(평가손익율)는 수수료/세금 미반영 단순 시세차익률이라
         # 여기서 직접 수수료 포함 손익률로 재계산함(매수수수료+매도수수료+거래세 반영).
         cost     = avg_price * qty * (1 + BUY_FEE)
