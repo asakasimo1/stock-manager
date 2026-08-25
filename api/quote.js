@@ -292,7 +292,14 @@ export default async function handler(req, res) {
       // 회피.
       async function fetchMarketBars(market) {
         const kst = new Date(Date.now() + 9 * 3600 * 1000);
-        let hour1 = String(kst.getUTCHours()).padStart(2, '0') + String(kst.getUTCMinutes()).padStart(2, '0') + '00';
+        const nowMin = kst.getUTCHours() * 60 + kst.getUTCMinutes();
+        // KRX('J')는 15:30 마감 이후 "지금 시각"으로 조회하면 output2가 아예
+        // 빈 채로 와서(2026-08-25 실측: NXT 애프터마켓 중 KRX 쪽 통째로 유실,
+        // 화면엔 정규장 캔들이 하나도 안 보였음) 정규장 데이터를 못 모음 —
+        // hour1을 정규장 마감(15:30) 이내로 고정해 항상 실제 데이터가 있는
+        // 시점부터 페이징을 시작한다.
+        const anchorMin = (market === 'J' && nowMin > 15 * 60 + 30) ? 15 * 60 + 30 : nowMin;
+        let hour1 = String(Math.floor(anchorMin / 60)).padStart(2, '0') + String(anchorMin % 60).padStart(2, '0') + '00';
         const bars = [];
         const seenHours = new Set();
         for (let page = 0; page < maxPages; page++) {
