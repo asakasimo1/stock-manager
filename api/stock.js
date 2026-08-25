@@ -36,7 +36,7 @@ async function getNxtPrice(ticker) {
     }
     const { token, base } = _nxtTokenCache;
     const params = new URLSearchParams({ FID_COND_MRKT_DIV_CODE: 'NX', FID_INPUT_ISCD: ticker });
-    const r = await fetch(
+    const doFetch = () => fetch(
       `${base}/uapi/domestic-stock/v1/quotations/inquire-price?${params}`,
       {
         headers: {
@@ -49,7 +49,18 @@ async function getNxtPrice(ticker) {
         },
       }
     );
-    if (!r.ok) return null;
+    let r = await doFetch();
+    if (!r.ok) {
+      // KIS 초당 호출 한도에 걸린 순간적 실패일 수 있음(api/quote.js 분봉
+      // 조회에서 이미 확인된 패턴) — 한 번 더 쉬고 재시도. 여기서 포기하면
+      // 이 함수가 null을 반환해 그리드 카드가 NXT 시세 대신 Naver의 정규장
+      // 종가로 조용히 폴백해버려(2026-08-25 사용자 리포트: 계좌 카드는
+      // 79,900원인데 그리드 카드는 정규장 종가 80,700원으로 다르게 표시)
+      // 재시도 없이는 산발적으로 재발할 수 있음.
+      await new Promise(res => setTimeout(res, 400));
+      r = await doFetch();
+      if (!r.ok) return null;
+    }
     const d = await r.json();
     if (d.rt_cd !== '0') return null;
     const o = d.output;
