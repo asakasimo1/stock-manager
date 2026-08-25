@@ -288,19 +288,36 @@ export default async function handler(req, res) {
       let hour1 = String(kst.getUTCHours()).padStart(2, '0') + String(kst.getUTCMinutes()).padStart(2, '0') + '00';
       const oneMin = []; // {time:'HH:MM:SS', open, high, low, close}
       const seenHours = new Set();
+      // KIS 분봉조회(FHKST03010200)는 초당 호출 한도가 낮아서, 지연 없이 연속
+      // 페이징하면 3번째 호출부터 HTTP 500이 떨어져 6시간 목표(targetMin)의
+      // 극히 일부(약 1시간)만 모으고 조용히 중단됐음(2026-08-25 debug 계측으로
+      // 확인: page 0/1은 정상, page 2에서 httpBreak:500). 페이지 사이 텀을 둬서
+      // 회피.
       for (let page = 0; page < maxPages; page++) {
+        if (page > 0) await new Promise(r => setTimeout(r, 250));
         const params = new URLSearchParams({
           FID_COND_MRKT_DIV_CODE: 'J', FID_INPUT_ISCD: ticker,
           FID_INPUT_HOUR_1: hour1, FID_PW_DATA_INCU_YN: 'Y', FID_ETC_CLS_CODE: '',
         });
-        const r = await fetch(`${base}/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice?${params}`, {
+        let r = await fetch(`${base}/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice?${params}`, {
           headers: {
             'content-type': 'application/json; charset=utf-8',
             authorization: `Bearer ${token}`, appkey: appKey, appsecret: appSecret,
             tr_id: 'FHKST03010200', custtype: 'P',
           },
         });
-        if (!r.ok) break;
+        if (!r.ok) {
+          // 순간적인 초당 한도 초과일 수 있으니 한 번은 더 쉬고 재시도.
+          await new Promise(res => setTimeout(res, 400));
+          r = await fetch(`${base}/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice?${params}`, {
+            headers: {
+              'content-type': 'application/json; charset=utf-8',
+              authorization: `Bearer ${token}`, appkey: appKey, appsecret: appSecret,
+              tr_id: 'FHKST03010200', custtype: 'P',
+            },
+          });
+          if (!r.ok) break;
+        }
         const d = await r.json();
         if (d.rt_cd !== '0' || !Array.isArray(d.output2) || !d.output2.length) break;
         let earliest = null;
