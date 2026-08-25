@@ -304,35 +304,48 @@ def log_trade(
     logger.info("[Gist] 거래 버퍼에 추가: %s %s %d주 (버퍼 %d건)", trade_type, ticker, qty, len(_pending_trades))
 
 
-def flush_trades():
+def flush_trades(extra_files: dict | None = None) -> bool:
     """버퍼에 쌓인 거래 내역을 시장별(코인/주식) 파일에 나눠서 Gist에 저장.
-    거래가 없으면 아무것도 하지 않습니다.
-    한 프로세스는 보통 한 시장만 거래하므로 대부분 1회 GET+PATCH로 끝나고,
-    드물게 같은 flush 사이클에 코인+주식이 섞여 있으면 시장별로 각각 처리.
-    저장이 끝내 실패하면(재시도 3회 소진) 그 시장 분만 버퍼에 남겨둬서 다음
-    flush_trades() 호출(다음 폴링 사이클) 때 다시 시도함 — 여기서 무조건
-    clear()하면 매도 체결 기록 자체가 통째로 유실돼 버림."""
+
+    2026-08-25 — extra_files 추가(레이트리밋 완화). 예전엔 호출부(job_scalp_coin.py 등)가
+    "잡 상태 저장(_save_jobs) → 거래내역 저장(flush_trades)"을 매번 별도의 PATCH 2번으로
+    나눠 보냈는데, 5초 주기 스캘핑 데몬에서 이게 GitHub Gist 쓰기 레이트리밋(시간당 약
+    100회)을 상시 초과하는 주요 원인으로 확인됨(2026-08-24 실측: 하루 403 748건, 유령
+    포지션 사고의 근본 원인). extra_files로 잡 상태(예: {"scalp_coin_jobs.json": jobs})를
+    같이 넘기면 거래내역과 한 번의 PATCH로 묶어서 보내 요청 수를 절반으로 줄인다.
+    거래 버퍼가 비어있어도 extra_files만 있으면 그것만이라도 저장한다.
+
+    한 프로세스는 보통 한 시장만 거래하므로 대부분 1회 GET+PATCH로 끝나고, 드물게 같은
+    flush 사이클에 코인+주식이 섞여 있으면 한 번의 PATCH에 두 파일 다 실어보낸다.
+    저장이 실패하면(재시도 3회 소진) 거래 버퍼 전체를 유지해서 다음 flush_trades()
+    호출(다음 폴링 사이클) 때 다시 시도함 — 여기서 무조건 비우면 매도 체결 기록 자체가
+    통째로 유실돼 버림. 반환값: 저장 성공 여부(extra_files 포함)."""
     if not _pending_trades:
-        return
+        if extra_files:
+            return _write_gist(extra_files)
+        return True
+
     count = len(_pending_trades)
     by_market: dict[str, list] = {}
     for trade in _pending_trades:
         by_market.setdefault(_market_of(trade.get("ticker")), []).append(trade)
 
-    logger.info("[Gist] 거래 내역 %d건 일괄 저장 시작 (%s)",
-                count, {m: len(v) for m, v in by_market.items()})
-
-    still_pending = []
+    files_dict: dict = {}
     for market, trades in by_market.items():
         records = _read_trades(market)
         for trade in reversed(trades):   # 최신 순 유지
             records.insert(0, trade)
-        ok = _write_trades(records[:MAX_HISTORY], market)
-        if not ok:
-            logger.error("[Gist] 거래 내역 저장 실패(%s) — 버퍼 유지, 다음 사이클에 재시도 (%d건)", market, len(trades))
-            still_pending.extend(trades)
+        files_dict[_trades_filename(market)] = records[:MAX_HISTORY]
+    if extra_files:
+        files_dict.update(extra_files)
 
-    _pending_trades[:] = still_pending
-    _save_pending_trades()
-    if not still_pending:
+    logger.info("[Gist] 거래 내역 %d건 + 잡 상태 일괄 저장 시작 (%s)",
+                count, {m: len(v) for m, v in by_market.items()})
+    ok = _write_gist(files_dict)
+    if ok:
+        _pending_trades[:] = []
+        _save_pending_trades()
         logger.info("[Gist] flush_trades 완료 (%d건)", count)
+    else:
+        logger.error("[Gist] 거래 내역+잡 상태 저장 실패 — 버퍼 유지, 다음 사이클에 재시도 (%d건)", count)
+    return ok

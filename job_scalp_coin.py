@@ -686,9 +686,12 @@ def main():
         changed = True
         logger.info("지난 완료 자동발굴 잡 %d건 정리", pruned)
 
-    if changed:
-        _save_jobs(jobs)
-    gist_writer.flush_trades()
+    # 잡 상태와 거래내역을 한 번의 PATCH로 묶어서 저장 — 레이트리밋 완화(2026-08-25,
+    # gist_writer.flush_trades() 주석 참고). changed=False면 잡 파일은 안 보내고
+    # 거래내역만(있으면) 보냄 — flush_trades가 이미 그 경우를 처리함.
+    ok = gist_writer.flush_trades(extra_files={"scalp_coin_jobs.json": jobs} if changed else None)
+    if changed and not ok:
+        logger.error("scalp_coin_jobs.json 저장 실패(거래내역과 묶어서 시도) — 이번 사이클의 잡 상태 변경이 유실됐을 수 있음")
 
 
 if __name__ == "__main__":
