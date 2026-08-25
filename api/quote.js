@@ -284,60 +284,86 @@ export default async function handler(req, res) {
       }
       const { token, base } = _kisTokenCache;
 
-      const kst = new Date(Date.now() + 9 * 3600 * 1000);
-      let hour1 = String(kst.getUTCHours()).padStart(2, '0') + String(kst.getUTCMinutes()).padStart(2, '0') + '00';
-      const oneMin = []; // {time:'HH:MM:SS', open, high, low, close}
-      const seenHours = new Set();
+      // 시장 하나(KRX 'J' 또는 NXT 'NX')분 1분봉을 페이징 수집.
       // KIS 분봉조회(FHKST03010200)는 초당 호출 한도가 낮아서, 지연 없이 연속
       // 페이징하면 3번째 호출부터 HTTP 500이 떨어져 6시간 목표(targetMin)의
       // 극히 일부(약 1시간)만 모으고 조용히 중단됐음(2026-08-25 debug 계측으로
       // 확인: page 0/1은 정상, page 2에서 httpBreak:500). 페이지 사이 텀을 둬서
       // 회피.
-      for (let page = 0; page < maxPages; page++) {
-        if (page > 0) await new Promise(r => setTimeout(r, 250));
-        const params = new URLSearchParams({
-          FID_COND_MRKT_DIV_CODE: 'J', FID_INPUT_ISCD: ticker,
-          FID_INPUT_HOUR_1: hour1, FID_PW_DATA_INCU_YN: 'Y', FID_ETC_CLS_CODE: '',
-        });
-        let r = await fetch(`${base}/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice?${params}`, {
-          headers: {
-            'content-type': 'application/json; charset=utf-8',
-            authorization: `Bearer ${token}`, appkey: appKey, appsecret: appSecret,
-            tr_id: 'FHKST03010200', custtype: 'P',
-          },
-        });
-        if (!r.ok) {
-          // 순간적인 초당 한도 초과일 수 있으니 한 번은 더 쉬고 재시도.
-          await new Promise(res => setTimeout(res, 400));
-          r = await fetch(`${base}/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice?${params}`, {
+      async function fetchMarketBars(market) {
+        const kst = new Date(Date.now() + 9 * 3600 * 1000);
+        let hour1 = String(kst.getUTCHours()).padStart(2, '0') + String(kst.getUTCMinutes()).padStart(2, '0') + '00';
+        const bars = [];
+        const seenHours = new Set();
+        for (let page = 0; page < maxPages; page++) {
+          if (page > 0) await new Promise(r => setTimeout(r, 250));
+          const params = new URLSearchParams({
+            FID_COND_MRKT_DIV_CODE: market, FID_INPUT_ISCD: ticker,
+            FID_INPUT_HOUR_1: hour1, FID_PW_DATA_INCU_YN: 'Y', FID_ETC_CLS_CODE: '',
+          });
+          let r = await fetch(`${base}/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice?${params}`, {
             headers: {
               'content-type': 'application/json; charset=utf-8',
               authorization: `Bearer ${token}`, appkey: appKey, appsecret: appSecret,
               tr_id: 'FHKST03010200', custtype: 'P',
             },
           });
-          if (!r.ok) break;
+          if (!r.ok) {
+            // 순간적인 초당 한도 초과일 수 있으니 한 번은 더 쉬고 재시도.
+            await new Promise(res => setTimeout(res, 400));
+            r = await fetch(`${base}/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice?${params}`, {
+              headers: {
+                'content-type': 'application/json; charset=utf-8',
+                authorization: `Bearer ${token}`, appkey: appKey, appsecret: appSecret,
+                tr_id: 'FHKST03010200', custtype: 'P',
+              },
+            });
+            if (!r.ok) break;
+          }
+          const d = await r.json();
+          if (d.rt_cd !== '0' || !Array.isArray(d.output2) || !d.output2.length) break;
+          let earliest = null;
+          for (const row of d.output2) {
+            const t = row.stck_cntg_hour; // HHMMSS
+            if (seenHours.has(t)) continue;
+            seenHours.add(t);
+            bars.push({
+              date: row.stck_bsop_date, time: t,
+              open: Number(row.stck_oprc), high: Number(row.stck_hgpr),
+              low: Number(row.stck_lwpr), close: Number(row.stck_prpr),
+            });
+            if (earliest === null || t < earliest) earliest = t;
+          }
+          if (bars.length >= targetMin || !earliest || earliest === hour1) break;
+          // 다음 페이지는 이번 페이지의 가장 이른 시각 1분 전부터
+          const h = Number(earliest.slice(0, 2)), m = Number(earliest.slice(2, 4));
+          const totalMin = h * 60 + m - 1;
+          if (totalMin < 0) break; // 자정 이전 — 더 갈 데 없음
+          hour1 = String(Math.floor(totalMin / 60)).padStart(2, '0') + String(totalMin % 60).padStart(2, '0') + '00';
         }
-        const d = await r.json();
-        if (d.rt_cd !== '0' || !Array.isArray(d.output2) || !d.output2.length) break;
-        let earliest = null;
-        for (const row of d.output2) {
-          const t = row.stck_cntg_hour; // HHMMSS
-          if (seenHours.has(t)) continue;
-          seenHours.add(t);
-          oneMin.push({
-            date: row.stck_bsop_date, time: t,
-            open: Number(row.stck_oprc), high: Number(row.stck_hgpr),
-            low: Number(row.stck_lwpr), close: Number(row.stck_prpr),
-          });
-          if (earliest === null || t < earliest) earliest = t;
-        }
-        if (oneMin.length >= targetMin || !earliest || earliest === hour1) break;
-        // 다음 페이지는 이번 페이지의 가장 이른 시각 1분 전부터
-        const h = Number(earliest.slice(0, 2)), m = Number(earliest.slice(2, 4));
-        const totalMin = h * 60 + m - 1;
-        if (totalMin < 0) break; // 자정 이전 — 더 갈 데 없음
-        hour1 = String(Math.floor(totalMin / 60)).padStart(2, '0') + String(totalMin % 60).padStart(2, '0') + '00';
+        return bars;
+      }
+
+      // KRX 정규장 + NXT(프리/애프터마켓) 통합 차트 — 그리드 매매가 NXT
+      // 시간대에도 계속 도는데(job_stock_grid.py의 market_open 판정 참고)
+      // 차트는 KRX('J')만 조회해서 15:30 이후 캔들이 아예 안 그려지던 문제
+      // (2026-08-25 사용자 리포트: NXT장에서 등록한 그리드의 체결 흐름이 차트에
+      // 하나도 안 보임) — NX 마켓도 같이 모아서 시간순으로 합친다. 두 세션은
+      // 거래시간이 거의 겹치지 않아(KRX 09:00~15:30, NXT 08:00~08:50/15:30~20:00)
+      // 같은 분에 양쪽 다 봉이 있는 경우는 드물지만, 겹치면 KRX를 우선한다
+      // (더 유동성이 큰 기준가로 간주).
+      // 순차 호출 — KIS 초당 호출 한도 때문에(위 fetchMarketBars 주석 참고) 두
+      // 시장을 동시에 페이징하면 합산 호출 빈도가 배로 늘어 같은 500 문제가
+      // 재발할 수 있어 병렬(Promise.all) 대신 순차로 처리한다.
+      const krxBars = await fetchMarketBars('J');
+      const nxtBars = await fetchMarketBars('NX');
+      const oneMin = [...krxBars];
+      const seenKey = new Set(krxBars.map(b => b.date + b.time));
+      for (const bar of nxtBars) {
+        const key = bar.date + bar.time;
+        if (seenKey.has(key)) continue;
+        seenKey.add(key);
+        oneMin.push(bar);
       }
 
       // 시간 오름차순 정렬 후 bucketMin 단위로 집계(1분봉은 사실상 그대로 통과)
