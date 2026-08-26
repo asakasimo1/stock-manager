@@ -1251,10 +1251,14 @@ async function agRegister() {
   if (upper <= lower) { if(msgEl) msgEl.innerHTML='<span style="color:var(--red)">상한이 하한보다 커야 합니다</span>'; return; }
   if (krw < 10000) { if(msgEl) msgEl.innerHTML='<span style="color:var(--red)">격자당 금액 1만원 이상</span>'; return; }
   if (gridPct < 0.5) { if(msgEl) msgEl.innerHTML='<span style="color:var(--red)">격자 간격 0.5% 이상</span>'; return; }
+  // 2026-08-26 — 코인 그리드(tab-cointrade.js ctAddGridJob)와 동일하게 최소값을
+  // 5분으로 맞춤. 예전엔 여기만 10분 문턱이 남아있어서 5~9분을 입력해도 경고 없이
+  // 조용히 무시(미설정 처리)됐음 — 백엔드(job_stock_grid.py) 최소값은 이미 5분.
+  if (reinit > 0 && reinit < 5) { if(msgEl) msgEl.innerHTML='<span style="color:var(--red)">이탈 자동재설정은 5분 이상이어야 합니다</span>'; return; }
 
   if(msgEl) msgEl.textContent = '등록 중...';
   const payload = { ticker, name, lower_price: lower, upper_price: upper, grid_pct: gridPct, krw_per_grid: krw };
-  if (reinit >= 10) payload.auto_reinit_minutes = reinit;
+  if (reinit >= 5) payload.auto_reinit_minutes = reinit;
 
   try {
     const r = await fetch('/api/stock-grid', {

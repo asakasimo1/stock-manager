@@ -934,9 +934,9 @@
         </div>
         <div style="margin-bottom:10px">
           <div style="font-size:10px;color:var(--muted);margin-bottom:3px">자동 재초기화 (분, 0=비활성)</div>
-          <input id="ag-reinit" type="number" value="0" min="0"
+          <input id="ag-reinit" type="number" value="15" min="5"
             style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:13px;box-sizing:border-box">
-          <div style="font-size:10px;color:var(--muted);margin-top:3px">범위 이탈 후 N분 경과 시 현재가 기준 자동 재설정</div>
+          <div style="font-size:10px;color:var(--muted);margin-top:3px">범위 이탈(상단 돌파·하단 이탈 모두 동일 적용) 후 N분 경과 시 현재가 기준 자동 재설정</div>
         </div>
         <button onclick="agRegister()" style="width:100%;padding:9px;background:#7c3aed;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">
           그리드 등록
@@ -1091,8 +1091,8 @@
         <input id="cg-krw" type="number" placeholder="예: 10000" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:13px;box-sizing:border-box">
       </div>
       <div>
-        <div style="font-size:10px;color:var(--muted);margin-bottom:3px">범위이탈 재설정 (분, 선택)</div>
-        <input id="cg-reinit" type="number" placeholder="미입력 시 알림만" min="5" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:13px;box-sizing:border-box">
+        <div style="font-size:10px;color:var(--muted);margin-bottom:3px">범위이탈 재설정 (분, 상단·하단 공통)</div>
+        <input id="cg-reinit" type="number" value="15" min="5" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:13px;box-sizing:border-box">
       </div>
     </div>
     <div id="cg-preview" style="font-size:11px;color:var(--muted);background:var(--bg);border-radius:6px;padding:8px;margin-bottom:10px"></div>
