@@ -665,9 +665,20 @@ def _check_out_of_range(job: dict, cur_price: int) -> bool:
         step = 1 + float(job.get("grid_pct", 1.5)) / 100
         nl = kis_api.round_price(cur_price / step ** n_each)
         nu = kis_api.round_price(cur_price * step ** n_each)
+        old_lower, old_upper = job.get("lower_price"), job.get("upper_price")
         job.update(lower_price=nl, upper_price=nu, status="reinit",
                    out_of_range_since=None, out_of_range_notified=False)
         modified = True
+        # 2026-08-26 — 이탈 자동재설정이 알림(notify.send)만 남기고 job 자체엔
+        # 아무 기록도 안 남아서, 대시보드에서 "몇 시에 왜 재설정됐는지"를 나중에
+        # 다시 볼 방법이 없었음(사용자 요청, coin 그리드와 동일하게) — 최근 20건만 보관.
+        hist = job.setdefault("reinit_history", [])
+        hist.append({
+            "ts": now_kst(), "trigger_price": cur_price,
+            "old_range": f"{old_lower:,.0f}~{old_upper:,.0f}",
+            "new_range": f"{nl:,}~{nu:,}",
+        })
+        job["reinit_history"] = hist[-20:]
         notify.send(f"🔄 <b>그리드 자동재초기화</b>  {name}\n  새 범위 {nl:,}~{nu:,}원")
 
     return modified

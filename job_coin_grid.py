@@ -800,12 +800,23 @@ def _check_auto_reinit(job: dict, cur_price: float) -> bool:
     if elapsed_min < reinit_min:
         return False
 
+    old_lower, old_upper = job["lower_price"], job["upper_price"]
     half = (upper - lower) / 2
     job["lower_price"] = round(cur_price - half, 2)
     job["upper_price"] = round(cur_price + half, 2)
     job.pop("escaped_at", None)
     _escape_times.pop(job.get("ticker", ""), None)
     job["status"] = "reinit"
+    # 2026-08-26 — 이탈 자동재설정이 알림(notify.send)만 남기고 job 자체엔
+    # 아무 기록도 안 남아서, 대시보드에서 "몇 시에 왜 재설정됐는지"를 나중에
+    # 다시 볼 방법이 없었음(사용자 요청) — 최근 20건만 보관.
+    hist = job.setdefault("reinit_history", [])
+    hist.append({
+        "ts": now_kst(), "trigger_price": round(cur_price, 2),
+        "old_range": f"{old_lower:,.1f}~{old_upper:,.1f}",
+        "new_range": f"{job['lower_price']:,.1f}~{job['upper_price']:,.1f}",
+    })
+    job["reinit_history"] = hist[-20:]
     logger.info("그리드 자동 재설정 트리거: %s → 새 범위 %s~%s원",
                 job.get("name"), f"{job['lower_price']:,.1f}", f"{job['upper_price']:,.1f}")
     return True
