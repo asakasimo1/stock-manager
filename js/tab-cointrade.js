@@ -1021,6 +1021,12 @@ function ctRenderGridJobs() {
       </div>`;
     }
 
+    // 이탈 자동재설정 이력 — 최근 3건만 요약 표시(2026-08-26 사용자 요청).
+    const reinitHist = j.reinit_history || [];
+    const reinitHtml = reinitHist.length ? `<div style="font-size:10px;color:var(--muted);margin-bottom:6px">
+        🔄 재설정 이력: ${reinitHist.slice(-3).reverse().map(h => `${h.ts?.slice(11,16) || '?'} ${h.old_range}→${h.new_range}`).join(' · ')}
+      </div>` : '';
+
     return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
         <div>
@@ -1037,6 +1043,7 @@ function ctRenderGridJobs() {
         </div>
       </div>
       ${escapeHtml}
+      ${reinitHtml}
       <div style="font-size:12px;color:var(--muted);margin-bottom:6px">
         범위: ${Number(j.lower_price).toLocaleString()} ~ ${Number(j.upper_price).toLocaleString()}원
         &nbsp;|&nbsp; 간격: ${j.grid_pct}%

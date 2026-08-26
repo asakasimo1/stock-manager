@@ -1341,6 +1341,17 @@ async function agStop(ticker) {
   if (r.ok) await atLoadAll();
 }
 
+// 이미 중단된(stopped) 잡을 목록에서 완전히 지움 — 서버가 stopped 잡에
+// DELETE를 받으면 stopping 전환 대신 바로 물리삭제하므로(api/coin.js
+// handleStockGridJobs) 같은 엔드포인트를 재사용(2026-08-26, "종료된 잡이
+// 계속 쌓여서 삭제 필요" 요청 — 예전엔 stopped 잡엔 중단 버튼이 아예 없어서
+// 지울 방법이 없었음).
+async function agDelete(ticker) {
+  if (!confirm('종료된 그리드 기록을 삭제하시겠습니까? (되돌릴 수 없습니다)')) return;
+  const r = await fetch(`/api/stock-grid?ticker=${encodeURIComponent(ticker)}`, { method: 'DELETE' });
+  if (r.ok) await atLoadAll();
+}
+
 // ── 렌더 ──────────────────────────────────────────────────────
 function agRenderJobs() {
   const el = document.getElementById('ag-list');
@@ -1389,6 +1400,14 @@ function agRenderJobs() {
       </div>`;
     }
 
+    // 이탈 자동재설정 이력 — 최근 3건만 요약으로 표시(2026-08-26 사용자 요청,
+    // "몇시 몇분에 어떻게 조정되었는지"). 전체 이력은 job.reinit_history에
+    // 최근 20건까지 쌓이지만 카드가 너무 길어지지 않게 최근 것만.
+    const reinitHist = job.reinit_history || [];
+    const reinitHtml = reinitHist.length ? `<div style="font-size:10px;color:var(--muted);margin-top:4px">
+        🔄 재설정 이력: ${reinitHist.slice(-3).reverse().map(h => `${h.ts?.slice(11,16) || '?'} ${h.old_range}→${h.new_range}`).join(' · ')}
+      </div>` : '';
+
     return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
         <div>
@@ -1400,9 +1419,11 @@ function agRenderJobs() {
         <div style="display:flex;gap:6px">
           ${canStop ? `<button onclick="agToggleGridEdit('${job.ticker}')" style="padding:3px 10px;border:1px solid var(--border);border-radius:6px;background:none;font-size:11px;color:var(--muted);cursor:pointer">${_agEditingTicker === job.ticker ? '닫기' : '편집'}</button>` : ''}
           ${canStop ? `<button onclick="agStop('${job.ticker}')" style="padding:3px 10px;background:none;border:1px solid var(--red);border-radius:6px;font-size:11px;color:var(--red);cursor:pointer">중단</button>` : ''}
+          ${job.status === 'stopped' ? `<button onclick="agDelete('${job.ticker}')" style="padding:3px 10px;background:none;border:1px solid var(--border);border-radius:6px;font-size:11px;color:var(--muted);cursor:pointer">삭제</button>` : ''}
         </div>
       </div>
       ${escapeHtml}
+      ${reinitHtml}
       <div style="font-size:11px;color:var(--muted);display:flex;gap:12px;flex-wrap:wrap">
         <span>범위 ${(job.lower_price||0).toLocaleString()}~${(job.upper_price||0).toLocaleString()}원</span>
         <span>간격 ${job.grid_pct||1.5}%</span>
