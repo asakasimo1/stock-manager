@@ -507,6 +507,12 @@ async function renderGridChart(containerId, job, curPrice, qtyField, ticker, isC
     grid: { vertLines: { color: borderColor }, horzLines: { color: borderColor } },
     timeScale: {
       borderColor, timeVisible: true, secondsVisible: false,
+      // 상한/매도/현재/매수/하한 가격선 라벨이 우측 축에 붙어서 그려지는데,
+      // 값들이 서로 가까우면(특히 매수=하한처럼 겹치는 경우) 라벨이 쌓이면서
+      // 폭이 넓어져 최근 캔들(맨 오른쪽)을 그대로 가려버림(2026-08-26 사용자
+      // 리포트). rightOffset으로 마지막 캔들 뒤에 빈 공간을 둬서 라벨이 그
+      // 여백 위에만 걸치고 실제 캔들은 안 가리게 함.
+      rightOffset: 8,
       tickMarkFormatter: (time, tickMarkType) => {
         if (typeof time === 'string') {
           const { y, mo, d } = _dateStrParts(time);
