@@ -167,8 +167,8 @@ function _renderPortKpi() {
   colorVal(divEl, divTotal);
 
   // 차트
-  _renderPortAsset();
-  _renderPortDonut(etfProfit, stkProfit, ipoProfit, divTotal);
+  _renderPortAsset(etfProfit, stkProfit);
+  _renderIpoDivByStock();
 }
 
 // ── ETF 보유현황 ───────────────────────────────────────────
@@ -386,7 +386,13 @@ function _renderEtfDivChart() {
 }
 
 // ── 자산 현황 도넛 차트 ────────────────────────────────────
-function _renderPortAsset() {
+// 2026-08-28 — 우측 "수익 배분" 도넛을 없애면서 그 값을 여기로 옮김:
+// ETF/개별주 행 아래에 각각의 평가손익을 보조 라인으로 붙임(예수금은
+// 손익 개념이 없어 그대로 둠). 카테고리 점 색은 초록/빨강(=상승/하락
+// 신호색)과 겹치면 "개별주 -587만원"처럼 라벨색(초록)과 값 부호색(빨강)이
+// 어긋나 보이는 문제가 있어서, 손익 부호에만 초록/빨강을 쓰고 카테고리
+// 점은 그와 안 겹치는 파랑/보라/주황 계열로 통일함.
+function _renderPortAsset(etfProfit = 0, stkProfit = 0) {
   const el = document.getElementById('port-asset-wrap');
   if (!el) return;
 
@@ -400,9 +406,18 @@ function _renderPortAsset() {
     return;
   }
 
+  const profitLine = (label, val) => {
+    if (!val) return '';
+    const color = val > 0 ? 'var(--green)' : val < 0 ? 'var(--red)' : 'var(--muted)';
+    return `<div style="display:flex;align-items:center;gap:6px;font-size:11px;margin:-3px 0 7px 15px">
+      <span style="color:var(--muted);flex:1">${label} 수익</span>
+      <span style="font-weight:600;color:${color}">${signFmt(val)}</span>
+    </div>`;
+  };
+
   const slices = [
-    { label: 'ETF',   val: etfEval, color: '#3D5AFE' },
-    { label: '개별주', val: stkEval, color: '#00C853' },
+    { label: 'ETF',   val: etfEval, color: '#4da3ff', sub: profitLine('ETF', etfProfit) },
+    { label: '개별주', val: stkEval, color: '#a855f7', sub: profitLine('개별주', stkProfit) },
     { label: '예수금', val: cash,    color: '#FF9100' },
   ].filter(s => s.val > 0);
 
@@ -435,6 +450,8 @@ function _drawDonut(el, slices, total, centerLabel, centerColor, signPrefix = fa
   }
 
   const totalFmt = (signPrefix ? '+' : '') + fmtN(total) + '원';
+  // s.sub: 슬라이스 아래 덧붙일 보조 라인(HTML) — 예: 자산현황의 ETF/개별주
+  // 행 밑에 "ETF 수익 -781만원"처럼 손익을 같이 보여줄 때 사용(선택 항목)
   const legend = slices.map(s => {
     const pct = (s.val / total * 100).toFixed(1);
     return `<div style="display:flex;align-items:center;gap:6px;font-size:12px;margin-bottom:7px">
@@ -442,7 +459,7 @@ function _drawDonut(el, slices, total, centerLabel, centerColor, signPrefix = fa
       <span style="color:var(--muted);flex:1">${s.label}</span>
       <span style="font-weight:600">${signPrefix?'+':''}${fmtN(s.val)}원</span>
       <span style="color:var(--muted);min-width:34px;text-align:right">${pct}%</span>
-    </div>`;
+    </div>${s.sub || ''}`;
   }).join('');
 
   // 세로 레이아웃: SVG 위 / 범례 아래
@@ -456,78 +473,90 @@ function _drawDonut(el, slices, total, centerLabel, centerColor, signPrefix = fa
     </div>`;
 }
 
-// ── 수익 현황 도넛 차트 ────────────────────────────────────
-function _renderPortDonut(etfProfit, stkProfit, ipoProfit, divTotal) {
+// ── 공모주·배당금 누적 (종목별, 기간 필터) ──────────────────
+// 2026-08-28 — 기존 "수익 배분" 4항목 도넛(ETF/개별주/공모주/배당)을
+// 없애고, ETF·개별주 손익은 왼쪽 자산현황 카드로 옮김. 여기는 "실현·
+// 수령 완료된" 공모주 수익 + 배당금만 종목별로 나열 + 기간 필터
+// (1개월/1년/전체기간) — 보유 포지션 평가손익(왼쪽)과 실제 들어온
+// 현금성 수익(오른쪽)을 성격이 달라 카드를 분리했다.
+let _ipoDivPeriod = 'all';
+
+function _withinPeriod(dateStr, period) {
+  if (period === 'all') return true;
+  if (!dateStr) return false;
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return false;
+  const cutoff = new Date();
+  if (period === '1m') cutoff.setMonth(cutoff.getMonth() - 1);
+  else if (period === '1y') cutoff.setFullYear(cutoff.getFullYear() - 1);
+  return d >= cutoff;
+}
+
+function _computeIpoDivByStock(period) {
+  const rows = [];
+
+  _portIpo.forEach(r => {
+    if (r.direct_profit == null && !(r.price_open > 0 && r.price_ipo > 0)) return;
+    if (!_withinPeriod(r.date_list, period)) return;
+    const profit = r.direct_profit != null
+      ? r.direct_profit
+      : (r.price_open - r.price_ipo) * (r.sell_qty || r.shares_alloc || 0) - 2000;
+    rows.push({ name: r.name || r.ticker || '-', amount: profit, type: 'ipo' });
+  });
+
+  const divByEtf = {};
+  _portDiv.forEach(r => {
+    if (!_withinPeriod(r.pay_date, period)) return;
+    divByEtf[r.etf_id] = (divByEtf[r.etf_id] || 0) + (r.net || 0);
+  });
+  Object.entries(divByEtf).forEach(([etfId, amt]) => {
+    const etf = _portEtf.find(e => String(e.id) === String(etfId));
+    rows.push({ name: (etf && (etf.name || etf.ticker)) || 'ETF', amount: amt, type: 'div' });
+  });
+
+  return rows.sort((a, b) => b.amount - a.amount);
+}
+
+function setIpoDivPeriod(period) {
+  _ipoDivPeriod = period;
+  _renderIpoDivByStock();
+}
+
+function _renderIpoDivByStock() {
   const el = document.getElementById('port-donut-wrap');
   if (!el) return;
 
-  const allItems = [
-    { label: 'ETF 수익',   val: etfProfit,  color: '#3D5AFE' },
-    { label: '개별주 수익', val: stkProfit,  color: '#00C853' },
-    { label: '공모주 수익', val: ipoProfit,  color: '#FF9100' },
-    { label: '배당 수익',  val: divTotal,   color: '#AB47BC' },
-  ];
-
-  // 도넛용: 양수 슬라이스만
-  const slices = allItems.filter(s => s.val > 0);
-  const donutTotal = slices.reduce((s, i) => s + i.val, 0);
-
-  // 합산 (양수+음수 포함)
-  const netTotal = allItems.reduce((s, i) => s + (i.val || 0), 0);
-
-  const fmtV = signFmt;
+  const period = _ipoDivPeriod;
+  const rows = _computeIpoDivByStock(period);
+  const total = rows.reduce((s, r) => s + r.amount, 0);
   const valColor = v => v > 0 ? 'var(--green)' : v < 0 ? 'var(--red)' : 'var(--muted)';
 
-  // 범례: 4개 항목 항상 표시
-  const legend = allItems.map(s => `
-    <div style="display:flex;align-items:center;gap:6px;font-size:12px;margin-bottom:7px">
-      <span style="width:9px;height:9px;border-radius:50%;background:${s.color};flex-shrink:0"></span>
-      <span style="color:var(--muted);flex:1">${s.label}</span>
-      <span style="font-weight:600;color:${valColor(s.val)}">${fmtV(s.val)}</span>
-    </div>`).join('') +
-    `<div style="display:flex;align-items:center;gap:6px;font-size:12px;margin-top:4px;padding-top:6px;border-top:1px solid var(--border)">
-      <span style="width:9px;height:9px;flex-shrink:0"></span>
-      <span style="color:var(--text);flex:1;font-weight:700">합산</span>
-      <span style="font-weight:700;color:${valColor(netTotal)}">${fmtV(netTotal)}</span>
-    </div>`;
+  const PERIODS = [['1m', '1개월'], ['1y', '1년'], ['all', '전체기간']];
+  const tabs = PERIODS.map(([key, label]) => {
+    const active = key === period;
+    return `<button onclick="setIpoDivPeriod('${key}')" style="flex:1;padding:6px 0;border-radius:8px;font-size:11px;font-weight:600;
+      border:1px solid ${active ? 'var(--primary)' : 'var(--border)'};
+      background:${active ? 'var(--primary)' : 'none'};
+      color:${active ? '#fff' : 'var(--muted)'};cursor:pointer;transition:.15s">${label}</button>`;
+  }).join('');
 
-  if (donutTotal <= 0) {
-    el.innerHTML = `
-      <div style="display:flex;flex-direction:column;align-items:center;gap:4px;padding-top:12px">
-        <div style="color:var(--muted);font-size:12px;margin-bottom:12px">수익 집계 대기 중</div>
-        <div style="width:100%">${legend}</div>
-      </div>`;
-    return;
-  }
+  const list = rows.length ? rows.map(r => `
+    <div style="display:flex;align-items:center;gap:8px;font-size:12px;padding:7px 0;border-bottom:1px solid var(--border)">
+      <span style="font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px;flex-shrink:0;
+        background:${r.type === 'ipo' ? 'rgba(45,212,191,.15)' : 'rgba(192,132,252,.15)'};
+        color:${r.type === 'ipo' ? '#2dd4bf' : '#c084fc'}">${r.type === 'ipo' ? '공모주' : '배당'}</span>
+      <span style="flex:1;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.name}</span>
+      <span style="font-weight:600;color:${valColor(r.amount)}">${signFmt(r.amount)}</span>
+    </div>`).join('')
+    : `<div style="color:var(--muted);font-size:12px;text-align:center;padding:24px 0">해당 기간 데이터 없음</div>`;
 
-  // 도넛 SVG
-  const W = 160, CX = 80, CY = 80, R = 64, r = 38;
-  let paths = '';
-  if (slices.length === 1) {
-    paths = `<circle cx="${CX}" cy="${CY}" r="${R}" fill="${slices[0].color}" opacity="0.9"/>
-             <circle cx="${CX}" cy="${CY}" r="${r}" fill="var(--surface)"/>`;
-  } else {
-    let ang = -Math.PI / 2;
-    slices.forEach(s => {
-      const a = (s.val / donutTotal) * 2 * Math.PI;
-      const ea = ang + a;
-      const x1=CX+R*Math.cos(ang), y1=CY+R*Math.sin(ang);
-      const x2=CX+R*Math.cos(ea),  y2=CY+R*Math.sin(ea);
-      const ix1=CX+r*Math.cos(ang),iy1=CY+r*Math.sin(ang);
-      const ix2=CX+r*Math.cos(ea), iy2=CY+r*Math.sin(ea);
-      const lg = a > Math.PI ? 1 : 0;
-      paths += `<path d="M${ix1},${iy1} L${x1},${y1} A${R},${R} 0 ${lg} 1 ${x2},${y2} L${ix2},${iy2} A${r},${r} 0 ${lg} 0 ${ix1},${iy1} Z" fill="${s.color}" opacity="0.9"/>`;
-      ang = ea;
-    });
-  }
   el.innerHTML = `
-    <div style="display:flex;flex-direction:column;align-items:center;gap:12px">
-      <svg width="${W}" height="${W}" viewBox="0 0 ${W} ${W}">${paths}
-        <text x="${CX}" y="${CY-6}" text-anchor="middle" font-size="10" fill="var(--muted)">총 수익</text>
-        <text x="${CX}" y="${CY+10}" text-anchor="middle" font-size="13" font-weight="700" fill="var(--green)">${signFmt(netTotal)}</text>
-      </svg>
-      <div style="width:100%">${legend}</div>
-    </div>`;
+    <div style="display:flex;gap:6px;margin-bottom:14px">${tabs}</div>
+    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;padding-bottom:10px;border-bottom:1px solid var(--border)">
+      <span style="font-size:12px;color:var(--muted);font-weight:700">합계</span>
+      <span style="font-size:16px;font-weight:700;color:${valColor(total)}">${signFmt(total)}</span>
+    </div>
+    <div style="max-height:280px;overflow-y:auto">${list}</div>`;
 }
 
 // ── 개별주 종목 자동완성 ────────────────────────────────────
