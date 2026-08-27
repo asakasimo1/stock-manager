@@ -514,7 +514,10 @@ function _computeIpoDivByStock(period, mode) {
   } else {
     const divByEtf = {};
     _portDiv.forEach(r => {
-      if (!_withinPeriod(r.pay_date, period)) return;
+      // 배당 기록엔 pay_date(지급일)가 아니라 ym(배당 기준월, "YYYY-MM")만
+      // 저장됨(tab-etf.js 저장 로직 확인) — pay_date로 필터링하면 항상
+      // undefined라 "전체기간" 빼곤 늘 비어 보이던 버그(2026-08-28 리포트)
+      if (!_withinPeriod(r.ym ? r.ym + '-01' : null, period)) return;
       divByEtf[r.etf_id] = (divByEtf[r.etf_id] || 0) + (r.net || 0);  // net = 세후 실수령액
     });
     Object.entries(divByEtf).forEach(([etfId, amt]) => {
@@ -536,24 +539,33 @@ function setIpoDivMode(mode) {
   _renderIpoDivByStock();
 }
 
-const IPO_DIV_LIST_HEIGHT = 268; // 기간 바뀌어도 카드 크기 안 변하게 고정
+const IPO_DIV_LIST_HEIGHT = 310; // 기간 바뀌어도 카드 크기 안 변하게 고정(토글을 제목줄로 옮기며 본문 여백 보정)
+
+// 카드 제목과 같은 줄에 넣는 작은 슬라이딩 토글(배당금⇄공모주) —
+// 2026-08-28 요청: 큰 버튼 2개 대신 토글 스위치로, 제목 라인에 배치.
+function _renderIpoDivModeToggle() {
+  const el = document.getElementById('port-donut-mode-toggle');
+  if (!el) return;
+  const mode = _ipoDivMode;
+  el.innerHTML = `
+    <div style="position:relative;display:inline-flex;background:var(--bg);border:1px solid var(--border);border-radius:20px;padding:2px;font-size:11px;font-weight:700">
+      <div style="position:absolute;top:2px;bottom:2px;left:2px;width:calc(50% - 2px);border-radius:18px;background:var(--primary);
+        transition:transform .2s ease;transform:translateX(${mode === 'ipo' ? '100%' : '0'})"></div>
+      <button onclick="setIpoDivMode('div')" style="position:relative;z-index:1;border:none;background:none;padding:5px 12px;cursor:pointer;color:${mode === 'div' ? '#fff' : 'var(--muted)'};transition:color .2s">배당금</button>
+      <button onclick="setIpoDivMode('ipo')" style="position:relative;z-index:1;border:none;background:none;padding:5px 12px;cursor:pointer;color:${mode === 'ipo' ? '#fff' : 'var(--muted)'};transition:color .2s">공모주</button>
+    </div>`;
+}
 
 function _renderIpoDivByStock() {
   const el = document.getElementById('port-donut-wrap');
   if (!el) return;
 
+  _renderIpoDivModeToggle();
+
   const period = _ipoDivPeriod, mode = _ipoDivMode;
   const rows = _computeIpoDivByStock(period, mode);
   const total = rows.reduce((s, r) => s + r.amount, 0);
   const valColor = v => v > 0 ? 'var(--green)' : v < 0 ? 'var(--red)' : 'var(--muted)';
-
-  const modeTabs = [['div', '배당금'], ['ipo', '공모주']].map(([key, label]) => {
-    const active = key === mode;
-    return `<button onclick="setIpoDivMode('${key}')" style="flex:1;padding:8px 0;border-radius:9px;font-size:13px;font-weight:700;
-      border:1px solid ${active ? 'var(--primary)' : 'var(--border)'};
-      background:${active ? 'var(--primary)' : 'none'};
-      color:${active ? '#fff' : 'var(--muted)'};cursor:pointer;transition:.15s">${label}</button>`;
-  }).join('');
 
   const PERIODS = [['1m', '1개월'], ['1y', '1년'], ['all', '전체기간']];
   const periodTabs = PERIODS.map(([key, label]) => {
@@ -572,7 +584,6 @@ function _renderIpoDivByStock() {
     : `<div style="color:var(--muted);font-size:12px;text-align:center;padding-top:${(IPO_DIV_LIST_HEIGHT-40)/2}px">해당 기간 데이터 없음</div>`;
 
   el.innerHTML = `
-    <div style="display:flex;gap:8px;margin-bottom:10px">${modeTabs}</div>
     <div style="display:flex;gap:5px;margin-bottom:14px">${periodTabs}</div>
     <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px;padding-bottom:10px;border-bottom:1px solid var(--border)">
       <span style="font-size:12px;color:var(--muted);font-weight:700">${mode === 'div' ? '세후 배당 합계' : '공모주 수익 합계'}</span>
