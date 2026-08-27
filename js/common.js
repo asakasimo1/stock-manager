@@ -490,6 +490,26 @@ async function renderGridChart(containerId, job, curPrice, qtyField, ticker, isC
   const sellColor   = cs.getPropertyValue('--state-sell').trim() || '#eb6834';
   const borderColor = cs.getPropertyValue('--border').trim()     || '#EBEBEB';
   const textColor    = cs.getPropertyValue('--muted').trim()      || '#9EA3B0';
+  const isDark = document.body.classList.contains('dark');
+  // 가격선 축 라벨(상한/매도/현재/매수/하한)이 기본적으로 line color를 그대로
+  // 불투명 배경으로 채워서 다크모드 네온 톤에서 꽉 막힌 사각형처럼 보였음
+  // (2026-08-27 사용자 리포트 "차트내 텍스트박스도 투명도 조치해줘") —
+  // 다크모드에서만 axisLabelColor를 반투명으로 분리해 라인 자체 색은 유지.
+  const _alphaColor = (c, a) => {
+    c = (c || '').trim();
+    if (c.startsWith('rgba')) return c.replace(/[\d.]+\)\s*$/, a + ')');
+    if (c.startsWith('rgb('))  return c.replace('rgb(', 'rgba(').replace(/\)\s*$/, `,${a})`);
+    if (c.startsWith('#')) {
+      let h = c.slice(1);
+      if (h.length === 3) h = h.split('').map(x => x + x).join('');
+      const r = parseInt(h.slice(0, 2), 16), g = parseInt(h.slice(2, 4), 16), b = parseInt(h.slice(4, 6), 16);
+      return `rgba(${r},${g},${b},${a})`;
+    }
+    return c;
+  };
+  const _labelStyle = (color) => isDark
+    ? { axisLabelColor: _alphaColor(color, .55), axisLabelTextColor: '#fff' }
+    : {};
 
   // lightweight-charts는 숫자 타임스탬프를 기본적으로 UTC 기준으로 축에
   // 표시한다(브라우저 로컬시간이 아님) — 그래서 KST 13:40 캔들이 "04:40"으로
@@ -568,13 +588,14 @@ async function renderGridChart(containerId, job, curPrice, qtyField, ticker, isC
       lineStyle: LightweightCharts.LineStyle.Solid,
       axisLabelVisible: true,
       title: isBuy ? '매수' : '매도',
+      ..._labelStyle(isBuy ? buyColor : sellColor),
     });
   }
 
   // 설정 범위 상/하한 — 옅은 점선 가이드
   const lower = Number(job.lower_price) || 0, upper = Number(job.upper_price) || 0;
-  series.createPriceLine({ price: lower, color: borderColor, lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: '하한' });
-  series.createPriceLine({ price: upper, color: borderColor, lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: '상한' });
+  series.createPriceLine({ price: lower, color: borderColor, lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: '하한', ..._labelStyle(borderColor) });
+  series.createPriceLine({ price: upper, color: borderColor, lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: '상한', ..._labelStyle(borderColor) });
 
   // 현재가 — 중립 잉크 + 점선(카테고리 색과 겹치지 않도록, SVG 래더 때와 동일 원칙).
   // 캔들의 마지막 종가보다 최신일 수 있어(현재가 폴링이 10분봉보다 촘촘함)
@@ -588,6 +609,7 @@ async function renderGridChart(containerId, job, curPrice, qtyField, ticker, isC
       lineStyle: LightweightCharts.LineStyle.Dashed,
       axisLabelVisible: true,
       title: `현재${isEscaped ? ' ⚠️' : ''}`,
+      ..._labelStyle(textColor),
     });
   }
 

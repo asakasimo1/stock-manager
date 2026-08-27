@@ -321,8 +321,8 @@ async function _ensureAutoTradeJobsLoaded() {
 function _tradePairHtml(p, priceMap) {
   const isOpen = !p.sell;
   const statusHtml = isOpen
-    ? `<span style="background:#dcfce7;color:#166534;border-radius:5px;padding:2px 8px;font-size:11px;font-weight:700">보유중</span>`
-    : `<span style="background:#f1f5f9;color:#64748b;border-radius:5px;padding:2px 8px;font-size:11px;font-weight:700">종료</span>`;
+    ? `<span class="dash-tag tone-green">보유중</span>`
+    : `<span class="dash-tag tone-gray">종료</span>`;
 
   // 왼쪽 세로선: 수익 초록 / 손실 빨강. 보유중이라도 현재가를 알면 평가손익 기준으로 색상 표시
   let barColor = 'var(--border)';
@@ -540,13 +540,13 @@ function _ipoSyncWarningHtml() {
   // last_sync 필드가 있을 때: 명시적 오류 상태
   if (sync) {
     if (!sync.ok) {
-      return `<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:8px 12px;margin-bottom:8px;font-size:12px;color:#b91c1c">
+      return `<div class="dash-alert red">
         ⚠️ 공모주 데이터 업데이트 오류 발생 중 (${sync.date || '날짜 미상'}) — 정보가 정확하지 않을 수 있습니다
       </div>`;
     }
     const daysDiff = sync.date ? Math.floor((new Date(today) - new Date(sync.date)) / 86400000) : 99;
     if (daysDiff >= 5) {
-      return `<div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:8px 12px;margin-bottom:8px;font-size:12px;color:#92400e">
+      return `<div class="dash-alert amber">
         ⚠️ 공모주 정보가 ${daysDiff}일째 업데이트되지 않았습니다 — 데이터가 최신이 아닐 수 있습니다
       </div>`;
     }
@@ -559,7 +559,7 @@ function _ipoSyncWarningHtml() {
   if (!lastFetch) return '';
   const daysDiff = Math.floor((new Date(today) - new Date(lastFetch)) / 86400000);
   if (daysDiff >= 5) {
-    return `<div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:8px 12px;margin-bottom:8px;font-size:12px;color:#92400e">
+    return `<div class="dash-alert amber">
       ⚠️ 공모주 정보가 ${daysDiff}일째 업데이트되지 않았습니다 — 데이터가 최신이 아닐 수 있습니다
     </div>`;
   }
@@ -608,13 +608,13 @@ function _renderIpoList() {
     const status = ipo.status || '';
     const emoji = STATUS_EMOJI[status] || '⚪';
     const subBadge = sub
-      ? `<span style="background:#a7f3d0;color:#064e3b;font-size:11px;padding:2px 8px;border-radius:20px;font-weight:700">✅ 청약완료</span>`
+      ? `<span class="dash-pill strong tone-mint">✅ 청약완료</span>`
       : ((['청약예정','청약중'].includes(status))
-          ? `<span style="background:#fef3c7;color:#92400e;font-size:11px;padding:2px 8px;border-radius:20px">⏳ 청약대기</span>`
+          ? `<span class="dash-pill tone-amber">⏳ 청약대기</span>`
           : '');
     const hasAlloc = ipo.shares_alloc && ipo.shares_alloc > 0;
     const listingBadge = sub && hasAlloc && ipo.date_list
-      ? `<span style="background:#fce7f3;color:#9d174d;font-size:11px;padding:2px 8px;border-radius:20px;font-weight:700">🚀 상장: ${ipo.date_list} (${ipo.shares_alloc}주)</span>`
+      ? `<span class="dash-pill strong tone-pink">🚀 상장: ${ipo.date_list} (${ipo.shares_alloc}주)</span>`
       : '';
 
     // 구글 캘린더 버튼 (청약예정·청약중·상장예정만 표시)
@@ -1483,7 +1483,7 @@ function showDayDetail(key) {
           const color = sc >= 70 ? 'var(--green)' : sc >= 50 ? '#f59e0b' : 'var(--muted)';
           const rec = ipo.recommendation || '';
           const sd = ipo.score_detail || {};
-          return `<div style="margin-top:8px;padding:8px;background:#fff;border-radius:8px;border:1px solid var(--border)">
+          return `<div style="margin-top:8px;padding:8px;background:var(--surface);border-radius:8px;border:1px solid var(--border)">
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
               <span style="font-weight:700;color:${color};font-size:15px">${sc}점</span>
               <span style="font-size:12px">${rec}</span>

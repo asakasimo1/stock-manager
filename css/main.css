@@ -362,12 +362,26 @@
   }
   .cal-ev-short { display: none; }
   .cal-ev-full  { display: inline; }
-  .cal-event.briefing  { background: #dbeafe; color: #1e40af; }
-  .cal-event.pick      { background: #d1fae5; color: #065f46; }
-  .cal-event.signal    { background: #fef3c7; color: #92400e; }
-  .cal-event.ipo-sub    { background: #ede9fe; color: #5b21b6; }
-  .cal-event.ipo-list   { background: #fce7f3; color: #9d174d; font-weight: 700; }
-  .cal-event.ipo-sub-done { background: #a7f3d0; color: #064e3b; font-weight: 700; }
+  .cal-event.briefing  { background: #dbeafe; color: #1e40af; border: 1px solid #93c5fd; }
+  .cal-event.pick      { background: #d1fae5; color: #065f46; border: 1px solid #6ee7b7; }
+  .cal-event.signal    { background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; }
+  .cal-event.ipo-sub    { background: #ede9fe; color: #5b21b6; border: 1px solid #c4b5fd; }
+  .cal-event.ipo-list   { background: #fce7f3; color: #9d174d; font-weight: 700; border: 1px solid #f9a8d4; }
+  .cal-event.ipo-sub-done { background: #a7f3d0; color: #064e3b; font-weight: 700; border: 1px solid #34d399; }
+
+  /* 대시보드 상태 배지(보유중/종료/청약대기 등) + 경고 배너 — 다크모드 대응
+     위해 하드코딩 인라인 색상을 공용 클래스로 정리 */
+  .dash-tag  { display: inline-block; border-radius: 5px; padding: 2px 8px; font-size: 11px; font-weight: 700; border: 1px solid transparent; }
+  .dash-pill { display: inline-block; border-radius: 20px; padding: 2px 8px; font-size: 11px; border: 1px solid transparent; }
+  .dash-pill.strong { font-weight: 700; }
+  .tone-green { background: #dcfce7; color: #166534; border-color: #86efac; }
+  .tone-gray  { background: #f1f5f9; color: #64748b; border-color: #cbd5e1; }
+  .tone-mint  { background: #a7f3d0; color: #064e3b; border-color: #34d399; }
+  .tone-amber { background: #fef3c7; color: #92400e; border-color: #fcd34d; }
+  .tone-pink  { background: #fce7f3; color: #9d174d; border-color: #f9a8d4; }
+  .dash-alert { border-radius: 8px; padding: 8px 12px; margin-bottom: 8px; font-size: 12px; }
+  .dash-alert.red   { background: #fef2f2; border: 1px solid #fca5a5; color: #b91c1c; }
+  .dash-alert.amber { background: #fffbeb; border: 1px solid #fcd34d; color: #92400e; }
   .cal-event.ipo-allot  { background: #fef9c3; color: #854d0e; font-weight: 700; border: 1px solid #fbbf24; }
 
   /* ── 날짜 상세 모달 ── */
@@ -1128,13 +1142,21 @@
   /* 캘린더 이벤트 배지(딜리셔스 18점 등)도 하드코딩 파스텔이라 다크모드에서
      하얗게 튀던 것 — 색상 정체성(파랑/초록/노랑/보라/핑크)은 유지하고
      반투명 틴트+밝은 글자색으로 교체 */
-  body.dark .cal-event.briefing      { background: rgba(59,130,246,.20);  color: #93c5fd; }
-  body.dark .cal-event.pick          { background: rgba(16,185,129,.20);  color: #6ee7b7; }
-  body.dark .cal-event.signal        { background: rgba(245,158,11,.20);  color: #fcd34d; }
-  body.dark .cal-event.ipo-sub       { background: rgba(168,85,247,.22);  color: #d8b4fe; }
-  body.dark .cal-event.ipo-list      { background: rgba(236,72,153,.22);  color: #f9a8d4; }
-  body.dark .cal-event.ipo-sub-done  { background: rgba(16,185,129,.25);  color: #6ee7b7; }
+  body.dark .cal-event.briefing      { background: rgba(59,130,246,.20);  color: #93c5fd; border-color: rgba(59,130,246,.45); }
+  body.dark .cal-event.pick          { background: rgba(16,185,129,.20);  color: #6ee7b7; border-color: rgba(16,185,129,.45); }
+  body.dark .cal-event.signal        { background: rgba(245,158,11,.20);  color: #fcd34d; border-color: rgba(245,158,11,.45); }
+  body.dark .cal-event.ipo-sub       { background: rgba(168,85,247,.22);  color: #d8b4fe; border-color: rgba(168,85,247,.5); }
+  body.dark .cal-event.ipo-list      { background: rgba(236,72,153,.22);  color: #f9a8d4; border-color: rgba(236,72,153,.5); }
+  body.dark .cal-event.ipo-sub-done  { background: rgba(16,185,129,.25);  color: #6ee7b7; border-color: rgba(16,185,129,.55); }
   body.dark .cal-event.ipo-allot     { background: rgba(251,191,36,.20);  color: #fde68a; border-color: rgba(251,191,36,.4); }
+
+  body.dark .tone-green { background: rgba(22,163,74,.20);  color: #6ee7b7; border-color: rgba(34,197,94,.4); }
+  body.dark .tone-gray  { background: rgba(148,163,184,.16); color: #cbd5e1; border-color: rgba(148,163,184,.4); }
+  body.dark .tone-mint  { background: rgba(16,185,129,.25);  color: #6ee7b7; border-color: rgba(16,185,129,.5); }
+  body.dark .tone-amber { background: rgba(245,158,11,.20);  color: #fcd34d; border-color: rgba(245,158,11,.45); }
+  body.dark .tone-pink  { background: rgba(236,72,153,.22);  color: #f9a8d4; border-color: rgba(236,72,153,.5); }
+  body.dark .dash-alert.red   { background: rgba(239,68,68,.15);  border-color: rgba(239,68,68,.45);  color: #fca5a5; }
+  body.dark .dash-alert.amber { background: rgba(245,158,11,.15); border-color: rgba(245,158,11,.45); color: #fcd34d; }
 
   /* 배경 전체에 은은한 차트 이미지 + 그라디에이션 (엔비디아 실적카드 참고
      이미지의 은은한 캔들스틱/라인차트 분위기) — 카드류는 --surface로 불투명
