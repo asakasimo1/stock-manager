@@ -486,7 +486,7 @@ async function renderGridChart(containerId, job, curPrice, qtyField, ticker, isC
   chartEl.innerHTML = ''; // 방어적으로 잔여 DOM 제거
 
   const cs = getComputedStyle(document.body);
-  const buyColor    = cs.getPropertyValue('--primary').trim()    || '#3D5AFE';
+  const buyColor    = cs.getPropertyValue('--state-buy').trim()  || '#3D5AFE';
   const sellColor   = cs.getPropertyValue('--state-sell').trim() || '#eb6834';
   const borderColor = cs.getPropertyValue('--border').trim()     || '#EBEBEB';
   const textColor    = cs.getPropertyValue('--muted').trim()      || '#9EA3B0';

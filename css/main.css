@@ -9,10 +9,16 @@
     --green:     #00C853;
     --red:       #FF1744;
     --radius:    12px;
-    /* 그리드 래더 차트 전용 — 매도대기 색상. --primary(매수)와 CVD ΔE 31.8
-       (라이트) 검증됨(dataviz 스킬). 라이트/다크에서 톤이 달라야 대비 기준을
+    /* 그리드 래더 차트 전용 — 매수/매도대기 색상. 원래 매수는 --primary를
+       그대로 재사용했는데, 2026-08-27 다크모드가 --primary를 보라색(네온
+       테마)으로 바꾸면서 상한/하한 라인(역시 보라 계열)과 구분이 안 되는
+       문제가 생겨 --state-buy로 분리함(사용자 리포트: "매수는 다른 색상으로
+       표현해줘"). 라이트모드 값은 기존 --primary와 동일하게 맞춰 시각적
+       회귀 없음. --state-sell은 --primary(매수)와 CVD ΔE 31.8(라이트)
+       검증됨(dataviz 스킬). 라이트/다크에서 톤이 달라야 대비 기준을
        통과해서(라이트 #f59e0b 하나로 다크에 그대로 쓰면 밝기 기준 FAIL) 모드별로
        분리해둠 — body.dark 쪽 오버라이드 참고. */
+    --state-buy:  #3D5AFE;
     --state-sell: #eb6834;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -1110,14 +1116,15 @@
   /* ── DARK MODE — 네온 퍼플 글로우 (2026-08-27 UI 개편, "시안 A" 채택) ── */
   body.dark {
     --primary: #a855f7;
-    --bg: #03040a;
-    --surface: #0d0a14;
+    --bg: #0d1120;      /* 순검정 대신 밝은 네이비 톤(2026-08-27 사용자 요청) */
+    --surface: #171c30;
     --text: #eef0f8;
     --border: rgba(168,85,247,.28);
     --secondary: #1a1330;
-    --muted: #8a8aa8;
+    --muted: #9d97c4;  /* 무채색 회색 대신 배경/강조색과 같은 계열로 채도를 살짝 올림 */
     --green: #4ade80;
     --red: #fb7185;
+    --state-buy: #4da3ff;   /* 매수 — 보라(--primary)·주황(매도)·초록/빨강(캔들)과 겹치지 않는 밝은 파랑 */
     --state-sell: #d95926;  /* 다크 서페이스(#1c1d28) 기준 재검증된 톤 */
   }
   body.dark .toggle-slider:before { background:#ccc; }
@@ -1151,7 +1158,7 @@
   body.dark .cal-event.ipo-allot     { background: rgba(251,191,36,.20);  color: #fde68a; border-color: rgba(251,191,36,.4); }
 
   body.dark .tone-green { background: rgba(22,163,74,.20);  color: #6ee7b7; border-color: rgba(34,197,94,.4); }
-  body.dark .tone-gray  { background: rgba(148,163,184,.16); color: #cbd5e1; border-color: rgba(148,163,184,.4); }
+  body.dark .tone-gray  { background: rgba(157,151,196,.18); color: #c9c4e8; border-color: rgba(157,151,196,.45); }
   body.dark .tone-mint  { background: rgba(16,185,129,.25);  color: #6ee7b7; border-color: rgba(16,185,129,.5); }
   body.dark .tone-amber { background: rgba(245,158,11,.20);  color: #fcd34d; border-color: rgba(245,158,11,.45); }
   body.dark .tone-pink  { background: rgba(236,72,153,.22);  color: #f9a8d4; border-color: rgba(236,72,153,.5); }
