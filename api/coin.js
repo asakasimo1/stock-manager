@@ -537,6 +537,9 @@ async function handleCoinGrid(req, res, gistId, ghToken) {
       trade_count:         0,
       created_at:          nowKst(),
     };
+    if (b.auto_reinit_minutes && +b.auto_reinit_minutes >= 5) {
+      newJob.auto_reinit_minutes = +b.auto_reinit_minutes;
+    }
     list.unshift(newJob);
     const ok = await writeGistFile(gistId, ghToken, FILENAME, list);
     return res.status(ok ? 200 : 500).json(ok ? newJob : { error: '저장 실패' });
