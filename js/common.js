@@ -7,7 +7,7 @@ const TAB_LABELS = {
   dashboard:'📊 대시보드', portfolio:'📈 포트폴리오', market:'📊 시장현황',
   etf:'💹 ETF', stocks:'📊 개별주', autotrade:'🤖 자동매매', cointrade:'🪙 자동코인매매', scalp:'⚡ 초단타',
 };
-let _settings = { hiddenTabs:[], darkMode:false, defaultTab:'dashboard', autoRefreshSec:0 };
+let _settings = { hiddenTabs:[], darkMode:true, defaultTab:'dashboard', autoRefreshSec:0 };
 let _autoRefreshTimer = null;
 
 function _loadSettings() {

@@ -1118,3 +1118,25 @@
     box-shadow: 0 0 24px rgba(168,85,247,.14), inset 0 0 40px rgba(168,85,247,.03);
   }
   body.dark .etf-card:hover { box-shadow: 0 4px 20px rgba(168,85,247,.35); border-color: #a855f7; }
+
+  /* 캘린더 셀 하이라이트 3종이 흰색/파스텔로 하드코딩돼 있어서(.cal-cell:hover,
+     .today, .has-event) 다크모드에서도 그대로 하얗게 떠 있던 것 수정 */
+  body.dark .cal-cell:hover     { background: rgba(168,85,247,.10); }
+  body.dark .cal-cell.today     { background: rgba(168,85,247,.16); }
+  body.dark .cal-cell.has-event { background: rgba(168,85,247,.07); }
+
+  /* 배경 전체에 은은한 차트 이미지 + 그라디에이션 (엔비디아 실적카드 참고
+     이미지의 은은한 캔들스틱/라인차트 분위기) — 카드류는 --surface로 불투명
+     하게 덮이므로 이 장식은 카드 사이 여백에서만 비침 */
+  body.dark::before {
+    content: "";
+    position: fixed; inset: 0; z-index: -1; pointer-events: none;
+    background:
+      radial-gradient(ellipse 900px 600px at 100% -5%, rgba(168,85,247,.16), transparent 60%),
+      radial-gradient(ellipse 700px 500px at -5% 105%, rgba(124,58,237,.12), transparent 60%),
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 480 320'%3E%3Cg stroke='%234ade80' stroke-width='2' fill='none' opacity='.55'%3E%3Cline x1='40' y1='150' x2='40' y2='118'/%3E%3Crect x='34' y='128' width='12' height='14' fill='%234ade80'/%3E%3Cline x1='68' y1='140' x2='68' y2='100'/%3E%3Crect x='62' y='106' width='12' height='22' fill='%234ade80'/%3E%3Cline x1='96' y1='134' x2='96' y2='80'/%3E%3Crect x='90' y='90' width='12' height='30' fill='%23a855f7'/%3E%3Cline x1='124' y1='120' x2='124' y2='60'/%3E%3Crect x='118' y='66' width='12' height='40' fill='%234ade80'/%3E%3Cline x1='152' y1='96' x2='152' y2='40'/%3E%3Crect x='146' y='46' width='12' height='36' fill='%23a855f7'/%3E%3Cline x1='180' y1='80' x2='180' y2='20'/%3E%3Crect x='174' y='28' width='12' height='38' fill='%234ade80'/%3E%3C/g%3E%3Cpolyline points='30,170 90,150 150,120 210,95 270,60 330,35 400,15' stroke='%23c084fc' stroke-width='2.5' fill='none' opacity='.5'/%3E%3Cg fill='%23c084fc' opacity='.7'%3E%3Ccircle cx='150' cy='120' r='3'/%3E%3Ccircle cx='270' cy='60' r='3'/%3E%3Ccircle cx='400' cy='15' r='3'/%3E%3C/g%3E%3C/svg%3E")
+        no-repeat top right / 460px auto,
+      var(--bg);
+    -webkit-mask-image: linear-gradient(to bottom, rgba(0,0,0,.85), rgba(0,0,0,.35) 45%, transparent 82%);
+            mask-image: linear-gradient(to bottom, rgba(0,0,0,.85), rgba(0,0,0,.35) 45%, transparent 82%);
+  }
