@@ -340,7 +340,7 @@
   .cal-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; }
   .cal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
   .cal-header h2 { font-size: 18px; font-weight: 700; }
-  .cal-nav { background: none; border: 1px solid var(--border); border-radius: 8px; width: 32px; height: 32px; cursor: pointer; font-size: 16px; display:flex;align-items:center;justify-content:center; }
+  .cal-nav { background: none; border: 1px solid var(--border); border-radius: 8px; width: 32px; height: 32px; cursor: pointer; font-size: 16px; display:flex;align-items:center;justify-content:center; color: var(--text); }
   .cal-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
   .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
   .cal-dow { text-align: center; font-size: 11px; font-weight: 700; color: var(--muted); padding: 6px 0; text-transform: uppercase; }
@@ -1124,6 +1124,17 @@
   body.dark .cal-cell:hover     { background: rgba(168,85,247,.10); }
   body.dark .cal-cell.today     { background: rgba(168,85,247,.16); }
   body.dark .cal-cell.has-event { background: rgba(168,85,247,.07); }
+
+  /* 캘린더 이벤트 배지(딜리셔스 18점 등)도 하드코딩 파스텔이라 다크모드에서
+     하얗게 튀던 것 — 색상 정체성(파랑/초록/노랑/보라/핑크)은 유지하고
+     반투명 틴트+밝은 글자색으로 교체 */
+  body.dark .cal-event.briefing      { background: rgba(59,130,246,.20);  color: #93c5fd; }
+  body.dark .cal-event.pick          { background: rgba(16,185,129,.20);  color: #6ee7b7; }
+  body.dark .cal-event.signal        { background: rgba(245,158,11,.20);  color: #fcd34d; }
+  body.dark .cal-event.ipo-sub       { background: rgba(168,85,247,.22);  color: #d8b4fe; }
+  body.dark .cal-event.ipo-list      { background: rgba(236,72,153,.22);  color: #f9a8d4; }
+  body.dark .cal-event.ipo-sub-done  { background: rgba(16,185,129,.25);  color: #6ee7b7; }
+  body.dark .cal-event.ipo-allot     { background: rgba(251,191,36,.20);  color: #fde68a; border-color: rgba(251,191,36,.4); }
 
   /* 배경 전체에 은은한 차트 이미지 + 그라디에이션 (엔비디아 실적카드 참고
      이미지의 은은한 캔들스틱/라인차트 분위기) — 카드류는 --surface로 불투명
