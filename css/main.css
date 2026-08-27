@@ -1140,6 +1140,10 @@
   }
   body.dark .etf-card:hover { box-shadow: 0 4px 20px rgba(168,85,247,.35); border-color: #a855f7; }
 
+  /* 탭 네비게이션은 배경 캔들스틱 배너와 겹치면 클릭 영역 가독성이
+     떨어져서(2026-08-27 실측) 불투명 배경을 줘서 분리 */
+  body.dark .tab-nav { background: var(--bg); }
+
   /* 캘린더 셀 하이라이트 3종이 흰색/파스텔로 하드코딩돼 있어서(.cal-cell:hover,
      .today, .has-event) 다크모드에서도 그대로 하얗게 떠 있던 것 수정 */
   body.dark .cal-cell:hover     { background: rgba(168,85,247,.10); }
