@@ -369,6 +369,7 @@ function _renderEtfDivChart() {
 // 리포트), 직접 그리는 달력 팝업으로 교체. 필드는 readonly 텍스트
 // input+아이콘이고, 클릭하면 이 팝업이 뜬다.
 let _calEl = null, _calFieldId = null, _calOpts = null, _calViewDate = null;
+let _calView = 'days'; // 'days' | 'months' | 'years' — 헤더 제목 클릭으로 확대해 먼 과거로 빨리 이동(2026-08-28 사용자 요청)
 
 function _calOutsideClick(e) {
   if (_calEl && !_calEl.contains(e.target) && !e.target.closest?.('.dtp-field')) closeCalPicker();
@@ -386,12 +387,18 @@ function openCalPicker(fieldId, opts) {
   if (!input) return;
   _calFieldId = fieldId;
   _calOpts = opts || {};
+  _calView = 'days';
   const base = input.value ? new Date(input.value + 'T00:00:00') : new Date();
   _calViewDate = new Date(base.getFullYear(), base.getMonth(), 1);
   _calEl = document.createElement('div');
   _calEl.className = 'dtp-pop';
   document.body.appendChild(_calEl);
   _renderCalPop();
+}
+
+function _positionCalPop() {
+  const input = document.getElementById(_calFieldId);
+  if (!input || !_calEl) return;
   const r = input.getBoundingClientRect();
   _calEl.style.top  = Math.max(8, Math.min(r.bottom + 6, window.innerHeight - _calEl.offsetHeight - 8)) + 'px';
   _calEl.style.left = Math.max(8, Math.min(r.left, window.innerWidth - _calEl.offsetWidth - 8)) + 'px';
@@ -399,6 +406,13 @@ function openCalPicker(fieldId, opts) {
 }
 
 function _renderCalPop() {
+  if (_calView === 'months') _renderCalPopMonths();
+  else if (_calView === 'years') _renderCalPopYears();
+  else _renderCalPopDays();
+  _positionCalPop();
+}
+
+function _renderCalPopDays() {
   const y = _calViewDate.getFullYear(), m = _calViewDate.getMonth();
   const input   = document.getElementById(_calFieldId);
   const selVal  = input?.value || '';
@@ -423,15 +437,75 @@ function _renderCalPop() {
   _calEl.innerHTML = `
     <div class="dtp-pop-head">
       <button type="button" class="dtp-pop-nav" onclick="_calNav(-1)">‹</button>
-      <span class="dtp-pop-title">${y}년 ${m + 1}월</span>
+      <span class="dtp-pop-title" onclick="_calViewMonths()">${y}년 ${m + 1}월</span>
       <button type="button" class="dtp-pop-nav" onclick="_calNav(1)">›</button>
     </div>
     <div class="dtp-pop-dow">${['일','월','화','수','목','금','토'].map(d => `<span>${d}</span>`).join('')}</div>
     <div class="dtp-pop-grid">${cells}</div>`;
 }
 
+// 월 선택 화면 — 연 단위로 이동해 특정 달로 빠르게 점프
+function _renderCalPopMonths() {
+  const y = _calViewDate.getFullYear(), curM = _calViewDate.getMonth();
+  const now = new Date();
+  const labels = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월'];
+  const cells = labels.map((label, i) => {
+    const cls = ['dtp-cell', 'dtp-cell-wide'];
+    if (y === now.getFullYear() && i === now.getMonth()) cls.push('today');
+    if (i === curM) cls.push('selected');
+    return `<span class="${cls.join(' ')}" onclick="_calPickMonth(${i})">${label}</span>`;
+  }).join('');
+
+  _calEl.innerHTML = `
+    <div class="dtp-pop-head">
+      <button type="button" class="dtp-pop-nav" onclick="_calNav(-1)">‹</button>
+      <span class="dtp-pop-title" onclick="_calViewYears()">${y}년</span>
+      <button type="button" class="dtp-pop-nav" onclick="_calNav(1)">›</button>
+    </div>
+    <div class="dtp-pop-grid dtp-pop-grid-4">${cells}</div>`;
+}
+
+// 연 선택 화면 — 12년 단위 블록으로 이동해 먼 과거로 빠르게 점프
+function _renderCalPopYears() {
+  const y = _calViewDate.getFullYear();
+  const start = y - (y % 12);
+  const nowY = new Date().getFullYear();
+  const cells = Array.from({ length: 12 }, (_, i) => start + i).map(yr => {
+    const cls = ['dtp-cell', 'dtp-cell-wide'];
+    if (yr === nowY) cls.push('today');
+    if (yr === y) cls.push('selected');
+    return `<span class="${cls.join(' ')}" onclick="_calPickYear(${yr})">${yr}</span>`;
+  }).join('');
+
+  _calEl.innerHTML = `
+    <div class="dtp-pop-head">
+      <button type="button" class="dtp-pop-nav" onclick="_calNav(-1)">‹</button>
+      <span class="dtp-pop-title">${start}년 – ${start + 11}년</span>
+      <button type="button" class="dtp-pop-nav" onclick="_calNav(1)">›</button>
+    </div>
+    <div class="dtp-pop-grid dtp-pop-grid-4">${cells}</div>`;
+}
+
+function _calViewMonths() { _calView = 'months'; _renderCalPop(); }
+function _calViewYears()  { _calView = 'years';  _renderCalPop(); }
+
 function _calNav(delta) {
-  _calViewDate = new Date(_calViewDate.getFullYear(), _calViewDate.getMonth() + delta, 1);
+  const y = _calViewDate.getFullYear(), m = _calViewDate.getMonth();
+  if (_calView === 'months')      _calViewDate = new Date(y + delta, m, 1);
+  else if (_calView === 'years')  _calViewDate = new Date(y + delta * 12, m, 1);
+  else                            _calViewDate = new Date(y, m + delta, 1);
+  _renderCalPop();
+}
+
+function _calPickMonth(m) {
+  _calViewDate = new Date(_calViewDate.getFullYear(), m, 1);
+  _calView = 'days';
+  _renderCalPop();
+}
+
+function _calPickYear(yr) {
+  _calViewDate = new Date(yr, _calViewDate.getMonth(), 1);
+  _calView = 'months';
   _renderCalPop();
 }
 

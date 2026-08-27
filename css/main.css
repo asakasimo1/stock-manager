@@ -1162,7 +1162,11 @@
   }
   body.dark .dtp-pop { box-shadow: 0 12px 32px rgba(0,0,0,.55), 0 0 0 1px rgba(168,85,247,.15); }
   .dtp-pop-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
-  .dtp-pop-title { font-size: 13px; font-weight: 700; color: var(--text); }
+  .dtp-pop-title {
+    font-size: 13px; font-weight: 700; color: var(--text);
+    cursor: pointer; padding: 2px 8px; border-radius: 6px; transition: .15s;
+  }
+  .dtp-pop-title:hover { background: rgba(168,85,247,.14); color: var(--primary); }
   .dtp-pop-nav {
     width: 26px; height: 26px; border-radius: 6px; border: 1px solid var(--border);
     background: none; color: var(--muted); font-size: 14px; cursor: pointer; transition: .15s;
@@ -1183,6 +1187,12 @@
   .dtp-cell.selected { background: var(--primary); color: #fff; font-weight: 700; }
   .dtp-cell.disabled { color: var(--border); cursor: not-allowed; }
   .dtp-cell.empty { cursor: default; }
+
+  /* 월/연 선택 화면 — 헤더 제목 클릭으로 확대해 먼 과거로 빨리 이동
+     (2026-08-28 사용자 요청: "먼 과거로 돌아가기 위해 여러 번 눌러야
+     하는 불편함") */
+  .dtp-pop-grid-4 { grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .dtp-cell-wide { aspect-ratio: auto; padding: 12px 0; font-size: 13px; }
 
   /* 카드류에 네온 보라 글로우 — 공통 토큰(--surface/--border)을 쓰는
      컨테이너라 개별 컴포넌트 CSS를 건드리지 않고 여기 한 곳에서만 부여 */
