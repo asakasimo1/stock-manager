@@ -1093,14 +1093,28 @@
     color:var(--text); cursor:pointer;
   }
 
-  /* ── DARK MODE ── */
+  /* ── DARK MODE — 네온 퍼플 글로우 (2026-08-27 UI 개편, "시안 A" 채택) ── */
   body.dark {
-    --bg: #12131a;
-    --surface: #1c1d28;
-    --text: #e2e4f0;
-    --border: #2c2e40;
-    --secondary: #1a1d3a;
-    --muted: #686b80;
+    --primary: #a855f7;
+    --bg: #03040a;
+    --surface: #0d0a14;
+    --text: #eef0f8;
+    --border: rgba(168,85,247,.28);
+    --secondary: #1a1330;
+    --muted: #8a8aa8;
+    --green: #4ade80;
+    --red: #fb7185;
     --state-sell: #d95926;  /* 다크 서페이스(#1c1d28) 기준 재검증된 톤 */
   }
   body.dark .toggle-slider:before { background:#ccc; }
+
+  /* 카드류에 네온 보라 글로우 — 공통 토큰(--surface/--border)을 쓰는
+     컨테이너라 개별 컴포넌트 CSS를 건드리지 않고 여기 한 곳에서만 부여 */
+  body.dark .card,
+  body.dark .port-kpi-card,
+  body.dark .port-card,
+  body.dark .etf-card,
+  body.dark .cal-wrap {
+    box-shadow: 0 0 24px rgba(168,85,247,.14), inset 0 0 40px rgba(168,85,247,.03);
+  }
+  body.dark .etf-card:hover { box-shadow: 0 4px 20px rgba(168,85,247,.35); border-color: #a855f7; }
