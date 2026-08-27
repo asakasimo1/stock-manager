@@ -363,8 +363,9 @@ function _renderEtfDivChart() {
 // 매입원가(avg_price) 대비, 금일은 이미 갖고 있는 당일 등락(chg) 필드
 // 재사용, 1개월/커스텀만 일별 캔들(/api/quote?chart=1)에서 해당 날짜
 // 종가를 찾아와야 해서 이 렌더러가 비동기가 됨.
-let _assetPeriod      = 'all';   // 'today' | '1m' | 'all' | 'custom'
+let _assetPeriod      = 'today'; // 'today' | '1m' | 'all' | 'custom' (기본값 2026-08-28 사용자 확정)
 let _assetCustomStart = null;    // 'YYYY-MM-DD'
+let _assetCustomEnd   = null;    // 'YYYY-MM-DD' (미지정 시 현재가 기준)
 let _assetCustomOpen  = false;
 const _histCandleCache = {};     // ticker → candles[]("YYYY-MM-DD" 오름차순)
 
@@ -390,7 +391,7 @@ function _closeOnOrBefore(candles, dateStr) {
   return found ? found.close : (candles[0] ? candles[0].close : null);
 }
 
-async function _computeGroupReturn(records, period, customStart) {
+async function _computeGroupReturn(records, period, customStart, customEnd) {
   const withPrice = records.filter(r => r.current_price && r.ticker);
   if (!withPrice.length) return { profit: 0, rate: 0 };
 
@@ -414,11 +415,15 @@ async function _computeGroupReturn(records, period, customStart) {
   }
   if (!startDate) return { profit: 0, rate: 0 };
 
+  // 종료일 지정 시 그 날짜 종가를, 미지정 시 현재가를 기준으로 함
   let profit = 0, startEval = 0;
   await Promise.all(withPrice.map(async r => {
     const candles    = await _fetchHistCandles(r.ticker);
     const startClose = _closeOnOrBefore(candles, startDate) ?? r.avg_price ?? r.current_price;
-    profit    += (r.current_price - startClose) * (r.qty || 0);
+    const endClose    = (period === 'custom' && customEnd)
+      ? (_closeOnOrBefore(candles, customEnd) ?? r.current_price)
+      : r.current_price;
+    profit    += (endClose - startClose) * (r.qty || 0);
     startEval += startClose * (r.qty || 0);
   }));
   return { profit, rate: startEval > 0 ? profit / startEval * 100 : 0 };
@@ -435,10 +440,12 @@ function toggleAssetCustomPicker() {
   _renderPortAsset();
 }
 
-function applyAssetCustomStart() {
-  const v = document.getElementById('asset-custom-start')?.value;
-  if (!v) return;
-  _assetCustomStart = v;
+function applyAssetCustomRange() {
+  const s = document.getElementById('asset-custom-start')?.value;
+  const e = document.getElementById('asset-custom-end')?.value;
+  if (!s) return;
+  _assetCustomStart = s;
+  _assetCustomEnd   = e || null;
   _assetPeriod = 'custom';
   _assetCustomOpen = false;
   _renderPortAsset();
@@ -472,7 +479,10 @@ async function _renderPortAsset() {
     <div style="display:flex;gap:6px;align-items:center;margin-bottom:12px">
       <input type="date" id="asset-custom-start" value="${_assetCustomStart || ''}" max="${new Date().toISOString().slice(0,10)}"
         style="flex:1;padding:5px 8px;border-radius:7px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:11px">
-      <button onclick="applyAssetCustomStart()" style="padding:5px 12px;border-radius:7px;border:none;background:var(--primary);color:#fff;font-size:11px;font-weight:600;cursor:pointer">적용</button>
+      <span style="color:var(--muted);font-size:11px">~</span>
+      <input type="date" id="asset-custom-end" value="${_assetCustomEnd || ''}" max="${new Date().toISOString().slice(0,10)}"
+        style="flex:1;padding:5px 8px;border-radius:7px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:11px">
+      <button onclick="applyAssetCustomRange()" style="padding:5px 12px;border-radius:7px;border:none;background:var(--primary);color:#fff;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap">적용</button>
     </div>` : '';
 
   // 기간 탭/피커는 고정 컨테이너에 즉시 그리고, 도넛+범례는 별도 타겟에
@@ -484,8 +494,8 @@ async function _renderPortAsset() {
     <div id="port-asset-donut-target" style="text-align:center;padding:50px 0;color:var(--muted);font-size:12px">불러오는 중...</div>`;
 
   const [etfRet, stkRet] = await Promise.all([
-    _computeGroupReturn(_portEtf, _assetPeriod, _assetCustomStart),
-    _computeGroupReturn(_stockRecords, _assetPeriod, _assetCustomStart),
+    _computeGroupReturn(_portEtf, _assetPeriod, _assetCustomStart, _assetCustomEnd),
+    _computeGroupReturn(_stockRecords, _assetPeriod, _assetCustomStart, _assetCustomEnd),
   ]);
 
   const target = document.getElementById('port-asset-donut-target');
@@ -583,7 +593,7 @@ function _drawDonut(el, slices, total, centerLabel, centerColor, signPrefix = fa
 // 2026-08-28 — 배당/공모주를 한 리스트에 섞어 보여주던 것을 토글로 분리
 // (기본값 배당금·세후금액), 기간별로 행 수가 달라 카드 높이가 들쭉날쭉
 //하던 것도 리스트 영역 높이를 고정(height, max-height 아님)해서 통일.
-let _ipoDivPeriod = 'all';
+let _ipoDivPeriod = '1m'; // 기본값 2026-08-28 사용자 확정
 let _ipoDivMode   = 'div'; // 'div'(배당금, 기본) | 'ipo'(공모주)
 let _ipoDivCustomStart = null; // 'YYYY-MM-DD'
 let _ipoDivCustomEnd   = null;

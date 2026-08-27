@@ -1129,6 +1129,12 @@
   }
   body.dark .toggle-slider:before { background:#ccc; }
 
+  /* 날짜 입력(기간설정) — 네이티브 달력 위젯을 다크 배경에서도 잘
+     보이도록(기본은 흰 배경/검은 아이콘이라 다크 카드 위에서 거의 안
+     보였음, 2026-08-28 사용자 리포트) */
+  input[type="date"] { color-scheme: light; }
+  body.dark input[type="date"] { color-scheme: dark; }
+
   /* 카드류에 네온 보라 글로우 — 공통 토큰(--surface/--border)을 쓰는
      컨테이너라 개별 컴포넌트 CSS를 건드리지 않고 여기 한 곳에서만 부여 */
   body.dark .card,
