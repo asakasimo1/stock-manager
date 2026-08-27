@@ -1137,49 +1137,52 @@
 
   /* 기간설정 시작/종료일 — 네이티브 달력 대신 직접 그리는 팝업으로 교체
      (네이티브 팝업은 다크 테마와 톤이 어긋나고 커스터마이징이 거의 불가능,
-     2026-08-28 사용자 리포트). 글자/아이콘은 기존 대비 약 1.5배로 확대. */
-  .cal-field {
+     2026-08-28 사용자 리포트). 글자/아이콘은 기존 대비 약 1.5배로 확대.
+     클래스명은 dtp-(date picker) 접두사 — 대시보드 브리핑 캘린더가 이미
+     .cal-cell 등을 쓰고 있어(위 .cal-wrap 블록) 같은 이름을 쓰면 그
+     스타일과 충돌해 셀 크기가 깨지는 문제가 있었음. */
+  .dtp-field {
     flex: 1; display: flex; align-items: center; gap: 6px;
     padding: 7px 10px; border-radius: 7px; border: 1px solid var(--border);
     background: var(--bg); cursor: pointer; transition: border-color .15s;
   }
-  .cal-field:hover { border-color: var(--primary); }
-  .cal-field-input {
+  .dtp-field:hover { border-color: var(--primary); }
+  .dtp-field-input {
     flex: 1; border: none; background: none; color: var(--text);
     font-size: 16px; font-weight: 600; padding: 0; cursor: pointer;
     font-variant-numeric: tabular-nums;
   }
-  .cal-field-input::placeholder { color: var(--muted); font-weight: 400; }
-  .cal-field-icon { font-size: 17px; line-height: 1; flex-shrink: 0; }
+  .dtp-field-input::placeholder { color: var(--muted); font-weight: 400; }
+  .dtp-field-icon { font-size: 17px; line-height: 1; flex-shrink: 0; }
 
-  .cal-pop {
+  .dtp-pop {
     position: fixed; z-index: 3000; width: 244px; padding: 10px;
     background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
     box-shadow: 0 12px 32px rgba(0,0,0,.35);
   }
-  body.dark .cal-pop { box-shadow: 0 12px 32px rgba(0,0,0,.55), 0 0 0 1px rgba(168,85,247,.15); }
-  .cal-pop-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
-  .cal-pop-title { font-size: 13px; font-weight: 700; color: var(--text); }
-  .cal-pop-nav {
+  body.dark .dtp-pop { box-shadow: 0 12px 32px rgba(0,0,0,.55), 0 0 0 1px rgba(168,85,247,.15); }
+  .dtp-pop-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .dtp-pop-title { font-size: 13px; font-weight: 700; color: var(--text); }
+  .dtp-pop-nav {
     width: 26px; height: 26px; border-radius: 6px; border: 1px solid var(--border);
     background: none; color: var(--muted); font-size: 14px; cursor: pointer; transition: .15s;
   }
-  .cal-pop-nav:hover { background: rgba(168,85,247,.14); color: var(--primary); border-color: var(--primary); }
-  .cal-pop-dow {
+  .dtp-pop-nav:hover { background: rgba(168,85,247,.14); color: var(--primary); border-color: var(--primary); }
+  .dtp-pop-dow {
     display: grid; grid-template-columns: repeat(7, 1fr); margin-bottom: 2px;
   }
-  .cal-pop-dow span { text-align: center; font-size: 10px; color: var(--muted); padding: 2px 0; }
-  .cal-pop-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
-  .cal-cell {
+  .dtp-pop-dow span { text-align: center; font-size: 10px; color: var(--muted); padding: 2px 0; }
+  .dtp-pop-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+  .dtp-cell {
     display: flex; align-items: center; justify-content: center;
     aspect-ratio: 1; border-radius: 7px; font-size: 12px; color: var(--text);
     cursor: pointer; transition: background .12s;
   }
-  .cal-cell:hover:not(.disabled):not(.empty) { background: rgba(168,85,247,.16); }
-  .cal-cell.today { color: var(--primary); font-weight: 700; box-shadow: inset 0 0 0 1px var(--primary); }
-  .cal-cell.selected { background: var(--primary); color: #fff; font-weight: 700; }
-  .cal-cell.disabled { color: var(--border); cursor: not-allowed; }
-  .cal-cell.empty { cursor: default; }
+  .dtp-cell:hover:not(.disabled):not(.empty) { background: rgba(168,85,247,.16); }
+  .dtp-cell.today { color: var(--primary); font-weight: 700; box-shadow: inset 0 0 0 1px var(--primary); }
+  .dtp-cell.selected { background: var(--primary); color: #fff; font-weight: 700; }
+  .dtp-cell.disabled { color: var(--border); cursor: not-allowed; }
+  .dtp-cell.empty { cursor: default; }
 
   /* 카드류에 네온 보라 글로우 — 공통 토큰(--surface/--border)을 쓰는
      컨테이너라 개별 컴포넌트 CSS를 건드리지 않고 여기 한 곳에서만 부여 */
