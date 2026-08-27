@@ -956,7 +956,7 @@ def _sync_orphan_coins(job: dict) -> bool:
 # 기존 보유물량 편입 (예수금 없이 그리드 시작)
 # ─────────────────────────────────────────
 
-def seed_held_inventory(job: dict, qty: float) -> bool:
+def seed_held_inventory(job: dict, qty: float, avg_buy_price: float = None) -> bool:
     """그리드 등록 전부터 이미 보유 중이던 코인을 그리드에 편입한다.
 
     initialize_grid()는 현재가 아래 격자에 매수 주문만 걸기 때문에, 예수금이
@@ -972,6 +972,10 @@ def seed_held_inventory(job: dict, qty: float) -> bool:
     원칙을 지키고 있어서, 이 함수도 **호출자가 수량(qty)을 직접 명시**해야만
     동작한다 — 계좌 잔고를 자동으로 조회해 알아서 판단하지 않는다. 등록 시점에
     한 번 수동으로 호출하는 용도이며 main() 사이클에서 자동 호출하지 않는다.
+
+    avg_buy_price: 업비트 계좌의 실제 평균매수가(get_balance()의 holdings[].avg_price)를
+    넘기면 last_buy_price를 이 실제 취득단가로 기록해 손익 통계가 정확해진다.
+    안 넘기면 한 격자 아래 가격으로 보수적으로 근사(실제보다 이익을 부풀리지 않음).
     """
     ticker       = job["ticker"]
     grid_pct     = float(job["grid_pct"])
@@ -1001,9 +1005,12 @@ def seed_held_inventory(job: dict, qty: float) -> bool:
         grid_qty   = _buy_qty(krw_per_grid, level)
         sell_qty   = min(remaining, grid_qty)
         sell_price = upbit_api.round_ask_price(level)
-        # 실제 취득단가를 알 수 없어, 한 격자 아래에서 산 것으로 보수적으로
-        # 근사(그리드 정상 사이클과 동일한 스프레드 — 실제보다 이익을 부풀리지 않음)
-        buy_price_est = upbit_api.round_bid_price(level / (1 + grid_pct / 100))
+        if avg_buy_price and avg_buy_price > 0:
+            buy_price_est = avg_buy_price  # 실제 평균매수가 — 손익 통계 정확
+        else:
+            # 취득단가를 모르면 한 격자 아래에서 산 것으로 보수적으로 근사
+            # (그리드 정상 사이클과 동일한 스프레드 — 실제보다 이익을 부풀리지 않음)
+            buy_price_est = upbit_api.round_bid_price(level / (1 + grid_pct / 100))
         try:
             time.sleep(0.12)
             r = upbit_api.place_order(market=ticker, side="ask", ord_type="limit",
