@@ -1,12 +1,13 @@
 /* ══════════════════════════════════════
-   NEURAL NETWORK CANVAS — 배경 라인 드로잉 애니메이션
-   personal_ai_brain(brain.html)의 neural-canvas를 이식(2026-08-27,
-   "brain.html 배경처럼 생동감있게") → 이후 "점보다는 라인이 그려지는
-   애니메이션으로" 요청 반영해 재작업: 노드는 거의 안 보이는 작은 앵커점
-   으로 줄이고, 두 노드 사이를 선이 처음부터 끝까지 자라나듯 그려졌다가
-   (grow) 잠깐 유지되고(hold) 옅어지며 사라지는(fade) 트레이스로 교체.
-   상시 켜진 정적 그물망(drawConnections)은 없애고 이 트레이스만 남김 —
-   "라인이 그려진다"는 느낌 자체가 핵심 비주얼이 되도록.
+   NEURAL NETWORK CANVAS — 배경 네트워크 메시 애니메이션
+   변천사(2026-08-27): brain.html의 neural-canvas 이식(무작위 노드+점
+   강조) → "점보다는 라인이 그려지는 애니메이션으로" → "너무 막 그려지는
+   것 같다, 네트워크 이미지처럼 정돈되게"(참고 이미지: 파란 단색 저폴리곤
+   삼각망) 최종 반영: 무작위로 아무 데나 잇던 걸 버리고, 각 노드가 가장
+   가까운 이웃 몇 개하고만 이어지는 삼각망(트라이앵귤레이션에 가까운
+   형태)으로 매 프레임 다시 그림 — 노드가 서서히 떠다니며 망 자체가
+   천천히 재구성되는 게 애니메이션이라 "정돈되면서도 생동감있게" 둘 다
+   충족. 개별 선이 튀어나왔다 사라지는 grow/fade 트레이스는 제거.
 
    다크모드가 아닐 때는 그리지 않고 대기만 하다가, 설정에서 다크모드를
    켜면(body.dark 토글) 다음 프레임부터 자동으로 그려진다.
@@ -16,22 +17,17 @@
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
 
-  const COLORS = {
-    node: 'rgba(200,190,230,',
-    trace: ['#a855f7', '#4ade80', '#4da3ff', '#c084fc', '#fb7185'],
-  };
+  // 참고 이미지처럼 단일 색 계열(보라) 위주 + 아주 가끔 밝은 파랑 포인트
+  const NODE_COLORS = ['#a855f7', '#a855f7', '#a855f7', '#c084fc', '#4da3ff'];
+  const LINE_RGB = '168,85,247';
 
-  const MAX_DIST     = 260;   // 이 거리 안의 노드 쌍만 트레이스로 이어짐
-  const MAX_TRACES   = 16;
-  const SPAWN_CHANCE = 0.10;  // 프레임당 새 트레이스 생성 확률
-  const GROW_SPEED   = 0.018; // 선이 0→1 그려지는 속도
-  const HOLD_FRAMES  = 55;    // 다 그려진 뒤 유지 프레임
-  const FADE_SPEED   = 0.028;
+  const MAX_DIST  = 190;  // 이 거리 안의 이웃만 후보
+  const K_NEAREST = 3;    // 각 노드가 잇는 가장 가까운 이웃 수(삼각망 느낌의 핵심)
 
-  let W, H, dpr, nodes, traces;
+  let W, H, dpr, nodes;
 
   function nodeCount() {
-    return Math.min(46, Math.floor(window.innerWidth * window.innerHeight / 16000));
+    return Math.min(48, Math.floor(window.innerWidth * window.innerHeight / 15000));
   }
 
   function resize() {
@@ -50,33 +46,23 @@
     return {
       x: Math.random() * W,
       y: Math.random() * H,
-      vx: (Math.random() - .5) * .18,
-      vy: (Math.random() - .5) * .18,
-      r: Math.random() * .8 + .5,
-      opacity: Math.random() * .3 + .25,
+      vx: (Math.random() - .5) * .12,   // 천천히 떠다니게(전보다 느긋하게)
+      vy: (Math.random() - .5) * .12,
+      r: Math.random() * 1.6 + 1.6,
+      color: NODE_COLORS[Math.floor(Math.random() * NODE_COLORS.length)],
+      phase: Math.random() * Math.PI * 2,
+      phaseSpeed: Math.random() * .01 + .004,
     };
   }
 
   function init() {
     resize();
     nodes = Array.from({ length: nodeCount() }, mkNode);
-    traces = [];
   }
 
-  function mkTrace() {
-    for (let tries = 0; tries < 15; tries++) {
-      const i = Math.floor(Math.random() * nodes.length);
-      const j = Math.floor(Math.random() * nodes.length);
-      if (i === j) continue;
-      const a = nodes[i], b = nodes[j];
-      if (Math.hypot(a.x - b.x, a.y - b.y) < MAX_DIST) {
-        return {
-          from: i, to: j, t: 0, phase: 'grow', fadeA: 1,
-          color: COLORS.trace[Math.floor(Math.random() * COLORS.trace.length)],
-        };
-      }
-    }
-    return null;
+  function hexToRgb(hex) {
+    const h = hex.replace('#', '');
+    return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
   }
 
   function drawBg() {
@@ -89,8 +75,8 @@
 
     const spots = [
       { x: W * .15, y: H * .25, r: W * .35, c1: 'rgba(168,85,247,.08)', c2: 'transparent' },
-      { x: W * .85, y: H * .7, r: W * .4, c1: 'rgba(74,222,128,.05)', c2: 'transparent' },
-      { x: W * .5, y: H * .9, r: W * .3, c1: 'rgba(251,113,133,.04)', c2: 'transparent' },
+      { x: W * .85, y: H * .7, r: W * .4, c1: 'rgba(74,222,128,.04)', c2: 'transparent' },
+      { x: W * .5, y: H * .9, r: W * .3, c1: 'rgba(77,163,255,.04)', c2: 'transparent' },
     ];
     spots.forEach(s => {
       const sg = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, s.r);
@@ -100,68 +86,58 @@
     });
   }
 
+  /* 각 노드마다 가장 가까운 K개 이웃만 후보로 골라 저폴리곤 삼각망처럼
+     정돈된 형태를 만든다(전 버전처럼 반경 안 모든 쌍을 잇던 것 대신) —
+     같은 변을 두 번 그리지 않도록 seen 집합으로 중복 제거. */
+  function drawMesh() {
+    const seen = new Set();
+    for (let i = 0; i < nodes.length; i++) {
+      const a = nodes[i];
+      const dists = [];
+      for (let j = 0; j < nodes.length; j++) {
+        if (i === j) continue;
+        const b = nodes[j];
+        const d = Math.hypot(a.x - b.x, a.y - b.y);
+        if (d < MAX_DIST) dists.push([d, j]);
+      }
+      dists.sort((p, q) => p[0] - q[0]);
+      for (let k = 0; k < Math.min(K_NEAREST, dists.length); k++) {
+        const j = dists[k][1];
+        const key = i < j ? i + '_' + j : j + '_' + i;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const b = nodes[j];
+        const alpha = (1 - dists[k][0] / MAX_DIST) * .38;
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.strokeStyle = `rgba(${LINE_RGB},${alpha})`;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+    }
+  }
+
   function drawNodes() {
+    const t = performance.now() / 1000;
     nodes.forEach(n => {
+      const glow = Math.sin(t * n.phaseSpeed * 60 + n.phase) * .5 + .5;
+      const r = n.r + glow * 1;
+      const [cr, cg, cb] = hexToRgb(n.color);
+
+      const g = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, r * 4);
+      g.addColorStop(0, `rgba(${cr},${cg},${cb},${.5 + glow * .3})`);
+      g.addColorStop(1, 'transparent');
       ctx.beginPath();
-      ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
-      ctx.fillStyle = COLORS.node + n.opacity + ')';
+      ctx.arc(n.x, n.y, r * 4, 0, Math.PI * 2);
+      ctx.fillStyle = g;
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(${cr},${cg},${cb},${.75 + glow * .25})`;
       ctx.fill();
     });
-  }
-
-  function updateTraces() {
-    if (traces.length < MAX_TRACES && Math.random() < SPAWN_CHANCE) {
-      const t = mkTrace();
-      if (t) traces.push(t);
-    }
-    for (let k = traces.length - 1; k >= 0; k--) {
-      const tr = traces[k];
-      if (tr.phase === 'grow') {
-        tr.t += GROW_SPEED;
-        if (tr.t >= 1) { tr.t = 1; tr.phase = 'hold'; tr.holdT = 0; }
-      } else if (tr.phase === 'hold') {
-        tr.holdT++;
-        if (tr.holdT >= HOLD_FRAMES) tr.phase = 'fade';
-      } else {
-        tr.fadeA -= FADE_SPEED;
-        if (tr.fadeA <= 0) { traces.splice(k, 1); }
-      }
-    }
-  }
-
-  function drawTraces() {
-    traces.forEach(tr => {
-      const a = nodes[tr.from], b = nodes[tr.to];
-      if (!a || !b) return;
-      const growing = tr.phase === 'grow';
-      const endX = growing ? a.x + (b.x - a.x) * tr.t : b.x;
-      const endY = growing ? a.y + (b.y - a.y) * tr.t : b.y;
-      const alpha = (tr.phase === 'fade' ? Math.max(0, tr.fadeA) : 1) * .6;
-
-      ctx.beginPath();
-      ctx.moveTo(a.x, a.y);
-      ctx.lineTo(endX, endY);
-      ctx.strokeStyle = hexToRgba(tr.color, alpha);
-      ctx.lineWidth = 1.1;
-      ctx.stroke();
-
-      // 그려지는 중일 때 끝점에 밝은 촉(펜촉) 글로우
-      if (growing) {
-        const g = ctx.createRadialGradient(endX, endY, 0, endX, endY, 7);
-        g.addColorStop(0, hexToRgba(tr.color, Math.min(1, alpha * 1.8)));
-        g.addColorStop(1, 'transparent');
-        ctx.beginPath();
-        ctx.arc(endX, endY, 7, 0, Math.PI * 2);
-        ctx.fillStyle = g;
-        ctx.fill();
-      }
-    });
-  }
-
-  function hexToRgba(hex, a) {
-    const h = hex.replace('#', '');
-    const r = parseInt(h.slice(0, 2), 16), g = parseInt(h.slice(2, 4), 16), b = parseInt(h.slice(4, 6), 16);
-    return `rgba(${r},${g},${b},${a})`;
   }
 
   function updateNodes() {
@@ -180,9 +156,8 @@
       if (!started) { init(); started = true; }
       ctx.clearRect(0, 0, W, H);
       drawBg();
+      drawMesh();
       drawNodes();
-      drawTraces();
-      updateTraces();
       updateNodes();
     } else {
       started = false; // 다시 켜지면 새 상태로 재시작
