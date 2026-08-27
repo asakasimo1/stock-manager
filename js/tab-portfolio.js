@@ -363,6 +363,105 @@ function _renderEtfDivChart() {
 // 매입원가(avg_price) 대비, 금일은 이미 갖고 있는 당일 등락(chg) 필드
 // 재사용, 1개월/커스텀만 일별 캔들(/api/quote?chart=1)에서 해당 날짜
 // 종가를 찾아와야 해서 이 렌더러가 비동기가 됨.
+// ── 커스텀 달력 팝업 (기간설정 시작/종료일 공용) ────────────────
+// 네이티브 input[type=date]의 달력 팝업은 브라우저/OS가 그려서 다크
+// 테마와 톤이 어긋나고 커스터마이징도 거의 불가능해서(2026-08-28 사용자
+// 리포트), 직접 그리는 달력 팝업으로 교체. 필드는 readonly 텍스트
+// input+아이콘이고, 클릭하면 이 팝업이 뜬다.
+let _calEl = null, _calFieldId = null, _calOpts = null, _calViewDate = null;
+
+function _calOutsideClick(e) {
+  if (_calEl && !_calEl.contains(e.target) && !e.target.closest?.('.cal-field')) closeCalPicker();
+}
+
+function closeCalPicker() {
+  if (_calEl) { _calEl.remove(); _calEl = null; }
+  document.removeEventListener('mousedown', _calOutsideClick, true);
+  _calFieldId = null;
+}
+
+function openCalPicker(fieldId, opts) {
+  closeCalPicker();
+  const input = document.getElementById(fieldId);
+  if (!input) return;
+  _calFieldId = fieldId;
+  _calOpts = opts || {};
+  const base = input.value ? new Date(input.value + 'T00:00:00') : new Date();
+  _calViewDate = new Date(base.getFullYear(), base.getMonth(), 1);
+  _calEl = document.createElement('div');
+  _calEl.className = 'cal-pop';
+  document.body.appendChild(_calEl);
+  _renderCalPop();
+  const r = input.getBoundingClientRect();
+  _calEl.style.top  = Math.max(8, Math.min(r.bottom + 6, window.innerHeight - _calEl.offsetHeight - 8)) + 'px';
+  _calEl.style.left = Math.max(8, Math.min(r.left, window.innerWidth - _calEl.offsetWidth - 8)) + 'px';
+  setTimeout(() => document.addEventListener('mousedown', _calOutsideClick, true), 0);
+}
+
+function _renderCalPop() {
+  const y = _calViewDate.getFullYear(), m = _calViewDate.getMonth();
+  const input   = document.getElementById(_calFieldId);
+  const selVal  = input?.value || '';
+  const maxVal  = _calOpts.max || null;
+  const first   = new Date(y, m, 1);
+  const startDow = first.getDay();
+  const daysInMonth = new Date(y, m + 1, 0).getDate();
+  const todayStr = new Date().toISOString().slice(0, 10);
+
+  let cells = '';
+  for (let i = 0; i < startDow; i++) cells += `<span class="cal-cell empty"></span>`;
+  for (let d = 1; d <= daysInMonth; d++) {
+    const ds = `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    const disabled = maxVal && ds > maxVal;
+    const cls = ['cal-cell'];
+    if (disabled) cls.push('disabled');
+    if (ds === todayStr) cls.push('today');
+    if (ds === selVal) cls.push('selected');
+    cells += `<span class="${cls.join(' ')}" ${disabled ? '' : `onclick="_calPick('${ds}')"`}>${d}</span>`;
+  }
+
+  _calEl.innerHTML = `
+    <div class="cal-pop-head">
+      <button type="button" class="cal-pop-nav" onclick="_calNav(-1)">‹</button>
+      <span class="cal-pop-title">${y}년 ${m + 1}월</span>
+      <button type="button" class="cal-pop-nav" onclick="_calNav(1)">›</button>
+    </div>
+    <div class="cal-pop-dow">${['일','월','화','수','목','금','토'].map(d => `<span>${d}</span>`).join('')}</div>
+    <div class="cal-pop-grid">${cells}</div>`;
+}
+
+function _calNav(delta) {
+  _calViewDate = new Date(_calViewDate.getFullYear(), _calViewDate.getMonth() + delta, 1);
+  _renderCalPop();
+}
+
+function _calPick(dateStr) {
+  const input = document.getElementById(_calFieldId);
+  const opts  = _calOpts;
+  if (input) input.value = dateStr;
+  closeCalPicker();
+  if (opts && opts.onPick) opts.onPick(dateStr);
+}
+
+function openAssetStartCal() {
+  openCalPicker('asset-custom-start', {
+    max: new Date().toISOString().slice(0, 10),
+    onPick: () => openAssetEndCal(), // 시작일 선택 즉시 종료일 달력 자동 오픈(2026-08-28 사용자 요청)
+  });
+}
+function openAssetEndCal() {
+  openCalPicker('asset-custom-end', { max: new Date().toISOString().slice(0, 10) });
+}
+function openIpoStartCal() {
+  openCalPicker('ipodiv-custom-start', {
+    max: new Date().toISOString().slice(0, 10),
+    onPick: () => openIpoEndCal(),
+  });
+}
+function openIpoEndCal() {
+  openCalPicker('ipodiv-custom-end', { max: new Date().toISOString().slice(0, 10) });
+}
+
 let _assetPeriod      = 'today'; // 'today' | '1m' | 'all' | 'custom' (기본값 2026-08-28 사용자 확정)
 let _assetCustomStart = null;    // 'YYYY-MM-DD'
 let _assetCustomEnd   = null;    // 'YYYY-MM-DD' (미지정 시 현재가 기준)
@@ -467,7 +566,8 @@ async function _renderPortAsset() {
 
   const PERIODS = [['today', '금일'], ['1m', '1개월'], ['all', '전체기간'], ['custom', '+ 기간설정']];
   const periodTabs = PERIODS.map(([key, label]) => {
-    const active  = key === _assetPeriod;
+    // '기간설정' 탭은 피커가 열려있는 동안(아직 적용 전이어도) 활성 표시
+    const active  = key === _assetPeriod || (key === 'custom' && _assetCustomOpen);
     const onclick = key === 'custom' ? 'toggleAssetCustomPicker()' : `setAssetPeriod('${key}')`;
     return `<button onclick="${onclick}" style="flex:1;padding:5px 0;border-radius:7px;font-size:11px;font-weight:600;
       border:1px solid var(--border);
@@ -477,11 +577,15 @@ async function _renderPortAsset() {
 
   const customPicker = _assetCustomOpen ? `
     <div style="display:flex;gap:6px;align-items:center;margin-bottom:12px">
-      <input type="date" id="asset-custom-start" value="${_assetCustomStart || ''}" max="${new Date().toISOString().slice(0,10)}"
-        style="flex:1;padding:5px 8px;border-radius:7px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:11px">
-      <span style="color:var(--muted);font-size:11px">~</span>
-      <input type="date" id="asset-custom-end" value="${_assetCustomEnd || ''}" max="${new Date().toISOString().slice(0,10)}"
-        style="flex:1;padding:5px 8px;border-radius:7px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:11px">
+      <div class="cal-field" onclick="openAssetStartCal()">
+        <input type="text" id="asset-custom-start" class="cal-field-input" readonly value="${_assetCustomStart || ''}" placeholder="연도-월-일">
+        <span class="cal-field-icon">📅</span>
+      </div>
+      <span style="color:var(--muted);font-size:15px">~</span>
+      <div class="cal-field" onclick="openAssetEndCal()">
+        <input type="text" id="asset-custom-end" class="cal-field-input" readonly value="${_assetCustomEnd || ''}" placeholder="연도-월-일">
+        <span class="cal-field-icon">📅</span>
+      </div>
       <button onclick="applyAssetCustomRange()" style="padding:5px 12px;border-radius:7px;border:none;background:var(--primary);color:#fff;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap">적용</button>
     </div>` : '';
 
@@ -702,7 +806,7 @@ function _renderIpoDivByStock() {
 
   const PERIODS = [['1m', '1개월'], ['1y', '1년'], ['all', '전체기간'], ['custom', '+ 기간설정']];
   const periodTabs = PERIODS.map(([key, label]) => {
-    const active  = key === period;
+    const active  = key === period || (key === 'custom' && _ipoDivCustomOpen);
     const onclick = key === 'custom' ? 'toggleIpoDivCustomPicker()' : `setIpoDivPeriod('${key}')`;
     return `<button onclick="${onclick}" style="flex:1;padding:5px 0;border-radius:7px;font-size:11px;font-weight:600;
       border:1px solid var(--border);
@@ -712,11 +816,15 @@ function _renderIpoDivByStock() {
 
   const customPicker = _ipoDivCustomOpen ? `
     <div style="display:flex;gap:6px;align-items:center;margin-bottom:12px">
-      <input type="date" id="ipodiv-custom-start" value="${_ipoDivCustomStart || ''}" max="${new Date().toISOString().slice(0,10)}"
-        style="flex:1;padding:5px 8px;border-radius:7px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:11px">
-      <span style="color:var(--muted);font-size:11px">~</span>
-      <input type="date" id="ipodiv-custom-end" value="${_ipoDivCustomEnd || ''}" max="${new Date().toISOString().slice(0,10)}"
-        style="flex:1;padding:5px 8px;border-radius:7px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:11px">
+      <div class="cal-field" onclick="openIpoStartCal()">
+        <input type="text" id="ipodiv-custom-start" class="cal-field-input" readonly value="${_ipoDivCustomStart || ''}" placeholder="연도-월-일">
+        <span class="cal-field-icon">📅</span>
+      </div>
+      <span style="color:var(--muted);font-size:15px">~</span>
+      <div class="cal-field" onclick="openIpoEndCal()">
+        <input type="text" id="ipodiv-custom-end" class="cal-field-input" readonly value="${_ipoDivCustomEnd || ''}" placeholder="연도-월-일">
+        <span class="cal-field-icon">📅</span>
+      </div>
       <button onclick="applyIpoDivCustomRange()" style="padding:5px 12px;border-radius:7px;border:none;background:var(--primary);color:#fff;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap">적용</button>
     </div>` : '';
 
