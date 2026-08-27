@@ -1170,17 +1170,13 @@
   body.dark .dash-alert.red   { background: rgba(239,68,68,.15);  border-color: rgba(239,68,68,.45);  color: #fca5a5; }
   body.dark .dash-alert.amber { background: rgba(245,158,11,.15); border-color: rgba(245,158,11,.45); color: #fcd34d; }
 
-  /* 배경 차트 이미지. 2026-08-27 시행착오 3번: 460px 구석(1차) → 화면
-     전체너비 고정(::before, 2차, 스크롤해도 화면에 계속 떠있어서 부자연
-     스럽다는 피드백) → body 자체의 배경으로 옮겨 스크롤과 함께 자연스럽게
-     지나가도록 변경(3차) + 탭바 아래까지 이어지도록 세로로 키우고
-     "보일듯 말듯"할 정도로 투명도를 낮춤(.16/.22) — 카드류는 --surface로
-     불투명하게 덮이므로 이 장식은 카드 사이 여백에서만 비침 */
-  body.dark {
-    background:
-      radial-gradient(ellipse 1100px 650px at 50% -80px, rgba(168,85,247,.12), transparent 62%),
-      radial-gradient(ellipse 700px 500px at -80px 480px, rgba(124,58,237,.08), transparent 60%),
-      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1400 420'%3E%3Cg stroke-width='2' fill='none' opacity='.16'%3E%3Cline x1='40' y1='112' x2='40' y2='132' stroke='%23c084fc'/%3E%3Crect x='33' y='118' width='14' height='6' fill='%23c084fc'/%3E%3Cline x1='103' y1='107' x2='103' y2='127' stroke='%23fb7185'/%3E%3Crect x='96' y='115' width='14' height='6' fill='%23fb7185'/%3E%3Cline x1='166' y1='91' x2='166' y2='124' stroke='%23fb7185'/%3E%3Crect x='159' y='101' width='14' height='14' fill='%23fb7185'/%3E%3Cline x1='229' y1='86' x2='229' y2='115' stroke='%23fb7185'/%3E%3Crect x='222' y='99' width='14' height='6' fill='%23fb7185'/%3E%3Cline x1='291' y1='85' x2='291' y2='112' stroke='%23fb7185'/%3E%3Crect x='284' y='96' width='14' height='6' fill='%23fb7185'/%3E%3Cline x1='354' y1='80' x2='354' y2='107' stroke='%23fb7185'/%3E%3Crect x='347' y='92' width='14' height='6' fill='%23fb7185'/%3E%3Cline x1='417' y1='83' x2='417' y2='112' stroke='%234ade80'/%3E%3Crect x='410' y='92' width='14' height='6' fill='%234ade80'/%3E%3Cline x1='480' y1='81' x2='480' y2='113' stroke='%23c084fc'/%3E%3Crect x='473' y='95' width='14' height='6' fill='%23c084fc'/%3E%3Cline x1='543' y1='77' x2='543' y2='103' stroke='%23fb7185'/%3E%3Crect x='536' y='89' width='14' height='6' fill='%23fb7185'/%3E%3Cline x1='606' y1='71' x2='606' y2='97' stroke='%23fb7185'/%3E%3Crect x='599' y='78' width='14' height='10' fill='%23fb7185'/%3E%3Cline x1='669' y1='72' x2='669' y2='99' stroke='%234ade80'/%3E%3Crect x='662' y='78' width='14' height='8' fill='%234ade80'/%3E%3Cline x1='731' y1='78' x2='731' y2='106' stroke='%234ade80'/%3E%3Crect x='724' y='87' width='14' height='6' fill='%234ade80'/%3E%3Cline x1='794' y1='81' x2='794' y2='112' stroke='%234ade80'/%3E%3Crect x='787' y='90' width='14' height='9' fill='%234ade80'/%3E%3Cline x1='857' y1='75' x2='857' y2='104' stroke='%23fb7185'/%3E%3Crect x='850' y='87' width='14' height='11' fill='%23fb7185'/%3E%3Cline x1='920' y1='72' x2='920' y2='101' stroke='%23c084fc'/%3E%3Crect x='913' y='80' width='14' height='8' fill='%23c084fc'/%3E%3Cline x1='983' y1='70' x2='983' y2='103' stroke='%234ade80'/%3E%3Crect x='976' y='80' width='14' height='10' fill='%234ade80'/%3E%3Cline x1='1046' y1='65' x2='1046' y2='96' stroke='%23fb7185'/%3E%3Crect x='1039' y='74' width='14' height='16' fill='%23fb7185'/%3E%3Cline x1='1109' y1='48' x2='1109' y2='86' stroke='%23fb7185'/%3E%3Crect x='1102' y='59' width='14' height='15' fill='%23fb7185'/%3E%3Cline x1='1171' y1='44' x2='1171' y2='66' stroke='%23fb7185'/%3E%3Crect x='1164' y='52' width='14' height='7' fill='%23fb7185'/%3E%3Cline x1='1234' y1='41' x2='1234' y2='70' stroke='%23fb7185'/%3E%3Crect x='1227' y='50' width='14' height='6' fill='%23fb7185'/%3E%3Cline x1='1297' y1='38' x2='1297' y2='64' stroke='%234ade80'/%3E%3Crect x='1290' y='50' width='14' height='7' fill='%234ade80'/%3E%3Cline x1='1360' y1='49' x2='1360' y2='74' stroke='%23c084fc'/%3E%3Crect x='1353' y='57' width='14' height='11' fill='%23c084fc'/%3E%3C/g%3E%3Cpolyline points='40,111 103,108 166,106 229,101 291,97 354,96 417,94 480,90 543,89 606,88 669,88 731,88 794,88 857,89 920,86 983,78 1046,71 1109,65 1171,58 1234,57 1297,57 1360,58' stroke='%23eae2ff' stroke-width='2' stroke-dasharray='7 6' fill='none' opacity='.16' stroke-linecap='round'/%3E%3Cg opacity='.22'%3E%3Ctext x='166' y='82' font-family='monospace' font-size='17' font-weight='700' fill='%23c4b5fd' text-anchor='middle'%3E19.22%3C/text%3E%3Ctext x='480' y='66' font-family='monospace' font-size='17' font-weight='700' fill='%23c4b5fd' text-anchor='middle'%3E42.10%3C/text%3E%3Ctext x='794' y='64' font-family='monospace' font-size='17' font-weight='700' fill='%23c4b5fd' text-anchor='middle'%3E72.22%3C/text%3E%3Ctext x='1046' y='47' font-family='monospace' font-size='17' font-weight='700' fill='%23c4b5fd' text-anchor='middle'%3E51.16%3C/text%3E%3Ctext x='1297' y='33' font-family='monospace' font-size='17' font-weight='700' fill='%23c4b5fd' text-anchor='middle'%3E26.65%3C/text%3E%3C/g%3E%3C/svg%3E")
-        no-repeat top center / 100% auto,
-      var(--bg);
-  }
+  /* 배경 장식 — 2026-08-27 네 번째 시행착오: 460px 구석(1차) → 화면
+     전체너비 고정 이미지(2차, 스크롤해도 안 움직여 부자연스럽다는 피드백)
+     → 정적 이미지를 body 배경으로(3차, 이번엔 "personal_ai_brain의
+     neural-canvas처럼 화면 전체에 생동감있게" 요청) → 결국 정적 SVG를
+     걷어내고 personal_ai_brain(brain.html)의 애니메이션 파티클 캔버스를
+     그대로 이식(4차, js/neural-canvas.js). 캔버스가 매 프레임 배경
+     그라디언트까지 직접 그리므로 body 자체엔 --bg 하나만 남겨둠(canvas
+     로드 전 잠깐 보이는 폴백 겸, 라이트모드/캔버스 실패 시 대비). */
+  #neural-canvas { position: fixed; inset: 0; z-index: -1; pointer-events: none; display: none; }
+  body.dark #neural-canvas { display: block; }
