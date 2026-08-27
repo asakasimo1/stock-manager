@@ -1579,16 +1579,14 @@ function togglePortSection(key) {
 }
 
 function _initPortCollapse() {
-  // etf-div: localStorage 상태 복원
+  // etf-div: 기본 접힘, localStorage에 '펼침(0)' 기록 있으면 복원
   try {
-    if (localStorage.getItem('port-collapse-etf-div') === '1') {
-      document.getElementById('port-etf-div-body')?.classList.add('collapsed');
-      document.getElementById('port-etf-div-toggle')?.classList.add('collapsed');
+    if (localStorage.getItem('port-collapse-etf-div') === '0') {
+      document.getElementById('port-etf-div-body')?.classList.remove('collapsed');
+      document.getElementById('port-etf-div-toggle')?.classList.remove('collapsed');
     }
   } catch(_) {}
-  // ipo: 항상 접힘 (localStorage 무시)
-  document.getElementById('port-ipo-body')?.classList.add('collapsed');
-  document.getElementById('port-ipo-toggle')?.classList.add('collapsed');
+  // ipo: 항상 접힘 (localStorage 무시, HTML 기본값 유지)
 }
 
 // ══════════════════════════════════════════════════════════

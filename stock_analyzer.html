@@ -144,46 +144,8 @@
       </div>
     </div>
 
-    <!-- ETF별 배당 현황 차트 -->
-    <div class="port-card" style="margin-bottom:16px">
-      <div class="port-card-title collapsible" id="port-etf-div-toggle" onclick="togglePortSection('etf-div')">
-        <span>💸 ETF별 배당 현황</span><i class="port-collapse-icon">▼</i>
-      </div>
-      <div id="port-etf-div-body" class="port-card-body">
-        <div id="port-etf-div-chart"><div class="port-loading" style="padding:20px">로딩 중...</div></div>
-      </div>
-    </div>
-
-    <!-- ETF 보유현황 -->
-    <div class="port-card" style="margin-bottom:16px">
-      <div class="port-card-title">📊 ETF 보유현황</div>
-      <div class="port-table-wrap">
-        <table class="port-table">
-          <thead><tr><th>종목명</th><th>총 수익률</th><th>금일 손익</th><th>평가금액</th></tr></thead>
-          <tbody id="port-etf-tbody"><tr><td colspan="4" class="port-loading">로딩 중...</td></tr></tbody>
-        </table>
-      </div>
-    </div>
-
-    <!-- 공모주 수익현황 (데이터 있을 때만 표시) -->
-    <div id="port-ipo-card" class="port-card" style="margin-bottom:16px;display:none">
-      <div class="port-card-title collapsible" id="port-ipo-toggle" onclick="togglePortSection('ipo')">
-        <span>🏢 공모주 수익현황</span><i class="port-collapse-icon">▼</i>
-      </div>
-      <!-- 합계: 항상 표시 -->
-      <div id="port-ipo-summary"></div>
-      <div id="port-ipo-body" class="port-card-body">
-        <div class="port-table-wrap">
-          <table class="port-table">
-            <thead><tr><th>종목명</th><th>수익률</th><th>수익금</th><th>매도일</th></tr></thead>
-            <tbody id="port-ipo-tbody"></tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-
     <!-- 개별주 보유현황 -->
-    <div class="port-card">
+    <div class="port-card" style="margin-bottom:16px">
       <div class="port-card-title">📌 개별주 보유현황</div>
       <div class="port-table-wrap">
         <table class="port-table">
@@ -201,6 +163,44 @@
         <button onclick="saveCash()"
           style="background:var(--primary);color:#fff;border:none;border-radius:6px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">저장</button>
         <span id="cash-save-msg" style="font-size:11px;color:var(--green);display:none">✓</span>
+      </div>
+    </div>
+
+    <!-- ETF 보유현황 -->
+    <div class="port-card" style="margin-bottom:16px">
+      <div class="port-card-title">📊 ETF 보유현황</div>
+      <div class="port-table-wrap">
+        <table class="port-table">
+          <thead><tr><th>종목명</th><th>총 수익률</th><th>금일 손익</th><th>평가금액</th></tr></thead>
+          <tbody id="port-etf-tbody"><tr><td colspan="4" class="port-loading">로딩 중...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ETF별 배당 현황 차트 -->
+    <div class="port-card" style="margin-bottom:16px">
+      <div class="port-card-title collapsible collapsed" id="port-etf-div-toggle" onclick="togglePortSection('etf-div')">
+        <span>💸 ETF별 배당 현황</span><i class="port-collapse-icon">▼</i>
+      </div>
+      <div id="port-etf-div-body" class="port-card-body collapsed">
+        <div id="port-etf-div-chart"><div class="port-loading" style="padding:20px">로딩 중...</div></div>
+      </div>
+    </div>
+
+    <!-- 공모주 수익현황 (데이터 있을 때만 표시) -->
+    <div id="port-ipo-card" class="port-card" style="margin-bottom:16px;display:none">
+      <div class="port-card-title collapsible collapsed" id="port-ipo-toggle" onclick="togglePortSection('ipo')">
+        <span>🏢 공모주 수익현황</span><i class="port-collapse-icon">▼</i>
+      </div>
+      <!-- 합계: 항상 표시 -->
+      <div id="port-ipo-summary"></div>
+      <div id="port-ipo-body" class="port-card-body collapsed">
+        <div class="port-table-wrap">
+          <table class="port-table">
+            <thead><tr><th>종목명</th><th>수익률</th><th>수익금</th><th>매도일</th></tr></thead>
+            <tbody id="port-ipo-tbody"></tbody>
+          </table>
+        </div>
       </div>
     </div>
 

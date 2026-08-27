@@ -128,23 +128,11 @@ const signFmt = v => (v > 0 ? '+' : '') + fmtK(v);
 
 // ── KPI ────────────────────────────────────────────────────
 // 2026-08-28 — 차트 아래 4개 KPI 박스(개별주/ETF 평가손익, 공모주·배당
-// 누적) 제거 요청으로 DOM 기록 로직은 걷어냄. ETF/개별주 평가손익은
-// 왼쪽 자산현황 도넛의 통합 라인에 여전히 필요해서 계산만 유지.
+// 누적) 제거 요청으로 DOM 기록 로직은 걷어냄. ETF/개별주 손익 계산은
+// _renderPortAsset()이 선택된 기간에 맞춰 자체적으로 다시 계산하므로
+// 여기서는 두 차트를 그리기만 하면 됨.
 function _renderPortKpi() {
-  // 개별주 평가손익 (현재가 있는 것만, 테이블 합계와 동일 기준)
-  const stkProfit = _stockRecords.reduce((s, r) => {
-    if (!r.current_price) return s;
-    return s + (r.current_price - (r.avg_price||0)) * (r.qty||0);
-  }, 0);
-
-  // ETF 평가손익 (현재가 있는 것만)
-  const etfProfit = _portEtf.reduce((s, r) => {
-    if (!r.current_price) return s;
-    return s + (r.current_price - (r.avg_price||0)) * (r.qty||0);
-  }, 0);
-
-  // 차트
-  _renderPortAsset(etfProfit, stkProfit);
+  _renderPortAsset();
   _renderIpoDivByStock();
 }
 
@@ -362,14 +350,101 @@ function _renderEtfDivChart() {
   }).join('');
 }
 
-// ── 자산 현황 도넛 차트 ────────────────────────────────────
+// ── 자산 현황 도넛 차트 (기간별 수익률) ──────────────────────
 // 2026-08-28 — 우측 "수익 배분" 도넛을 없애면서 그 값을 여기로 옮김:
 // ETF/개별주 행 아래에 각각의 평가손익을 보조 라인으로 붙임(예수금은
 // 손익 개념이 없어 그대로 둠). 카테고리 점 색은 초록/빨강(=상승/하락
 // 신호색)과 겹치면 "개별주 -587만원"처럼 라벨색(초록)과 값 부호색(빨강)이
 // 어긋나 보이는 문제가 있어서, 손익 부호에만 초록/빨강을 쓰고 카테고리
 // 점은 그와 안 겹치는 파랑/보라/주황 계열로 통일함.
-function _renderPortAsset(etfProfit = 0, stkProfit = 0) {
+//
+// 이후 "금일/1개월/전체기간+기간설정" 기간 필터 요청 반영 — 기준은
+// "기간 시작시점 종가 대비 수익률"(사용자 확정). 전체기간은 기존 그대로
+// 매입원가(avg_price) 대비, 금일은 이미 갖고 있는 당일 등락(chg) 필드
+// 재사용, 1개월/커스텀만 일별 캔들(/api/quote?chart=1)에서 해당 날짜
+// 종가를 찾아와야 해서 이 렌더러가 비동기가 됨.
+let _assetPeriod      = 'all';   // 'today' | '1m' | 'all' | 'custom'
+let _assetCustomStart = null;    // 'YYYY-MM-DD'
+let _assetCustomOpen  = false;
+const _histCandleCache = {};     // ticker → candles[]("YYYY-MM-DD" 오름차순)
+
+async function _fetchHistCandles(ticker) {
+  if (_histCandleCache[ticker]) return _histCandleCache[ticker];
+  try {
+    const r = await fetch(`/api/quote?ticker=${ticker}&chart=1&count=200`);
+    const d = await r.json();
+    const candles = (d.candles || []).slice().sort((a, b) => a.time.localeCompare(b.time));
+    _histCandleCache[ticker] = candles;
+    return candles;
+  } catch { return []; }
+}
+
+// dateStr 이전(포함) 가장 가까운 거래일 종가 — 주말/휴장일에 걸리면 직전
+// 거래일로 자연스럽게 당겨짐. 그보다 과거 캔들이 아예 없으면 가장 이른
+// 캔들로 대체(상장 직후 등).
+function _closeOnOrBefore(candles, dateStr) {
+  let found = null;
+  for (const c of candles) {
+    if (c.time <= dateStr) found = c; else break;
+  }
+  return found ? found.close : (candles[0] ? candles[0].close : null);
+}
+
+async function _computeGroupReturn(records, period, customStart) {
+  const withPrice = records.filter(r => r.current_price && r.ticker);
+  if (!withPrice.length) return { profit: 0, rate: 0 };
+
+  if (period === 'today') {
+    const profit   = withPrice.reduce((s, r) => s + (r.chg || 0) * (r.qty || 0), 0);
+    const prevEval = withPrice.reduce((s, r) => s + ((r.current_price || 0) - (r.chg || 0)) * (r.qty || 0), 0);
+    return { profit, rate: prevEval > 0 ? profit / prevEval * 100 : 0 };
+  }
+  if (period === 'all') {
+    const profit = withPrice.reduce((s, r) => s + (r.current_price - (r.avg_price || 0)) * (r.qty || 0), 0);
+    const cost   = withPrice.reduce((s, r) => s + (r.avg_price || 0) * (r.qty || 0), 0);
+    return { profit, rate: cost > 0 ? profit / cost * 100 : 0 };
+  }
+
+  let startDate = null;
+  if (period === '1m') {
+    const d = new Date(); d.setMonth(d.getMonth() - 1);
+    startDate = d.toISOString().slice(0, 10);
+  } else if (period === 'custom' && customStart) {
+    startDate = customStart;
+  }
+  if (!startDate) return { profit: 0, rate: 0 };
+
+  let profit = 0, startEval = 0;
+  await Promise.all(withPrice.map(async r => {
+    const candles    = await _fetchHistCandles(r.ticker);
+    const startClose = _closeOnOrBefore(candles, startDate) ?? r.avg_price ?? r.current_price;
+    profit    += (r.current_price - startClose) * (r.qty || 0);
+    startEval += startClose * (r.qty || 0);
+  }));
+  return { profit, rate: startEval > 0 ? profit / startEval * 100 : 0 };
+}
+
+function setAssetPeriod(period) {
+  _assetPeriod = period;
+  _assetCustomOpen = false;
+  _renderPortAsset();
+}
+
+function toggleAssetCustomPicker() {
+  _assetCustomOpen = !_assetCustomOpen;
+  _renderPortAsset();
+}
+
+function applyAssetCustomStart() {
+  const v = document.getElementById('asset-custom-start')?.value;
+  if (!v) return;
+  _assetCustomStart = v;
+  _assetPeriod = 'custom';
+  _assetCustomOpen = false;
+  _renderPortAsset();
+}
+
+async function _renderPortAsset() {
   const el = document.getElementById('port-asset-wrap');
   if (!el) return;
 
@@ -383,15 +458,38 @@ function _renderPortAsset(etfProfit = 0, stkProfit = 0) {
     return;
   }
 
-  // 2026-08-28 — "ETF, ETF수익을 1개 라인으로" 요청: 평가금액 옆에
-  // (손익, 수익률%)을 같이 표기하고 비중(%)은 뺌. 수익률은 현재가가
-  // 있는 종목들의 매입원가 대비(= profit 계산과 동일 모집단) 비율.
-  const rateOf = (records, profit) => {
-    const cost = records.reduce((s, r) => r.current_price ? s + (r.avg_price||0) * (r.qty||0) : s, 0);
-    return cost > 0 ? profit / cost * 100 : 0;
-  };
-  const etfRate = rateOf(_portEtf, etfProfit);
-  const stkRate = rateOf(_stockRecords, stkProfit);
+  const PERIODS = [['today', '금일'], ['1m', '1개월'], ['all', '전체기간'], ['custom', '+ 기간설정']];
+  const periodTabs = PERIODS.map(([key, label]) => {
+    const active  = key === _assetPeriod;
+    const onclick = key === 'custom' ? 'toggleAssetCustomPicker()' : `setAssetPeriod('${key}')`;
+    return `<button onclick="${onclick}" style="flex:1;padding:5px 0;border-radius:7px;font-size:11px;font-weight:600;
+      border:1px solid var(--border);
+      background:${active ? 'rgba(168,85,247,.18)' : 'none'};
+      color:${active ? 'var(--primary)' : 'var(--muted)'};cursor:pointer;transition:.15s">${label}</button>`;
+  }).join('');
+
+  const customPicker = _assetCustomOpen ? `
+    <div style="display:flex;gap:6px;align-items:center;margin-bottom:12px">
+      <input type="date" id="asset-custom-start" value="${_assetCustomStart || ''}" max="${new Date().toISOString().slice(0,10)}"
+        style="flex:1;padding:5px 8px;border-radius:7px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:11px">
+      <button onclick="applyAssetCustomStart()" style="padding:5px 12px;border-radius:7px;border:none;background:var(--primary);color:#fff;font-size:11px;font-weight:600;cursor:pointer">적용</button>
+    </div>` : '';
+
+  // 기간 탭/피커는 고정 컨테이너에 즉시 그리고, 도넛+범례는 별도 타겟에
+  // 비동기로 채워넣음(_drawDonut이 el.innerHTML을 통째로 덮어써서 탭이
+  // 같이 지워지는 걸 방지).
+  el.innerHTML = `
+    <div style="display:flex;gap:5px;margin-bottom:${_assetCustomOpen ? '10' : '16'}px">${periodTabs}</div>
+    ${customPicker}
+    <div id="port-asset-donut-target" style="text-align:center;padding:50px 0;color:var(--muted);font-size:12px">불러오는 중...</div>`;
+
+  const [etfRet, stkRet] = await Promise.all([
+    _computeGroupReturn(_portEtf, _assetPeriod, _assetCustomStart),
+    _computeGroupReturn(_stockRecords, _assetPeriod, _assetCustomStart),
+  ]);
+
+  const target = document.getElementById('port-asset-donut-target');
+  if (!target) return; // 그 사이 탭이 또 바뀌어 다시 그려졌으면 이 결과는 버림
 
   const combinedLine = (label, evalAmt, profit, rate, color) => {
     const pColor = profit > 0 ? 'var(--green)' : profit < 0 ? 'var(--red)' : 'var(--muted)';
@@ -419,11 +517,11 @@ function _renderPortAsset(etfProfit = 0, stkProfit = 0) {
   ].filter(s => s.val > 0);
 
   let customLegend = '';
-  if (etfEval > 0) customLegend += combinedLine('ETF', etfEval, etfProfit, etfRate, '#4da3ff');
-  if (stkEval > 0) customLegend += combinedLine('개별주', stkEval, stkProfit, stkRate, '#a855f7');
+  if (etfEval > 0) customLegend += combinedLine('ETF', etfEval, etfRet.profit, etfRet.rate, '#4da3ff');
+  if (stkEval > 0) customLegend += combinedLine('개별주', stkEval, stkRet.profit, stkRet.rate, '#a855f7');
   if (cash   > 0) customLegend += cashLine('예수금', cash, '#FF9100');
 
-  _drawDonut(el, slices, total, '총 자산', 'var(--primary)', false, customLegend);
+  _drawDonut(target, slices, total, '총 자산', 'var(--primary)', false, customLegend);
 }
 
 // ── 도넛 공통 렌더러 ──────────────────────────────────────
@@ -487,12 +585,20 @@ function _drawDonut(el, slices, total, centerLabel, centerColor, signPrefix = fa
 //하던 것도 리스트 영역 높이를 고정(height, max-height 아님)해서 통일.
 let _ipoDivPeriod = 'all';
 let _ipoDivMode   = 'div'; // 'div'(배당금, 기본) | 'ipo'(공모주)
+let _ipoDivCustomStart = null; // 'YYYY-MM-DD'
+let _ipoDivCustomEnd   = null;
+let _ipoDivCustomOpen  = false;
 
-function _withinPeriod(dateStr, period) {
+function _withinPeriod(dateStr, period, customStart, customEnd) {
   if (period === 'all') return true;
   if (!dateStr) return false;
   const d = new Date(dateStr);
   if (isNaN(d.getTime())) return false;
+  if (period === 'custom') {
+    if (customStart && d < new Date(customStart)) return false;
+    if (customEnd && d > new Date(customEnd + 'T23:59:59')) return false;
+    return !!(customStart || customEnd);
+  }
   const cutoff = new Date();
   if (period === '1m') cutoff.setMonth(cutoff.getMonth() - 1);
   else if (period === '1y') cutoff.setFullYear(cutoff.getFullYear() - 1);
@@ -505,7 +611,7 @@ function _computeIpoDivByStock(period, mode) {
   if (mode === 'ipo') {
     _portIpo.forEach(r => {
       if (r.direct_profit == null && !(r.price_open > 0 && r.price_ipo > 0)) return;
-      if (!_withinPeriod(r.date_list, period)) return;
+      if (!_withinPeriod(r.date_list, period, _ipoDivCustomStart, _ipoDivCustomEnd)) return;
       const profit = r.direct_profit != null
         ? r.direct_profit
         : (r.price_open - r.price_ipo) * (r.sell_qty || r.shares_alloc || 0) - 2000;
@@ -517,7 +623,7 @@ function _computeIpoDivByStock(period, mode) {
       // 배당 기록엔 pay_date(지급일)가 아니라 ym(배당 기준월, "YYYY-MM")만
       // 저장됨(tab-etf.js 저장 로직 확인) — pay_date로 필터링하면 항상
       // undefined라 "전체기간" 빼곤 늘 비어 보이던 버그(2026-08-28 리포트)
-      if (!_withinPeriod(r.ym ? r.ym + '-01' : null, period)) return;
+      if (!_withinPeriod(r.ym ? r.ym + '-01' : null, period, _ipoDivCustomStart, _ipoDivCustomEnd)) return;
       divByEtf[r.etf_id] = (divByEtf[r.etf_id] || 0) + (r.net || 0);  // net = 세후 실수령액
     });
     Object.entries(divByEtf).forEach(([etfId, amt]) => {
@@ -531,11 +637,28 @@ function _computeIpoDivByStock(period, mode) {
 
 function setIpoDivPeriod(period) {
   _ipoDivPeriod = period;
+  _ipoDivCustomOpen = false;
   _renderIpoDivByStock();
 }
 
 function setIpoDivMode(mode) {
   _ipoDivMode = mode;
+  _renderIpoDivByStock();
+}
+
+function toggleIpoDivCustomPicker() {
+  _ipoDivCustomOpen = !_ipoDivCustomOpen;
+  _renderIpoDivByStock();
+}
+
+function applyIpoDivCustomRange() {
+  const s = document.getElementById('ipodiv-custom-start')?.value;
+  const e = document.getElementById('ipodiv-custom-end')?.value;
+  if (!s && !e) return;
+  _ipoDivCustomStart = s || null;
+  _ipoDivCustomEnd   = e || null;
+  _ipoDivPeriod = 'custom';
+  _ipoDivCustomOpen = false;
   _renderIpoDivByStock();
 }
 
@@ -567,14 +690,25 @@ function _renderIpoDivByStock() {
   const total = rows.reduce((s, r) => s + r.amount, 0);
   const valColor = v => v > 0 ? 'var(--green)' : v < 0 ? 'var(--red)' : 'var(--muted)';
 
-  const PERIODS = [['1m', '1개월'], ['1y', '1년'], ['all', '전체기간']];
+  const PERIODS = [['1m', '1개월'], ['1y', '1년'], ['all', '전체기간'], ['custom', '+ 기간설정']];
   const periodTabs = PERIODS.map(([key, label]) => {
-    const active = key === period;
-    return `<button onclick="setIpoDivPeriod('${key}')" style="flex:1;padding:5px 0;border-radius:7px;font-size:11px;font-weight:600;
+    const active  = key === period;
+    const onclick = key === 'custom' ? 'toggleIpoDivCustomPicker()' : `setIpoDivPeriod('${key}')`;
+    return `<button onclick="${onclick}" style="flex:1;padding:5px 0;border-radius:7px;font-size:11px;font-weight:600;
       border:1px solid var(--border);
       background:${active ? 'rgba(168,85,247,.18)' : 'none'};
       color:${active ? 'var(--primary)' : 'var(--muted)'};cursor:pointer;transition:.15s">${label}</button>`;
   }).join('');
+
+  const customPicker = _ipoDivCustomOpen ? `
+    <div style="display:flex;gap:6px;align-items:center;margin-bottom:12px">
+      <input type="date" id="ipodiv-custom-start" value="${_ipoDivCustomStart || ''}" max="${new Date().toISOString().slice(0,10)}"
+        style="flex:1;padding:5px 8px;border-radius:7px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:11px">
+      <span style="color:var(--muted);font-size:11px">~</span>
+      <input type="date" id="ipodiv-custom-end" value="${_ipoDivCustomEnd || ''}" max="${new Date().toISOString().slice(0,10)}"
+        style="flex:1;padding:5px 8px;border-radius:7px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:11px">
+      <button onclick="applyIpoDivCustomRange()" style="padding:5px 12px;border-radius:7px;border:none;background:var(--primary);color:#fff;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap">적용</button>
+    </div>` : '';
 
   const list = rows.length ? rows.map(r => `
     <div style="display:flex;align-items:center;gap:8px;font-size:12px;padding:7px 0;border-bottom:1px solid var(--border)">
@@ -584,7 +718,8 @@ function _renderIpoDivByStock() {
     : `<div style="color:var(--muted);font-size:12px;text-align:center;padding-top:${(IPO_DIV_LIST_HEIGHT-40)/2}px">해당 기간 데이터 없음</div>`;
 
   el.innerHTML = `
-    <div style="display:flex;gap:5px;margin-bottom:14px">${periodTabs}</div>
+    <div style="display:flex;gap:5px;margin-bottom:${_ipoDivCustomOpen ? '10' : '14'}px">${periodTabs}</div>
+    ${customPicker}
     <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px;padding-bottom:10px;border-bottom:1px solid var(--border)">
       <span style="font-size:12px;color:var(--muted);font-weight:700">${mode === 'div' ? '세후 배당 합계' : '공모주 수익 합계'}</span>
       <span style="font-size:16px;font-weight:700;color:${valColor(total)}">${signFmt(total)}</span>
