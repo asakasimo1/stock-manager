@@ -953,6 +953,79 @@ def _sync_orphan_coins(job: dict) -> bool:
 
 
 # ─────────────────────────────────────────
+# 기존 보유물량 편입 (예수금 없이 그리드 시작)
+# ─────────────────────────────────────────
+
+def seed_held_inventory(job: dict, qty: float) -> bool:
+    """그리드 등록 전부터 이미 보유 중이던 코인을 그리드에 편입한다.
+
+    initialize_grid()는 현재가 아래 격자에 매수 주문만 걸기 때문에, 예수금이
+    없는 상태로 그리드를 등록하면(이미 코인은 보유 중인데 살 돈이 없는 경우)
+    매수 주문이 전부 실패하고 모든 격자가 idle로 남아 그리드가 아무 일도 안
+    하게 된다(2026-08-27 사용자 리포트 — 리플 그리드 등록 후 매수대기/매도대기
+    둘 다 0으로 방치됨). 이 함수는 현재가 위 idle 격자들에 보유 수량을
+    나눠 매도 주문으로 등록해, 매도 체결 → 그 자리에 재매수(현금 확보) →
+    다음 사이클부터 정상적인 그리드 사이클이 굴러가게 만든다.
+
+    2026-08-21 계좌 전체 잔고를 자동으로 훑다 사용자 직접매매 코인까지 팔아버린
+    사고(_sync_orphan_coins 주석 참고) 이후로 "그리드가 스스로 산 것만" 건드리는
+    원칙을 지키고 있어서, 이 함수도 **호출자가 수량(qty)을 직접 명시**해야만
+    동작한다 — 계좌 잔고를 자동으로 조회해 알아서 판단하지 않는다. 등록 시점에
+    한 번 수동으로 호출하는 용도이며 main() 사이클에서 자동 호출하지 않는다.
+    """
+    ticker       = job["ticker"]
+    grid_pct     = float(job["grid_pct"])
+    grids        = job.get("grids", [])
+    krw_per_grid = float(job.get("krw_per_grid", 0))
+
+    try:
+        cur_price = upbit_api.get_price(ticker)["price"]
+    except Exception as e:
+        logger.error("seed_held_inventory 현재가 조회 실패 %s: %s", ticker, e)
+        return False
+
+    idle_above = sorted(
+        [g for g in grids if g.get("state") == "idle" and float(g["level"]) > cur_price],
+        key=lambda g: float(g["level"])  # 현재가에 가까운 순
+    )
+    if not idle_above:
+        logger.warning("seed_held_inventory: 현재가(%s원) 위 idle 격자 없음 — 편입 불가", f"{cur_price:,.0f}")
+        return False
+
+    changed   = False
+    remaining = qty
+    for grid in idle_above:
+        if remaining < 1e-8:
+            break
+        level      = float(grid["level"])
+        grid_qty   = _buy_qty(krw_per_grid, level)
+        sell_qty   = min(remaining, grid_qty)
+        sell_price = upbit_api.round_ask_price(level)
+        # 실제 취득단가를 알 수 없어, 한 격자 아래에서 산 것으로 보수적으로
+        # 근사(그리드 정상 사이클과 동일한 스프레드 — 실제보다 이익을 부풀리지 않음)
+        buy_price_est = upbit_api.round_bid_price(level / (1 + grid_pct / 100))
+        try:
+            time.sleep(0.12)
+            r = upbit_api.place_order(market=ticker, side="ask", ord_type="limit",
+                                        price=sell_price, volume=sell_qty)
+            grid.update(state="sell_waiting", sell_uuid=r["uuid"], coin_qty=sell_qty,
+                        last_buy_price=buy_price_est, last_sell_price=sell_price)
+            job["grid_owned_qty"] = round(job.get("grid_owned_qty", 0) + sell_qty, 8)
+            remaining -= sell_qty
+            changed = True
+            logger.info("  기존보유 편입 매도등록 %s원 %.8f개 UUID:%s",
+                        f"{sell_price:,.0f}", sell_qty, r["uuid"][:8])
+        except Exception as e:
+            logger.error("  기존보유 편입 매도등록 실패 %s원: %s", f"{level:,.0f}", e)
+
+    if remaining > 1e-8:
+        logger.warning("seed_held_inventory: %.8f개 미등록(idle 격자 부족, ≈%s원)",
+                        remaining, f"{remaining * cur_price:,.0f}")
+
+    return changed
+
+
+# ─────────────────────────────────────────
 # 메인
 # ─────────────────────────────────────────
 
