@@ -1,11 +1,15 @@
 /* ══════════════════════════════════════
-   NEURAL NETWORK CANVAS — 배경 파티클 애니메이션
+   NEURAL NETWORK CANVAS — 배경 라인 드로잉 애니메이션
    personal_ai_brain(brain.html)의 neural-canvas를 이식(2026-08-27,
-   사용자 요청 "brain.html 배경처럼 생동감있게"). 색상만 이 앱의 다크모드
-   팔레트(보라/초록/빨강/파랑)로 교체. 다크모드가 아닐 때는 그리지 않고
-   대기만 하다가, 설정에서 다크모드를 켜면(_applySettingsState가
-   body.dark를 토글하는 순간) 다음 프레임부터 자동으로 그려진다 —
-   새로고침 없이도 라이트↔다크 전환에 즉시 반응.
+   "brain.html 배경처럼 생동감있게") → 이후 "점보다는 라인이 그려지는
+   애니메이션으로" 요청 반영해 재작업: 노드는 거의 안 보이는 작은 앵커점
+   으로 줄이고, 두 노드 사이를 선이 처음부터 끝까지 자라나듯 그려졌다가
+   (grow) 잠깐 유지되고(hold) 옅어지며 사라지는(fade) 트레이스로 교체.
+   상시 켜진 정적 그물망(drawConnections)은 없애고 이 트레이스만 남김 —
+   "라인이 그려진다"는 느낌 자체가 핵심 비주얼이 되도록.
+
+   다크모드가 아닐 때는 그리지 않고 대기만 하다가, 설정에서 다크모드를
+   켜면(body.dark 토글) 다음 프레임부터 자동으로 그려진다.
 ══════════════════════════════════════ */
 (function () {
   const canvas = document.getElementById('neural-canvas');
@@ -13,18 +17,21 @@
   const ctx = canvas.getContext('2d');
 
   const COLORS = {
-    node: ['#a855f7', '#4ade80', '#fb7185', '#4da3ff', '#c084fc'],
-    line: 'rgba(168,85,247,',
-    pulse: ['#a855f7', '#4ade80', '#4da3ff', '#c084fc'],
+    node: 'rgba(200,190,230,',
+    trace: ['#a855f7', '#4ade80', '#4da3ff', '#c084fc', '#fb7185'],
   };
 
-  const MAX_DIST = 200;
-  const PULSE_SPEED = 0.0018;
+  const MAX_DIST     = 260;   // 이 거리 안의 노드 쌍만 트레이스로 이어짐
+  const MAX_TRACES   = 16;
+  const SPAWN_CHANCE = 0.10;  // 프레임당 새 트레이스 생성 확률
+  const GROW_SPEED   = 0.018; // 선이 0→1 그려지는 속도
+  const HOLD_FRAMES  = 55;    // 다 그려진 뒤 유지 프레임
+  const FADE_SPEED   = 0.028;
 
-  let W, H, dpr, nodes, pulses;
+  let W, H, dpr, nodes, traces;
 
   function nodeCount() {
-    return Math.min(60, Math.floor(window.innerWidth * window.innerHeight / 14000));
+    return Math.min(46, Math.floor(window.innerWidth * window.innerHeight / 16000));
   }
 
   function resize() {
@@ -43,39 +50,33 @@
     return {
       x: Math.random() * W,
       y: Math.random() * H,
-      vx: (Math.random() - .5) * .22,
-      vy: (Math.random() - .5) * .22,
-      r: Math.random() * 2.2 + 1.2,
-      color: COLORS.node[Math.floor(Math.random() * COLORS.node.length)],
-      phase: Math.random() * Math.PI * 2,
-      phaseSpeed: Math.random() * .015 + .006,
-      opacity: Math.random() * .4 + .5,
+      vx: (Math.random() - .5) * .18,
+      vy: (Math.random() - .5) * .18,
+      r: Math.random() * .8 + .5,
+      opacity: Math.random() * .3 + .25,
     };
   }
 
   function init() {
     resize();
     nodes = Array.from({ length: nodeCount() }, mkNode);
-    pulses = [];
+    traces = [];
   }
 
-  function spawnPulse() {
-    if (pulses.length >= 18) return;
-    for (let tries = 0; tries < 10; tries++) {
+  function mkTrace() {
+    for (let tries = 0; tries < 15; tries++) {
       const i = Math.floor(Math.random() * nodes.length);
       const j = Math.floor(Math.random() * nodes.length);
       if (i === j) continue;
-      const dx = nodes[i].x - nodes[j].x;
-      const dy = nodes[i].y - nodes[j].y;
-      if (Math.sqrt(dx * dx + dy * dy) < MAX_DIST) {
-        pulses.push({
-          from: i, to: j, t: 0,
-          color: COLORS.pulse[Math.floor(Math.random() * COLORS.pulse.length)],
-          speed: PULSE_SPEED * (Math.random() * .8 + .6),
-        });
-        break;
+      const a = nodes[i], b = nodes[j];
+      if (Math.hypot(a.x - b.x, a.y - b.y) < MAX_DIST) {
+        return {
+          from: i, to: j, t: 0, phase: 'grow', fadeA: 1,
+          color: COLORS.trace[Math.floor(Math.random() * COLORS.trace.length)],
+        };
       }
     }
+    return null;
   }
 
   function drawBg() {
@@ -99,66 +100,61 @@
     });
   }
 
-  function drawConnections() {
-    for (let i = 0; i < nodes.length; i++) {
-      for (let j = i + 1; j < nodes.length; j++) {
-        const a = nodes[i], b = nodes[j];
-        const dx = a.x - b.x, dy = a.y - b.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist > MAX_DIST) continue;
-        const alpha = (1 - dist / MAX_DIST) * .22;
-        ctx.beginPath();
-        ctx.moveTo(a.x, a.y);
-        ctx.lineTo(b.x, b.y);
-        ctx.strokeStyle = COLORS.line + alpha + ')';
-        ctx.lineWidth = .6;
-        ctx.stroke();
+  function drawNodes() {
+    nodes.forEach(n => {
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
+      ctx.fillStyle = COLORS.node + n.opacity + ')';
+      ctx.fill();
+    });
+  }
+
+  function updateTraces() {
+    if (traces.length < MAX_TRACES && Math.random() < SPAWN_CHANCE) {
+      const t = mkTrace();
+      if (t) traces.push(t);
+    }
+    for (let k = traces.length - 1; k >= 0; k--) {
+      const tr = traces[k];
+      if (tr.phase === 'grow') {
+        tr.t += GROW_SPEED;
+        if (tr.t >= 1) { tr.t = 1; tr.phase = 'hold'; tr.holdT = 0; }
+      } else if (tr.phase === 'hold') {
+        tr.holdT++;
+        if (tr.holdT >= HOLD_FRAMES) tr.phase = 'fade';
+      } else {
+        tr.fadeA -= FADE_SPEED;
+        if (tr.fadeA <= 0) { traces.splice(k, 1); }
       }
     }
   }
 
-  function drawPulses() {
-    const toRemove = [];
-    pulses.forEach((p, idx) => {
-      p.t += p.speed;
-      if (p.t >= 1) { toRemove.push(idx); return; }
-      const a = nodes[p.from], b = nodes[p.to];
-      const dx = b.x - a.x, dy = b.y - a.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist > MAX_DIST) { toRemove.push(idx); return; }
-      const px = a.x + dx * p.t;
-      const py = a.y + dy * p.t;
-      const alpha = Math.sin(p.t * Math.PI);
-      const pg = ctx.createRadialGradient(px, py, 0, px, py, 5);
-      pg.addColorStop(0, p.color.replace(')', ', ' + (alpha * .95) + ')').replace('rgb', 'rgba'));
-      pg.addColorStop(1, 'transparent');
-      ctx.beginPath();
-      ctx.arc(px, py, 5, 0, Math.PI * 2);
-      ctx.fillStyle = pg;
-      ctx.fill();
-    });
-    for (let i = toRemove.length - 1; i >= 0; i--) pulses.splice(toRemove[i], 1);
-  }
-
-  function drawNodes() {
-    const t = performance.now() / 1000;
-    nodes.forEach(n => {
-      const glow = Math.sin(t * n.phaseSpeed * 60 + n.phase) * .5 + .5;
-      const r = n.r + glow * 1.5;
-      const alpha = n.opacity * (.6 + glow * .4);
-
-      const g = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, r * 4.5);
-      g.addColorStop(0, hexToRgba(n.color, alpha * .45));
-      g.addColorStop(1, 'transparent');
-      ctx.beginPath();
-      ctx.arc(n.x, n.y, r * 4.5, 0, Math.PI * 2);
-      ctx.fillStyle = g;
-      ctx.fill();
+  function drawTraces() {
+    traces.forEach(tr => {
+      const a = nodes[tr.from], b = nodes[tr.to];
+      if (!a || !b) return;
+      const growing = tr.phase === 'grow';
+      const endX = growing ? a.x + (b.x - a.x) * tr.t : b.x;
+      const endY = growing ? a.y + (b.y - a.y) * tr.t : b.y;
+      const alpha = (tr.phase === 'fade' ? Math.max(0, tr.fadeA) : 1) * .6;
 
       ctx.beginPath();
-      ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
-      ctx.fillStyle = hexToRgba(n.color, alpha);
-      ctx.fill();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(endX, endY);
+      ctx.strokeStyle = hexToRgba(tr.color, alpha);
+      ctx.lineWidth = 1.1;
+      ctx.stroke();
+
+      // 그려지는 중일 때 끝점에 밝은 촉(펜촉) 글로우
+      if (growing) {
+        const g = ctx.createRadialGradient(endX, endY, 0, endX, endY, 7);
+        g.addColorStop(0, hexToRgba(tr.color, Math.min(1, alpha * 1.8)));
+        g.addColorStop(1, 'transparent');
+        ctx.beginPath();
+        ctx.arc(endX, endY, 7, 0, Math.PI * 2);
+        ctx.fillStyle = g;
+        ctx.fill();
+      }
     });
   }
 
@@ -178,18 +174,16 @@
     });
   }
 
-  let frame = 0;
   let started = false;
   function loop() {
     if (document.body.classList.contains('dark')) {
       if (!started) { init(); started = true; }
       ctx.clearRect(0, 0, W, H);
       drawBg();
-      drawConnections();
-      drawPulses();
       drawNodes();
+      drawTraces();
+      updateTraces();
       updateNodes();
-      if (++frame % 40 === 0) spawnPulse();
     } else {
       started = false; // 다시 켜지면 새 상태로 재시작
     }
