@@ -956,7 +956,7 @@ def _sync_orphan_coins(job: dict) -> bool:
 # 기존 보유물량 편입 (예수금 없이 그리드 시작)
 # ─────────────────────────────────────────
 
-def seed_held_inventory(job: dict, qty: float, avg_buy_price: float = None) -> bool:
+def seed_held_inventory(job: dict, qty: float) -> bool:
     """그리드 등록 전부터 이미 보유 중이던 코인을 그리드에 편입한다.
 
     initialize_grid()는 현재가 아래 격자에 매수 주문만 걸기 때문에, 예수금이
@@ -973,9 +973,14 @@ def seed_held_inventory(job: dict, qty: float, avg_buy_price: float = None) -> b
     동작한다 — 계좌 잔고를 자동으로 조회해 알아서 판단하지 않는다. 등록 시점에
     한 번 수동으로 호출하는 용도이며 main() 사이클에서 자동 호출하지 않는다.
 
-    avg_buy_price: 업비트 계좌의 실제 평균매수가(get_balance()의 holdings[].avg_price)를
-    넘기면 last_buy_price를 이 실제 취득단가로 기록해 손익 통계가 정확해진다.
-    안 넘기면 한 격자 아래 가격으로 보수적으로 근사(실제보다 이익을 부풀리지 않음).
+    last_buy_price는 항상 한 격자 아래 가격으로 근사한다(실제 평균매수가를
+    쓰지 않음) — 2026-08-27 실사고: 실제 평균매수가를 그대로 넣었더니, 시장이
+    이미 그보다 3격자(REBALANCE_GRID_STEPS) 넘게 하락해있던 탓에 _rebalance_grid()의
+    손절 로직이 "매수가 대비 크게 손실난 포지션"으로 오판해 지정가 체결을
+    기다리지도 않고 편입 직후 첫 사이클에 바로 시장가 손절해버림(리플 101개
+    분, -9,543원 손실). 근사치를 쓰면 편입 직후엔 "방금 산 것"처럼 보여
+    손절 문턱에 걸리지 않고 정상적으로 지정가 체결을 기다린다 — 대신 손익
+    통계가 실제 취득원가 기준보다 보수적으로(적게) 잡힌다.
     """
     ticker       = job["ticker"]
     grid_pct     = float(job["grid_pct"])
@@ -1005,12 +1010,9 @@ def seed_held_inventory(job: dict, qty: float, avg_buy_price: float = None) -> b
         grid_qty   = _buy_qty(krw_per_grid, level)
         sell_qty   = min(remaining, grid_qty)
         sell_price = upbit_api.round_ask_price(level)
-        if avg_buy_price and avg_buy_price > 0:
-            buy_price_est = avg_buy_price  # 실제 평균매수가 — 손익 통계 정확
-        else:
-            # 취득단가를 모르면 한 격자 아래에서 산 것으로 보수적으로 근사
-            # (그리드 정상 사이클과 동일한 스프레드 — 실제보다 이익을 부풀리지 않음)
-            buy_price_est = upbit_api.round_bid_price(level / (1 + grid_pct / 100))
+        # 한 격자 아래에서 산 것으로 근사 — 실제 평균매수가를 쓰면 손절 오작동
+        # 위험이 있어 쓰지 않는다(위 함수 docstring 2026-08-27 사고 참고)
+        buy_price_est = upbit_api.round_bid_price(level / (1 + grid_pct / 100))
         try:
             time.sleep(0.12)
             r = upbit_api.place_order(market=ticker, side="ask", ord_type="limit",
