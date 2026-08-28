@@ -446,6 +446,62 @@ function _gridChartTfBarHtml(containerId, activeTf) {
   }).join('');
 }
 
+// job.trade_history(주식 그리드 당일 체결 내역, tab-autotrade.js
+// atCalcDayProfit과 동일 필드 — 한 행 = 한 사이클의 매수+매도)를 캔들
+// 시간축에 맞춰 마커로 변환. 기존엔 매수/매도 "대기가" 라인만 그려서
+// 실제 체결이 어디서 일어났는지가 차트에 전혀 표시되지 않았음(2026-08-28
+// 사용자 리포트: "86000원에 매도 체결됐는데 차트에 안 보였다" — 가려진
+// 게 아니라 애초에 안 그리고 있었음). 코인 그리드 잡은 프론트에 체결
+// 내역을 안 내려줘서(trade_history 없음) 이 함수는 자연히 빈 배열을 반환
+// — 주식 그리드에만 해당.
+function _buildFillMarkers(job, candles, buyColor, sellColor) {
+  const hist = Array.isArray(job.trade_history) ? job.trade_history : [];
+  if (!hist.length || !candles.length) return [];
+  const isDateAxis = typeof candles[0].time === 'string';
+
+  const toCandleTime = (dateStr, timeStr) => {
+    if (!dateStr) return null;
+    if (isDateAxis) return candles.some(c => c.time === dateStr) ? dateStr : null; // 일/주/월봉
+    const epoch = Math.floor(Date.parse(`${dateStr}T${(timeStr || '00:00:00')}+09:00`) / 1000);
+    if (!isFinite(epoch)) return null;
+    const first = candles[0].time, last = candles[candles.length - 1].time;
+    if (epoch < first - 600 || epoch > last + 600) return null; // 현재 보이는 구간 밖 체결은 스킵
+    let best = null, bestDiff = Infinity;
+    for (const c of candles) {
+      const diff = Math.abs(c.time - epoch);
+      if (diff < bestDiff) { bestDiff = diff; best = c.time; }
+    }
+    return best;
+  };
+
+  const markers = [];
+  for (const h of hist) {
+    if (h.sell_price != null) {
+      const t = toCandleTime(h.date, h.time);
+      if (t != null) markers.push({
+        time: t, position: 'aboveBar', color: sellColor, shape: 'arrowDown',
+        text: `매도 ${Math.round(h.sell_price).toLocaleString()}`,
+      });
+    }
+    // 매수 체결(같은 사이클의 시작) — buy_time은 같은 날짜 기준(HH:MM:SS)으로
+    // 가정, 그리드 특성상 매수·매도가 다른 날 걸쳐 일어날 수 있어 근사치임
+    if (h.buy_price != null && h.buy_time) {
+      const t = toCandleTime(h.date, h.buy_time);
+      if (t != null) markers.push({
+        time: t, position: 'belowBar', color: buyColor, shape: 'arrowUp',
+        text: `매수 ${Math.round(h.buy_price).toLocaleString()}`,
+      });
+    }
+  }
+
+  markers.sort((a, b) => {
+    const av = typeof a.time === 'number' ? a.time : Date.parse(a.time);
+    const bv = typeof b.time === 'number' ? b.time : Date.parse(b.time);
+    return av - bv;
+  });
+  return markers;
+}
+
 // containerId 엘리먼트에 job 하나의 10분봉(최근 6시간) + 매수/매도 대기가
 // 오버레이 차트를 그린다. curPrice: 현재가(숫자, 없으면 기준선 생략).
 // qtyField: 'coin_qty' | 'qty'. ticker: Upbit market 코드 또는 KIS 종목코드.
@@ -571,6 +627,9 @@ async function renderGridChart(containerId, job, curPrice, qtyField, ticker, isC
                                // 표시해서 축·툴팁이 지저분했음 — 정수 단위로 고정.
   });
   if (candles.length) series.setData(candles);
+
+  const fillMarkers = _buildFillMarkers(job, candles, buyColor, sellColor);
+  if (fillMarkers.length) series.setMarkers(fillMarkers);
 
   // 매수/매도 대기 기준가 — 실제 캔들 위에 바로 겹쳐서 "지금 가격 흐름 대비
   // 내 주문이 어디 걸려있는지"가 한눈에 보이도록. 금액은 매수대기는 격자당
