@@ -529,12 +529,13 @@ export default async function handler(req, res) {
     if (!price) throw new Error('가격 정보 없음');
 
     // NXT 시간대: NXT 거래 종목이면 실시간가로 교체 (ETF는 대부분 해당 없음)
+    let usedNxt = false;
     if (isNxtTime()) {
       try {
         const nxtKey = process.env.KIS_APP_KEY, nxtSec = process.env.KIS_APP_SECRET;
         if (nxtKey && nxtSec) {
           const nxt = await getKisPrice(ticker, nxtKey, nxtSec, 'NX');
-          if (nxt.price) { price = nxt.price; chg = nxt.chg; chgPct = nxt.chgPct; }
+          if (nxt.price) { price = nxt.price; chg = nxt.chg; chgPct = nxt.chgPct; usedNxt = true; }
         }
       } catch (_) {}
     }
@@ -563,7 +564,9 @@ export default async function handler(req, res) {
       ? Number((annualDiv / price * 100).toFixed(2))
       : Number(d.dividendYieldTtm ?? 0);
 
-    res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate=120');
+    // NXT 실시간가로 교체된 경우 Vercel 엣지 캐시(60~180초)에 오래된 값이
+    // 남아있으면 안 되므로 캐시하지 않음 — 정규장 종가는 그대로 캐시 유지
+    res.setHeader('Cache-Control', usedNxt ? 'no-store' : 's-maxage=60, stale-while-revalidate=120');
     return res.status(200).json({
       ticker, name, price, chg, chgPct,
       divCycle, divMonths, annualDiv, annualDivRate, recentDiv, recentDivRate,

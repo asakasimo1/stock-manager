@@ -36,19 +36,33 @@ async function initPortfolio() {
   _startPortAutoRefresh();
 }
 
-// 포트폴리오 탭 — 현재가 TTL 캐시 (3분)
+// 포트폴리오 탭 — 현재가 TTL 캐시 (평소 3분, NXT 시간대는 30초로 단축해
+// 실시간에 더 가깝게— 2026-08-28 사용자 요청)
 const _portPriceCache = {};
-const _PORT_PRICE_TTL = 3 * 60 * 1000;
+const _PORT_PRICE_TTL     = 3 * 60 * 1000;
+const _PORT_PRICE_TTL_NXT = 30 * 1000;
+
+// 프리마켓 08:05~08:50, 애프터마켓 15:35~20:00 KST(평일) — api/quote.js,
+// api/stock.js의 isNxtTime()과 동일 판정 로직(서버와 클라이언트 각각 필요)
+function _isNxtTime() {
+  const kst = new Date(Date.now() + 9 * 3600 * 1000);
+  const day = kst.getUTCDay();
+  if (day === 0 || day === 6) return false;
+  const t = kst.getUTCHours() * 60 + kst.getUTCMinutes();
+  return (t >= 8 * 60 + 5 && t < 8 * 60 + 50) || (t >= 15 * 60 + 35 && t < 20 * 60);
+}
+function _portPriceTtl() { return _isNxtTime() ? _PORT_PRICE_TTL_NXT : _PORT_PRICE_TTL; }
 
 function _applyPriceCache() {
   const now = Date.now();
+  const ttl = _portPriceTtl();
   _portEtf.forEach(r => {
     const c = r.ticker && _portPriceCache[r.ticker];
-    if (c && now - c.at < _PORT_PRICE_TTL) { r.current_price = c.price; r.chg = c.chg; r.chgPct = c.chgPct; }
+    if (c && now - c.at < ttl) { r.current_price = c.price; r.chg = c.chg; r.chgPct = c.chgPct; }
   });
   _stockRecords.forEach(r => {
     const c = r.ticker && _portPriceCache[r.ticker];
-    if (c && now - c.at < _PORT_PRICE_TTL) { r.current_price = c.price; r.chg = c.chg; r.chgPct = c.chgPct; }
+    if (c && now - c.at < ttl) { r.current_price = c.price; r.chg = c.chg; r.chgPct = c.chgPct; }
   });
 }
 
@@ -59,13 +73,14 @@ async function _refreshPortfolioRealtime(gen) {
   _portRefreshing = true;
   try {
     const now = Date.now();
+    const ttl = _portPriceTtl();
     const etfSnap = [..._portEtf];      // 이 시점의 배열 스냅샷 — 교체돼도 구 fetch 결과 무시
     const stkSnap = [..._stockRecords];
     const etfFetches = etfSnap
       .filter(r => r.ticker)
       .map(async r => {
         const c = _portPriceCache[r.ticker];
-        if (c && now - c.at < _PORT_PRICE_TTL) return; // 캐시 유효 → 건너뜀
+        if (c && now - c.at < ttl) return; // 캐시 유효 → 건너뜀
         const release = await _priceSem();
         try {
           const d = await fetch(`/api/quote?ticker=${r.ticker}`).then(x => x.json());
@@ -80,7 +95,7 @@ async function _refreshPortfolioRealtime(gen) {
       .filter(r => r.ticker)
       .map(async r => {
         const c = _portPriceCache[r.ticker];
-        if (c && now - c.at < _PORT_PRICE_TTL) return; // 캐시 유효 → 건너뜀
+        if (c && now - c.at < ttl) return; // 캐시 유효 → 건너뜀
         const release = await _priceSem();
         try {
           const d = await fetch(`/api/stock?ticker=${r.ticker}`).then(x => x.json());
@@ -97,12 +112,23 @@ async function _refreshPortfolioRealtime(gen) {
   }
 }
 
+// NXT 시간대(프리/애프터마켓)엔 20분 고정 주기 대신 1분 주기로 자동
+// 새로고침 — 탭을 계속 켜놓고 있어도 NXT 실시간가가 반영되도록
+// (2026-08-28 사용자 요청). setInterval 대신 setTimeout 재귀 호출로
+// 매번 그 시점의 NXT 여부를 다시 판정해 주기를 동적으로 조정한다.
+const PORT_REFRESH_MS_NXT = 60 * 1000;
+
 function _startPortAutoRefresh() {
-  clearInterval(_portAutoTimer);
-  _portAutoTimer = setInterval(() => {
-    const tab = document.getElementById('tab-portfolio');
-    if (tab && tab.classList.contains('active')) initPortfolio(true);
-  }, PORT_REFRESH_MS);
+  clearTimeout(_portAutoTimer);
+  const schedule = () => {
+    const delay = _isNxtTime() ? PORT_REFRESH_MS_NXT : PORT_REFRESH_MS;
+    _portAutoTimer = setTimeout(() => {
+      const tab = document.getElementById('tab-portfolio');
+      if (tab && tab.classList.contains('active')) initPortfolio(true);
+      schedule();
+    }, delay);
+  };
+  schedule();
 }
 
 function renderPortfolio() {
