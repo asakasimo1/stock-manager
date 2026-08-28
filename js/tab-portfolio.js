@@ -690,12 +690,16 @@ async function _renderPortAsset() {
       </span>
     </div>`;
   };
+  // 예수금 라벨이 flex:1로 늘어난 박스 안에서 가운데로 떠 보이던 문제(2026-08-28
+  // 사용자 리포트) — combinedLine처럼 라벨은 내용 크기 그대로 두고 값만
+  // margin-left:auto로 오른쪽에 붙인다.
   const cashLine = (label, val, color) => `
     <div style="display:flex;align-items:center;gap:6px;font-size:12px;margin-bottom:10px">
       <span style="width:9px;height:9px;border-radius:50%;background:${color};flex-shrink:0"></span>
-      <span style="color:var(--muted);flex:1">${label}</span>
-      <span style="font-weight:600">${fmtK(val)}</span>
-      <span style="color:var(--muted);min-width:34px;text-align:right">${(val/total*100).toFixed(1)}%</span>
+      <span style="color:var(--muted)">${label}</span>
+      <span style="margin-left:auto;font-weight:600;white-space:nowrap">${fmtK(val)}
+        <span style="color:var(--muted)">(${(val/total*100).toFixed(1)}%)</span>
+      </span>
     </div>`;
 
   const slices = [
@@ -708,6 +712,19 @@ async function _renderPortAsset() {
   if (etfEval > 0) customLegend += combinedLine('ETF', etfEval, etfRet.profit, etfRet.rate, '#4da3ff');
   if (stkEval > 0) customLegend += combinedLine('개별주', stkEval, stkRet.profit, stkRet.rate, '#a855f7');
   if (cash   > 0) customLegend += cashLine('예수금', cash, '#FF9100');
+
+  // 맨 아래 합계 — 선택된 기간 손익을 한눈에 보기 위한 요청(2026-08-28).
+  // ETF+개별주 원금 대비 합산 수익률(예수금은 손익 개념이 없어 제외).
+  const totalProfit = etfRet.profit + stkRet.profit;
+  const totalBase   = (etfEval - etfRet.profit) + (stkEval - stkRet.profit);
+  const totalRate   = totalBase > 0 ? totalProfit / totalBase * 100 : 0;
+  const totalColor  = totalProfit > 0 ? 'var(--green)' : totalProfit < 0 ? 'var(--red)' : 'var(--muted)';
+  const totalRateStr = (totalRate > 0 ? '+' : '') + totalRate.toFixed(1) + '%';
+  customLegend += `
+    <div style="display:flex;align-items:center;gap:6px;font-size:12px;margin-top:2px;padding-top:10px;border-top:1px solid var(--border)">
+      <span style="color:var(--text);font-weight:700">합계</span>
+      <span style="margin-left:auto;font-weight:700;color:${totalColor};white-space:nowrap">${signFmt(totalProfit)}, ${totalRateStr}</span>
+    </div>`;
 
   _drawDonut(target, slices, total, '총 자산', 'var(--primary)', false, customLegend);
 }
