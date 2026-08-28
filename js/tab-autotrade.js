@@ -1299,8 +1299,8 @@ function _agRecalcGridRange(ticker) {
   const lowerEl   = document.getElementById(`ag-edit-lower-${ticker}`);
   const upperEl   = document.getElementById(`ag-edit-upper-${ticker}`);
   if (range && lowerEl && upperEl) {
-    lowerEl.value = Math.round(range.lower);
-    upperEl.value = Math.round(range.upper);
+    lowerEl.value = _krxFloorPrice(range.lower);
+    upperEl.value = _krxCeilPrice(range.upper);
   }
 }
 
@@ -1329,8 +1329,12 @@ async function agSaveGridEdit(ticker) {
   const range = gridCount ? _gridCalcRange(curPrice, gridCount, pct) : null;
   if (gridCount && !range) { alert('현재가를 아직 불러오지 못했습니다. 잠시 후 다시 시도해주세요'); return; }
 
-  const lower = range ? Math.round(range.lower) : 0;
-  const upper = range ? Math.round(range.upper) : 0;
+  // 하한은 내림, 상한은 올림 — 실제 KRX 호가단위에 맞춰서 요청 범위를
+  // 좁히지 않고 딱 떨어지는 값으로 저장(common.js _krxFloorPrice/_krxCeilPrice,
+  // 2026-08-28 사용자 리포트: "10원단위로 거래가 안 되는데 상한/하한이
+  // 그렇게 계산됨").
+  const lower = range ? _krxFloorPrice(range.lower) : 0;
+  const upper = range ? _krxCeilPrice(range.upper) : 0;
 
   const patch = {};
   const rangeChanged = lower && upper && (lower !== +job.lower_price || upper !== +job.upper_price);

@@ -343,6 +343,32 @@ function _gridCalcRange(curPrice, gridCount, pct) {
   };
 }
 
+// KRX 호가단위(2023.1 개편 이후 KOSPI/KOSDAQ 공통) — kis_api.py의
+// _PRICE_UNITS/round_price와 반드시 동일한 표를 써야 함. 실제 주식은
+// 10원 단위로 거래되지 않는데(예: 87,178원) 프론트 계산값을 그대로
+// 보여주고 있었음(2026-08-28 사용자 리포트: "상한 하한 가격은 100원
+// 단위로 버림 혹은 올림 되어야 할 것 같네, 실제 10원단위 거래가 되질
+// 않잖아") — 하한은 내림, 상한은 올림해서 사용자가 요청한 범위를
+// 절대 좁히지 않으면서 실제 호가에 맞춘다. 코인(Upbit)은 호가단위
+// 체계가 전혀 달라 이 테이블을 적용하면 안 됨 — 주식 전용.
+const KRX_PRICE_UNITS = [
+  [500000, 1000], [200000, 500], [50000, 100], [20000, 50], [5000, 10], [2000, 5], [0, 1],
+];
+function _krxPriceUnit(price) {
+  for (const [threshold, unit] of KRX_PRICE_UNITS) {
+    if (price >= threshold) return unit;
+  }
+  return 1;
+}
+function _krxFloorPrice(price) {
+  const unit = _krxPriceUnit(price);
+  return Math.floor(price / unit) * unit;
+}
+function _krxCeilPrice(price) {
+  const unit = _krxPriceUnit(price);
+  return Math.ceil(price / unit) * unit;
+}
+
 // 그리드 범위 이탈 공용 헬퍼 (코인/주식 그리드 탭 공유)
 // ══════════════════════════════════════════════════════════
 // 코인(job_coin_grid.py)은 2026-08-22 리팩터로 escaped_at 필드를 쓰고,
