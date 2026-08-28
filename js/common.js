@@ -673,13 +673,16 @@ async function renderGridChart(containerId, job, curPrice, qtyField, ticker, isC
   }
 
   // createPriceLine으로 얹은 값들은 기본적으로 세로축 자동 스케일 계산에
-  // 포함되지 않는다 — 캔들 범위 밖(예: 범위 이탈 시 현재가, 혹은 캔들
-  // 데이터가 아직 없을 때의 그리드 기준가)은 스케일이 안 늘어나서 화면
-  // 밖으로 잘려 안 보임(헤드리스 크롬 스크린샷으로 실측 후 발견 — 정작
-  // 가장 중요한 "범위 이탈" 상태가 조용히 사라지는 버그였음). 캔들의
-  // 자연스러운 최소/최대에 하한/상한/현재가/활성 격자가를 강제로 합쳐서
-  // 세로축이 항상 전부 포함하도록 한다.
-  const refPrices = [lower, upper, ...levels.filter(l => l.state !== 'idle').map(l => l.price)];
+  // 포함되지 않는다 — 그래서 예전엔 범위 이탈 시 현재가가 캔들 범위 밖으로
+  // 잘려 안 보이는 버그가 있었음(헤드리스 크롬 스크린샷으로 실측 후 발견).
+  // 그때 하한/상한까지 항상 강제 포함시켜 고쳤는데, 이번엔 반대로 캔들이
+  // 실제론 좁은 폭에서만 움직여도 축이 늘 그리드 전체 범위(수만원 폭)만큼
+  // 넓게 늘어나 캔들이 위아래로 눌려 보이는 문제가 생김(2026-08-28 사용자
+  // 리포트 — "위아래 간격이 너무 좁아서 확인이 어렵다"). 하한/상한은 캔들
+  // 데이터가 아예 없을 때의 폴백으로만 쓰고, 평소엔 현재가·활성 격자가만
+  // 강제 포함해서 축이 캔들 움직임에 맞춰 유연하게 좁아지도록 한다.
+  const activeLevelPrices = levels.filter(l => l.state !== 'idle').map(l => l.price);
+  const refPrices = [...activeLevelPrices];
   if (curPrice != null && isFinite(curPrice)) refPrices.push(curPrice);
   series.applyOptions({
     autoscaleInfoProvider: original => {
@@ -688,8 +691,8 @@ async function renderGridChart(containerId, job, curPrice, qtyField, ticker, isC
         res.priceRange.minValue = Math.min(res.priceRange.minValue, ...refPrices);
         res.priceRange.maxValue = Math.max(res.priceRange.maxValue, ...refPrices);
       } else {
-        // 캔들 데이터가 아직 없으면(로딩 실패 등) 참조가만으로 범위 구성
-        res = { priceRange: { minValue: Math.min(...refPrices), maxValue: Math.max(...refPrices) } };
+        // 캔들 데이터가 아예 없으면(로딩 실패 등) 하한/상한까지 포함해 범위 구성
+        res = { priceRange: { minValue: Math.min(lower, ...refPrices), maxValue: Math.max(upper, ...refPrices) } };
       }
       return res;
     },
