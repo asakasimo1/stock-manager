@@ -404,7 +404,15 @@ export default async function handler(req, res) {
         if (cached && (Date.now() - cached.fetchedAt) < ttlMs) return cached.bars;
 
         if (!cached) {
-          const bars = await fetchMarketBars(market, 1);
+          // 콜드 상태에서 1페이지(최근 ~30분)만 받고 이후 사이클마다 조금씩
+          // 백필하는 방식이었는데, 이번 세션에서 배포를 여러 번 반복하며
+          // 서버 캐시가 계속 리셋되다 보니(2026-08-28 사용자 리포트 3회
+          // 반복: "아직도 30분밖에 안 나온다") 실사용 조건에서 목표범위까지
+          // 도달하는 게 너무 느렸다. 콜드 시작 시 처음부터 목표 페이지 수
+          // (maxPages)를 한 번에 받아 첫 로드부터 바로 전체 범위가 나오게
+          // 한다 — 페이지당 ~250ms 텀 + 콜 자체는 실측상 수십~100ms 수준이라
+          // 6페이지(10분봉 기준)도 총 2초 내외.
+          const bars = await fetchMarketBars(market, maxPages);
           _marketBarsCache[cacheKey] = { bars, fetchedAt: Date.now() };
           return bars;
         }
