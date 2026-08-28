@@ -415,6 +415,16 @@ const GRID_TIMEFRAMES = [
   { key: '1M',  label: '월' },
 ];
 const _gridChartCandleCache = {};   // "ticker:timeframe" → {candles, ts}
+// 서버(api/quote.js)의 분봉 캐시는 서버리스 인스턴스 메모리에 있어 배포·
+// 콜드스타트로 아무 때나 리셋될 수 있음 — 리셋되면 "최근 30분치"부터 다시
+// 점진적으로 채워지는데, 그 사이 클라이언트가 재조회하면 화면에 보이던
+// 차트 범위가 도로 좁아져 버림(2026-08-28 사용자 리포트: "시간이 꽤
+// 흘렀는데도 차트 기간이 안 늘어난다" — 서버 캐시가 배포 때마다 계속
+// 리셋되고 있었음). 브라우저 탭은 서버 인스턴스보다 오래 살아있으니,
+// 지금까지 받아본 분봉을 세션 동안 계속 누적·병합해서 화면 범위가 서버
+// 상태와 무관하게 뒤로 가지 않고 계속 늘어나기만 하게 한다.
+const _gridChartCandleHistory = {}; // "ticker:timeframe" → 누적 병합된 candles[]
+const _GRID_INTRADAY_TF = ['1m', '10m', '1h'];
 const _gridChartInstances   = {};   // containerId → lightweight-charts 인스턴스(재렌더 시 정리용)
 const _gridChartToken       = {};   // containerId → 최신 렌더 호출 토큰(경쟁 상태 방지)
 const _gridChartTimeframe   = {};   // containerId → 현재 선택된 시간대(기본 '10m')
@@ -440,7 +450,18 @@ async function _fetchGridCandles(ticker, isCoin, timeframe) {
     }
     const r = await fetch(url);
     const d = await r.json();
-    const candles = Array.isArray(d.candles) ? d.candles : [];
+    const fresh = Array.isArray(d.candles) ? d.candles : [];
+
+    let candles = fresh;
+    if (_GRID_INTRADAY_TF.includes(tf) && fresh.length) {
+      const merged = new Map();
+      for (const c of (_gridChartCandleHistory[cacheKey] || [])) merged.set(c.time, c);
+      for (const c of fresh) merged.set(c.time, c); // 진행 중인 봉은 최신값으로 덮어씀
+      candles = [...merged.values()].sort((a, b) => a.time - b.time);
+      if (candles.length > 300) candles = candles.slice(-300); // 무한 누적 방지
+      _gridChartCandleHistory[cacheKey] = candles;
+    }
+
     _gridChartCandleCache[cacheKey] = { candles, ts: Date.now() };
     return candles;
   } catch (_) {
