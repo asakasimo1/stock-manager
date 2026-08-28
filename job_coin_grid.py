@@ -206,81 +206,19 @@ def _fill_one_idle(grids: list, ticker: str, cur_price: float, krw_per_grid: flo
 # ─────────────────────────────────────────
 # 범위 이탈 감지 / 자동 재초기화
 # ─────────────────────────────────────────
-
-def _check_out_of_range(job: dict, cur_price: float) -> bool:
-    """가격이 그리드 범위 벗어난 경우 알림 + 자동 재초기화(auto_reinit_minutes 설정 시).
-    job 수정 시 True 반환. reinit 필요 시 job['status']='reinit' 설정."""
-    lower  = float(job.get("lower_price", 0))
-    upper  = float(job.get("upper_price", float("inf")))
-    name   = job.get("name", job.get("ticker", "?"))
-    ticker = job["ticker"]
-
-    in_range = lower <= cur_price <= upper
-
-    if in_range:
-        if job.get("out_of_range_since"):
-            job["out_of_range_since"]     = None
-            job["out_of_range_notified"]  = False
-            logger.info("그리드 범위 복귀: %s (%s원)", name, f"{cur_price:,.0f}")
-            return True
-        return False
-
-    # ── 범위 이탈 ──────────────────────────────────────────────────
-    direction = "하단 이탈 🔻" if cur_price < lower else "상단 돌파 🔺"
-    modified  = False
-
-    if not job.get("out_of_range_since"):
-        job["out_of_range_since"]    = now_kst()
-        job["out_of_range_notified"] = False
-        modified = True
-
-    # 1회 알림
-    if not job.get("out_of_range_notified"):
-        job["out_of_range_notified"] = True
-        modified = True
-        auto_min = job.get("auto_reinit_minutes")
-        hint = f"자동 재초기화 예정 ({auto_min}분 후)" if auto_min else "수동 reinit 필요 (Gist에서 status→reinit)"
-        notify.send(
-            f"⚠️ <b>그리드 범위 이탈 [{direction}]</b>  {name} ({ticker})\n"
-            f"  현재가 {cur_price:,.0f}원  |  설정 범위 {lower:,.0f}~{upper:,.0f}원\n"
-            f"  {hint}"
-        )
-        logger.info("그리드 범위 이탈 알림: %s %s 현재가 %s원", name, direction, f"{cur_price:,.0f}")
-
-    # 자동 재초기화
-    auto_min = job.get("auto_reinit_minutes")
-    if auto_min:
-        since_str = job.get("out_of_range_since", "")
-        try:
-            since   = datetime.strptime(since_str, "%Y-%m-%d %H:%M").replace(tzinfo=KST)
-            elapsed = (datetime.now(KST) - since).total_seconds() / 60
-        except (ValueError, TypeError):
-            elapsed = 0
-
-        if elapsed < auto_min:
-            logger.info("범위 이탈 %d분 경과 / 자동 재초기화 기준 %d분", int(elapsed), auto_min)
-        else:
-            # 현재가 기준으로 동일 비율 범위 이동 (기하평균 보존)
-            # 현재가 기준 아래 5개(매수) / 위 5개(매도 대기) 고정 범위
-            n_each    = 5
-            step      = 1 + float(job.get("grid_pct", 1.5)) / 100
-            new_lower = round(cur_price / step ** n_each)
-            new_upper = round(cur_price * step ** n_each)
-            job["lower_price"]          = new_lower
-            job["upper_price"]          = new_upper
-            job["status"]               = "reinit"
-            job["out_of_range_since"]   = None
-            job["out_of_range_notified"] = False
-            modified = True
-            notify.send(
-                f"🔄 <b>그리드 자동 재초기화</b>  {name} ({ticker})\n"
-                f"  {elapsed:.0f}분 범위 이탈 → 현재가 기준 재설정\n"
-                f"  이전 {lower:,.0f}~{upper:,.0f}원  →  새 범위 {new_lower:,.0f}~{new_upper:,.0f}원"
-            )
-            logger.info("그리드 자동 재초기화 트리거: %s 새 범위 %s~%s원",
-                        name, f"{new_lower:,.0f}", f"{new_upper:,.0f}")
-
-    return modified
+# 2026-08-28 — 예전엔 여기 _check_out_of_range()가 out_of_range_since 필드로
+# 독립적으로 이탈을 추적하며 자체적으로 알림·자동재설정까지 처리했는데,
+# 2026-08-22 리팩터로 escaped_at 필드 기반의 _track_escape/_check_auto_reinit
+# (아래 참고, main()이 _check_grid_safety()를 통해 항상 먼저 호출)이 같은
+# 일을 대신하게 됐음에도 이 함수 호출이 process_grid()에 그대로 남아있어서,
+# 두 추적 시스템이 서로 모른 채 각자 이탈을 감지하고 각자 자동재설정을
+# 트리거하는 상태였음. 특히 이 함수는 "위/아래 5개씩(n_each=5) 고정" 범위로
+# 재설정해서, 사용자가 앱에서 격자개수를 4개로 좁게 설정해도 이 구식
+# 경로가 먼저 걸리면 조용히 11개짜리 범위로 되돌려버리는 버그가 있었음
+# (사용자 리포트: "격자 4개로 설정했는데 자동으로 11개로 바뀌어" — job_stock_grid.py
+# 쪽 동일 버그를 먼저 고치다가 발견, 코인 쪽은 중복 추적 시스템 자체가
+# 원인이라 함수를 통째로 제거). 아래 _track_escape/_check_auto_reinit
+# 계열이 이제 유일한 이탈 감지·재설정 경로.
 
 
 # ─────────────────────────────────────────
@@ -410,11 +348,10 @@ def process_grid(job: dict) -> bool:
         logger.warning("현재가 선행 조회 실패 — 범위 체크 건너뜀: %s", e)
         cur_price = None
 
-    if cur_price is not None:
-        if _check_out_of_range(job, cur_price):
-            changed = True
-        if job.get("status") == "reinit":
-            return changed  # 재초기화 예약됨 — 이번 사이클 격자 처리 중단
+    # 이탈 감지·자동재설정·손절은 main()이 process_grid() 호출 전에
+    # _check_grid_safety()로 이미 처리함(구식 _check_out_of_range() 중복
+    # 호출은 제거 — 위 "범위 이탈 감지" 섹션 주석 참고). 여기선 순수하게
+    # 격자 체결 처리만 담당.
 
     # 실시간 가격 추적/손절 — 매 사이클마다 판단(2026-08-23). 아래 본 루프가 이번
     # 사이클에 재배치된 idle 격자를 곧바로 idle 보충 로직으로 집어갈 수 있도록

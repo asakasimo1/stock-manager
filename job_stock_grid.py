@@ -743,10 +743,20 @@ def _check_out_of_range(job: dict, cur_price: int) -> bool:
     # 자동 재초기화(범위 이동)는 기존처럼 auto_reinit_minutes를 명시적으로
     # 설정한 잡에만 적용 — 범위 자체를 바꾸는 더 큰 변화라 opt-in 유지.
     if auto_min and elapsed >= auto_min and market_open:
-        n_each = 5
+        # 예전엔 위/아래 5개씩(n_each=5) 고정이라 사용자가 앱에서 격자개수를
+        # 4개로 좁게 설정해도 이탈 자동재설정이 오면 조용히 11개짜리 기본
+        # 범위로 되돌아가버렸음(2026-08-28 사용자 리포트: "격자 4개로
+        # 설정했는데 자동으로 11개로 바뀌어"). 고정 5 대신 재설정 직전
+        # 격자 개수를 그대로 유지해서(현재가를 중심으로 위/아래 절반씩
+        # 재배치) 사용자가 고른 밀도가 이탈 재설정 후에도 유지되게 한다 —
+        # frontend _gridCalcRange(common.js)와 동일한 분배 방식.
+        existing_n = len(job.get("grids", [])) or 11  # 격자 정보가 없으면 기존 기본값(5+5)과 동일하게 폴백
+        steps = max(1, existing_n - 1)
+        below = steps // 2
+        above = steps - below
         step = 1 + float(job.get("grid_pct", 1.5)) / 100
-        nl = kis_api.round_price(cur_price / step ** n_each)
-        nu = kis_api.round_price(cur_price * step ** n_each)
+        nl = kis_api.round_price(cur_price / step ** below)
+        nu = kis_api.round_price(cur_price * step ** above)
         old_lower, old_upper = job.get("lower_price"), job.get("upper_price")
         job.update(lower_price=nl, upper_price=nu, status="reinit",
                    out_of_range_since=None, out_of_range_notified=False)
