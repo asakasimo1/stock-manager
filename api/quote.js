@@ -408,11 +408,15 @@ export default async function handler(req, res) {
           // 백필하는 방식이었는데, 이번 세션에서 배포를 여러 번 반복하며
           // 서버 캐시가 계속 리셋되다 보니(2026-08-28 사용자 리포트 3회
           // 반복: "아직도 30분밖에 안 나온다") 실사용 조건에서 목표범위까지
-          // 도달하는 게 너무 느렸다. 콜드 시작 시 처음부터 목표 페이지 수
-          // (maxPages)를 한 번에 받아 첫 로드부터 바로 전체 범위가 나오게
-          // 한다 — 페이지당 ~250ms 텀 + 콜 자체는 실측상 수십~100ms 수준이라
-          // 6페이지(10분봉 기준)도 총 2초 내외.
-          const bars = await fetchMarketBars(market, maxPages);
+          // 도달하는 게 너무 느렸다. maxPages(6페이지) 전체를 한 번에
+          // 받아보니 KRX+NXT 두 시장을 콜드 상태에서 동시에 채우느라
+          // 실측 9초 이상 걸려(2026-08-28 재측정 — 이전에 "3시간으로
+          // 줄여도 여전히 느림"이라던 리포트와 같은 증상) 오히려 로딩만
+          // 길어지는 역효과가 남. 절반(첫 로드 즉시 ~1.5시간 확보)만 콜드
+          // 페칭하고, 나머지는 클라이언트 누적(_gridCandleHistLoad/Save,
+          // common.js)이 몇 번의 자동 새로고침 안에 채우도록 균형을 맞춤.
+          const coldPages = Math.max(1, Math.ceil(maxPages / 2));
+          const bars = await fetchMarketBars(market, coldPages);
           _marketBarsCache[cacheKey] = { bars, fetchedAt: Date.now() };
           return bars;
         }
