@@ -356,7 +356,17 @@ def initialize_grid(job: dict, carried: list = None) -> bool:
 
     buy_cnt = sum(1 for g in grids if g["state"] == "buy_waiting")
     sell_cnt = sum(1 for g in grids if g["state"] == "sell_waiting")
-    job.update(grids=grids, init_price=cur_price, status="active", initialized_at=now_kst())
+    # lower/upper는 요청값(호가 틱 반올림 전 raw 값)을 그대로 저장해왔는데,
+    # build_levels()가 각 레벨을 kis_api.round_price()로 실제 호가 틱에
+    # 맞춰 반올림하면서 최저/최고 레벨이 저장된 lower/upper와 어긋나는
+    # 경우가 있었음(2026-08-28 사용자 리포트: "하한보다 매수 대기의 가격이
+    # 더 낮아" — 예: lower_price=87,178원인데 실제 매수 격자는 87,100원).
+    # 화면에 표시되는 범위가 실제 격자와 항상 정확히 일치하도록, 조립이
+    # 끝난 grids 배열의 실제 최저/최고 레벨로 lower/upper를 다시 맞춘다.
+    actual_lower = min(float(g["level"]) for g in grids)
+    actual_upper = max(float(g["level"]) for g in grids)
+    job.update(grids=grids, init_price=cur_price, status="active", initialized_at=now_kst(),
+               lower_price=actual_lower, upper_price=actual_upper)
     carried_note = f"  이월보유 {sell_cnt}건\n" if carried else ""
     notify.send(
         f"📊 <b>주식 그리드 초기화</b>  {job.get('name', ticker)}\n"
