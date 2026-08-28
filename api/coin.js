@@ -51,6 +51,18 @@ function ghHeaders(ghToken) {
   };
 }
 
+// 그리드 편집 화면에서 하한/상한(=재초기화 트리거)을 짧은 간격으로
+// 연달아 저장하면 매번 전체 재초기화(기존 주문 취소+재구성)가 걸리고,
+// 이월물량이 없는 첫 재초기화라면 "초기 시장가 매수"까지 매번 새로
+// 발동해 의도치 않은 중복 매수로 이어질 수 있음(2026-08-28 사용자
+// 리포트 — 격자편집을 96초 간격으로 두 번 저장해서 87,900원 시장가매수
+// 후 96초 뒤 재초기화가 한 번 더 걸림, 사용자가 쿨다운 추가 요청).
+// PATCH 요청에 status:'reinit'이 포함되면 60초 쿨다운을 걸어, 쿨다운
+// 중 재요청은 429로 거절(프론트는 이미 알림창으로 에러 메시지를 그대로
+// 보여주므로 별도 UI 작업 불필요) — 격자개수·간격%처럼 재초기화를
+// 트리거하지 않는 필드 저장은 쿨다운과 무관하게 항상 허용됨.
+const REINIT_COOLDOWN_MS = 60000;
+
 let _gistCache = null;
 let _gistCacheAt = 0;
 
@@ -188,7 +200,19 @@ async function handleStockGridJobs(req, res, gistId, ghToken) {
     const list = Array.isArray(jobs) ? jobs : [];
     const idx  = list.findIndex(j => j.ticker === ticker);
     if (idx < 0) return res.status(404).json({ error: '잡 없음' });
-    list[idx] = { ...list[idx], ...req.body };
+
+    const body = { ...req.body };
+    if (body.status === 'reinit') {
+      const now = Date.now();
+      const cooldownUntil = list[idx]._reinit_cooldown_until || 0;
+      if (now < cooldownUntil) {
+        const waitSec = Math.ceil((cooldownUntil - now) / 1000);
+        return res.status(429).json({ error: `방금 재초기화를 요청했습니다. ${waitSec}초 후 다시 시도해주세요.` });
+      }
+      body._reinit_cooldown_until = now + REINIT_COOLDOWN_MS;
+    }
+
+    list[idx] = { ...list[idx], ...body };
     const ok = await writeGistFile(gistId, ghToken, FILENAME, list);
     return res.status(ok ? 200 : 500).json(ok ? list[idx] : { error: '저장 실패' });
   }
@@ -552,7 +576,19 @@ async function handleCoinGrid(req, res, gistId, ghToken) {
     const list = Array.isArray(jobs) ? jobs : [];
     const idx  = list.findIndex(j => j.id === id);
     if (idx < 0) return res.status(404).json({ error: '잡 없음' });
-    list[idx] = { ...list[idx], ...req.body };
+
+    const body = { ...req.body };
+    if (body.status === 'reinit') {
+      const now = Date.now();
+      const cooldownUntil = list[idx]._reinit_cooldown_until || 0;
+      if (now < cooldownUntil) {
+        const waitSec = Math.ceil((cooldownUntil - now) / 1000);
+        return res.status(429).json({ error: `방금 재초기화를 요청했습니다. ${waitSec}초 후 다시 시도해주세요.` });
+      }
+      body._reinit_cooldown_until = now + REINIT_COOLDOWN_MS;
+    }
+
+    list[idx] = { ...list[idx], ...body };
     const ok = await writeGistFile(gistId, ghToken, FILENAME, list);
     return res.status(ok ? 200 : 500).json(ok ? list[idx] : { error: '저장 실패' });
   }
