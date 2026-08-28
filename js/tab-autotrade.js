@@ -1286,23 +1286,51 @@ let _agEditingTicker = null;
 function agToggleGridEdit(ticker) {
   _agEditingTicker = (_agEditingTicker === ticker) ? null : ticker;
   agRenderJobs();
+  if (_agEditingTicker === ticker) _agRecalcGridRange(ticker);
+}
+
+// 격자개수·간격%가 바뀔 때마다 현재가 기준으로 하한/상한을 다시 계산해
+// (읽기전용) 필드에 채워넣음 — _gridCalcRange 공용 헬퍼(common.js) 사용.
+function _agRecalcGridRange(ticker) {
+  const cur       = _ctPriceCache[ticker]?.cur;
+  const gridCount = +document.getElementById(`ag-edit-gridcount-${ticker}`)?.value || 0;
+  const pct       = +document.getElementById(`ag-edit-pct-${ticker}`)?.value || 0;
+  const range     = _gridCalcRange(cur, gridCount, pct);
+  const lowerEl   = document.getElementById(`ag-edit-lower-${ticker}`);
+  const upperEl   = document.getElementById(`ag-edit-upper-${ticker}`);
+  if (range && lowerEl && upperEl) {
+    lowerEl.value = Math.round(range.lower);
+    upperEl.value = Math.round(range.upper);
+  }
 }
 
 async function agSaveGridEdit(ticker) {
   const job = (_agJobs || []).find(j => j.ticker === ticker && ['init','active','reinit'].includes(j.status));
   if (!job) return;
 
-  const lower   = +document.getElementById(`ag-edit-lower-${ticker}`)?.value || 0;
-  const upper   = +document.getElementById(`ag-edit-upper-${ticker}`)?.value || 0;
+  const gridCountV = document.getElementById(`ag-edit-gridcount-${ticker}`)?.value;
+  const gridCount  = gridCountV !== '' ? +gridCountV : null;
   const pctV    = document.getElementById(`ag-edit-pct-${ticker}`)?.value;
   const krwV    = document.getElementById(`ag-edit-krw-${ticker}`)?.value;
   const reinitV = document.getElementById(`ag-edit-reinit-${ticker}`)?.value;
   const reinit  = reinitV !== '' ? +reinitV : null;
 
-  if (lower && upper && lower >= upper) { alert('하한가는 상한가보다 커야 합니다'); return; }
+  if (gridCount !== null && gridCount < 2) { alert('격자 개수는 2개 이상이어야 합니다'); return; }
   if (pctV !== '' && +pctV < 0.5) { alert('격자 간격은 0.5% 이상이어야 합니다'); return; }
   if (krwV !== '' && +krwV < 10000) { alert('격자당 금액은 1만원 이상이어야 합니다'); return; }
   if (reinit !== null && reinit > 0 && reinit < 5) { alert('이탈 자동재설정은 5분 이상이어야 합니다'); return; }
+
+  // 하한/상한은 더 이상 직접 입력받지 않고, 저장 시점 현재가를 기준으로
+  // 격자개수·간격%에서 항상 새로 계산 — 화면에 보이던 값과 어긋날 일이
+  // 없게(2026-08-28 사용자 리포트: "상한가 하한가 편집해도 반영이 안 된다"
+  // — 근본 원인으로 지목된 수동 하한/상한 입력 방식 자체를 없앰).
+  const pct = pctV !== '' ? +pctV : (job.grid_pct || 1.5);
+  const curPrice = _ctPriceCache[ticker]?.cur;
+  const range = gridCount ? _gridCalcRange(curPrice, gridCount, pct) : null;
+  if (gridCount && !range) { alert('현재가를 아직 불러오지 못했습니다. 잠시 후 다시 시도해주세요'); return; }
+
+  const lower = range ? Math.round(range.lower) : 0;
+  const upper = range ? Math.round(range.upper) : 0;
 
   const patch = {};
   const rangeChanged = lower && upper && (lower !== +job.lower_price || upper !== +job.upper_price);
@@ -1436,21 +1464,28 @@ function agRenderJobs() {
       </div>
       ${_agEditingTicker === job.ticker ? `
       <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr;gap:8px;margin-bottom:8px">
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr 1fr;gap:8px;margin-bottom:8px">
           <div>
-            <div style="font-size:10px;color:var(--muted);margin-bottom:3px">하한가 (원)</div>
-            <input id="ag-edit-lower-${job.ticker}" type="number" value="${job.lower_price}"
-              style="width:100%;padding:5px 7px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:12px;box-sizing:border-box">
-          </div>
-          <div>
-            <div style="font-size:10px;color:var(--muted);margin-bottom:3px">상한가 (원)</div>
-            <input id="ag-edit-upper-${job.ticker}" type="number" value="${job.upper_price}"
+            <div style="font-size:10px;color:var(--muted);margin-bottom:3px">격자 개수</div>
+            <input id="ag-edit-gridcount-${job.ticker}" type="number" min="2" step="1"
+              value="${(job.grids || []).length || ''}" oninput="_agRecalcGridRange('${job.ticker}')"
               style="width:100%;padding:5px 7px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:12px;box-sizing:border-box">
           </div>
           <div>
             <div style="font-size:10px;color:var(--muted);margin-bottom:3px">간격 (%)</div>
             <input id="ag-edit-pct-${job.ticker}" type="number" step="0.1" value="${job.grid_pct || 1.5}"
+              oninput="_agRecalcGridRange('${job.ticker}')"
               style="width:100%;padding:5px 7px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:12px;box-sizing:border-box">
+          </div>
+          <div>
+            <div style="font-size:10px;color:var(--muted);margin-bottom:3px">하한가 (자동)</div>
+            <input id="ag-edit-lower-${job.ticker}" type="number" value="${job.lower_price}" readonly
+              style="width:100%;padding:5px 7px;border:1px solid var(--border);border-radius:6px;background:var(--secondary);color:var(--muted);font-size:12px;box-sizing:border-box">
+          </div>
+          <div>
+            <div style="font-size:10px;color:var(--muted);margin-bottom:3px">상한가 (자동)</div>
+            <input id="ag-edit-upper-${job.ticker}" type="number" value="${job.upper_price}" readonly
+              style="width:100%;padding:5px 7px;border:1px solid var(--border);border-radius:6px;background:var(--secondary);color:var(--muted);font-size:12px;box-sizing:border-box">
           </div>
           <div>
             <div style="font-size:10px;color:var(--muted);margin-bottom:3px">격자당 (원)</div>
@@ -1464,7 +1499,7 @@ function agRenderJobs() {
               style="width:100%;padding:5px 7px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:12px;box-sizing:border-box">
           </div>
         </div>
-        <div style="font-size:10px;color:var(--muted);margin-bottom:8px">* 하한/상한 변경 시 기존 주문 전부 취소 후 재초기화됩니다. 간격/격자당 금액은 이미 걸린 주문엔 영향 없이 다음 체결부터 적용됩니다.</div>
+        <div style="font-size:10px;color:var(--muted);margin-bottom:8px">* 하한가·상한가는 격자개수·간격%와 현재가를 기준으로 자동 계산됩니다(현재가를 가운데 두고 위/아래로 절반씩 배치). 범위 변경 시 기존 주문 전부 취소 후 재초기화됩니다 — 간격/격자당 금액만 바꿀 땐 이미 걸린 주문엔 영향 없이 다음 체결부터 적용됩니다.</div>
         <div style="display:flex;gap:8px">
           <button onclick="agSaveGridEdit('${job.ticker}')"
             style="flex:1;padding:6px;background:var(--primary);color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">저장</button>

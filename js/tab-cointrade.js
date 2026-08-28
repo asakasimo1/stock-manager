@@ -896,21 +896,40 @@ let _cgEditingId = null;
 function ctToggleGridEdit(id) {
   _cgEditingId = (_cgEditingId === id) ? null : id;
   ctRenderGridJobs();
+  if (_cgEditingId === id) _ctRecalcGridRange(id);
+}
+
+// 격자개수·간격%가 바뀔 때마다 현재가 기준으로 하한/상한을 다시 계산해
+// (읽기전용) 필드에 채워넣음 — _gridCalcRange 공용 헬퍼(common.js) 사용,
+// tab-autotrade.js의 _agRecalcGridRange와 동일한 방식.
+function _ctRecalcGridRange(id) {
+  const job = (_ctGridJobs || []).find(j => j.id === id);
+  if (!job) return;
+  const cur       = _ctPriceCache[job.ticker]?.cur;
+  const gridCount = +document.getElementById(`cg-edit-gridcount-${id}`)?.value || 0;
+  const pct       = +document.getElementById(`cg-edit-pct-${id}`)?.value || 0;
+  const range     = _gridCalcRange(cur, gridCount, pct);
+  const lowerEl   = document.getElementById(`cg-edit-lower-${id}`);
+  const upperEl   = document.getElementById(`cg-edit-upper-${id}`);
+  if (range && lowerEl && upperEl) {
+    lowerEl.value = range.lower;
+    upperEl.value = range.upper;
+  }
 }
 
 async function ctSaveGridEdit(id) {
   const job = (_ctGridJobs || []).find(j => j.id === id);
   if (!job) return;
 
-  const lower   = +document.getElementById(`cg-edit-lower-${id}`)?.value || 0;
-  const upper   = +document.getElementById(`cg-edit-upper-${id}`)?.value || 0;
+  const gridCountV = document.getElementById(`cg-edit-gridcount-${id}`)?.value;
+  const gridCount  = gridCountV !== '' ? +gridCountV : null;
   const pctV    = document.getElementById(`cg-edit-pct-${id}`)?.value;
   const krwV    = document.getElementById(`cg-edit-krw-${id}`)?.value;
   const reinitV = document.getElementById(`cg-edit-reinit-${id}`)?.value;
   const reinit  = reinitV !== '' ? +reinitV : null;
 
-  if (lower && upper && lower >= upper) {
-    alert('하한가는 상한가보다 작아야 합니다');
+  if (gridCount !== null && gridCount < 2) {
+    alert('격자 개수는 2개 이상이어야 합니다');
     return;
   }
   if (pctV !== '' && +pctV <= 0.1) {
@@ -927,6 +946,21 @@ async function ctSaveGridEdit(id) {
     alert('이탈 자동재설정은 5분 이상이어야 합니다');
     return;
   }
+
+  // 하한/상한은 더 이상 직접 입력받지 않고, 저장 시점 현재가를 기준으로
+  // 격자개수·간격%에서 항상 새로 계산(2026-08-28 사용자 리포트 — "상한가
+  // 하한가 편집해도 반영이 안 된다" 근본 원인으로 지목된 수동 입력 방식
+  // 자체를 없앰, tab-autotrade.js agSaveGridEdit과 동일한 방식).
+  const pct = pctV !== '' ? +pctV : (job.grid_pct || 1.5);
+  const curPrice = _ctPriceCache[job.ticker]?.cur;
+  const range = gridCount ? _gridCalcRange(curPrice, gridCount, pct) : null;
+  if (gridCount && !range) {
+    alert('현재가를 아직 불러오지 못했습니다. 잠시 후 다시 시도해주세요');
+    return;
+  }
+
+  const lower = range ? range.lower : 0;
+  const upper = range ? range.upper : 0;
 
   const patch = {};
   const rangeChanged = lower && upper && (lower !== +job.lower_price || upper !== +job.upper_price);
@@ -1065,21 +1099,28 @@ function ctRenderGridJobs() {
       </div>
       ${_cgEditingId === j.id ? `
       <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr;gap:8px;margin-bottom:8px">
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr 1fr;gap:8px;margin-bottom:8px">
           <div>
-            <div style="font-size:10px;color:var(--muted);margin-bottom:3px">하한가 (원)</div>
-            <input id="cg-edit-lower-${j.id}" type="number" value="${j.lower_price}"
-              style="width:100%;padding:5px 7px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:12px;box-sizing:border-box">
-          </div>
-          <div>
-            <div style="font-size:10px;color:var(--muted);margin-bottom:3px">상한가 (원)</div>
-            <input id="cg-edit-upper-${j.id}" type="number" value="${j.upper_price}"
+            <div style="font-size:10px;color:var(--muted);margin-bottom:3px">격자 개수</div>
+            <input id="cg-edit-gridcount-${j.id}" type="number" min="2" step="1"
+              value="${(j.grids || []).length || ''}" oninput="_ctRecalcGridRange('${j.id}')"
               style="width:100%;padding:5px 7px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:12px;box-sizing:border-box">
           </div>
           <div>
             <div style="font-size:10px;color:var(--muted);margin-bottom:3px">간격 (%)</div>
             <input id="cg-edit-pct-${j.id}" type="number" step="0.1" value="${j.grid_pct || 1.5}"
+              oninput="_ctRecalcGridRange('${j.id}')"
               style="width:100%;padding:5px 7px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:12px;box-sizing:border-box">
+          </div>
+          <div>
+            <div style="font-size:10px;color:var(--muted);margin-bottom:3px">하한가 (자동)</div>
+            <input id="cg-edit-lower-${j.id}" type="number" value="${j.lower_price}" readonly
+              style="width:100%;padding:5px 7px;border:1px solid var(--border);border-radius:6px;background:var(--secondary);color:var(--muted);font-size:12px;box-sizing:border-box">
+          </div>
+          <div>
+            <div style="font-size:10px;color:var(--muted);margin-bottom:3px">상한가 (자동)</div>
+            <input id="cg-edit-upper-${j.id}" type="number" value="${j.upper_price}" readonly
+              style="width:100%;padding:5px 7px;border:1px solid var(--border);border-radius:6px;background:var(--secondary);color:var(--muted);font-size:12px;box-sizing:border-box">
           </div>
           <div>
             <div style="font-size:10px;color:var(--muted);margin-bottom:3px">격자당 (원)</div>
@@ -1093,7 +1134,7 @@ function ctRenderGridJobs() {
               style="width:100%;padding:5px 7px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:12px;box-sizing:border-box">
           </div>
         </div>
-        <div style="font-size:10px;color:var(--muted);margin-bottom:8px">* 하한/상한 변경 시 기존 주문 전부 취소 후 재초기화됩니다. 간격/격자당 금액은 이미 걸린 주문엔 영향 없이 다음 체결부터 적용됩니다.</div>
+        <div style="font-size:10px;color:var(--muted);margin-bottom:8px">* 하한가·상한가는 격자개수·간격%와 현재가를 기준으로 자동 계산됩니다(현재가를 가운데 두고 위/아래로 절반씩 배치). 범위 변경 시 기존 주문 전부 취소 후 재초기화됩니다 — 간격/격자당 금액만 바꿀 땐 이미 걸린 주문엔 영향 없이 다음 체결부터 적용됩니다.</div>
         <div style="display:flex;gap:8px">
           <button onclick="ctSaveGridEdit('${j.id}')"
             style="flex:1;padding:6px;background:var(--primary);color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">저장</button>

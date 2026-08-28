@@ -10,7 +10,12 @@ let _kisTokenCache = null;
 // 그리드 매매 분봉 차트용 — 시장(KRX/NXT)별 원본 1분봉 캐시. warm 인스턴스
 // 간 재사용(위 _kisTokenCache와 동일 패턴). "ticker:interval:market" → { bars, fetchedAt }.
 const _marketBarsCache = {};
-const CANDLE_CACHE_TTL_MS = { '1m': 20_000, '10m': 45_000, '1h': 90_000 };
+// 프론트(tab-autotrade.js)가 30초마다 폴링하는데 10분봉 TTL이 45초라 매
+// 폴링의 절반이 캐시 히트로 낭비되며 콜드 상태에서 목표범위(180분)까지
+// 점진적 백필이 필요 이상으로 느렸음(2026-08-28 사용자 리포트 — "차트
+// 기간이 너무 짧다", 배포 직후 서버 캐시가 리셋된 콜드 상태였음). 폴링
+// 주기보다 짧게 낮춰 매 폴링이 항상 백필 1페이지씩 진행하도록 함.
+const CANDLE_CACHE_TTL_MS = { '1m': 20_000, '10m': 25_000, '1h': 90_000 };
 
 // 실계좌: openapi.koreainvestment.com:9443
 // 모의투자: openapivts.koreainvestment.com:29443 (PAPER_TRADE=true 시)

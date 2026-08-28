@@ -322,6 +322,27 @@ let _dashData = null;
 let _ipoRecords = [];   // ← Script 1에서 선언: initDashboard·markSubscribed 모두 이 변수 공유
 
 // ══════════════════════════════════════════════════════════
+// 그리드 격자개수 → 하한/상한 자동계산 (코인/주식 그리드 탭 공유)
+// ══════════════════════════════════════════════════════════
+// 2026-08-28 사용자 요청 — "격자 갯수를 편집하는 항목이 없는 게 문제,
+// 격자와 간격%를 자동으로 계산하여 상한가·하한가가 자동으로 업데이트
+// 되도록". 현재가를 기준으로 위/아래 절반씩 격자를 배치(자동 재초기화
+// 로직의 n_each 대칭 배치와 동일한 방식) — 총 격자개수 gridCount는
+// 하한~상한 사이 레벨 총 개수(build_levels 결과 길이)와 근사적으로
+// 일치하도록 계산(간격 step 개수 = gridCount-1을 위/아래로 절반씩 배분).
+function _gridCalcRange(curPrice, gridCount, pct) {
+  const n = Number(gridCount), p = Number(pct);
+  if (!curPrice || !isFinite(curPrice) || !n || n < 2 || !p || p <= 0) return null;
+  const steps = n - 1;
+  const below = Math.floor(steps / 2);
+  const above = steps - below;
+  const ratio = 1 + p / 100;
+  return {
+    lower: curPrice / Math.pow(ratio, below),
+    upper: curPrice * Math.pow(ratio, above),
+  };
+}
+
 // 그리드 범위 이탈 공용 헬퍼 (코인/주식 그리드 탭 공유)
 // ══════════════════════════════════════════════════════════
 // 코인(job_coin_grid.py)은 2026-08-22 리팩터로 escaped_at 필드를 쓰고,
