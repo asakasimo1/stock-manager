@@ -231,6 +231,18 @@ def _extract_held_inventory(job: dict) -> list:
                 "buy_price":  level,
                 "sell_price": kis_api.round_price(level * (1 + grid_pct / 100)),
             })
+        elif state == "idle":
+            # 매도등록/재매수 실패 후 idle로 남으며 수량만 남은 "고아물량" —
+            # 이 분기가 없으면 sell_waiting/buy_waiting만 보는 위 조건들에
+            # 걸리지 않아 재초기화가 와도 영구히 회수되지 않았음(2026-08-28
+            # 실사용자 리포트로 발견 — 두산에너빌리티 1주가 이 상태로 방치돼
+            # 있었음).
+            held.append({
+                "qty":        qty,
+                "buy_price":  g.get("last_buy_price") or int(g["level"]),
+                "sell_price": g.get("last_sell_price") or kis_api.round_price(
+                    (g.get("last_buy_price") or int(g["level"])) * (1 + grid_pct / 100)),
+            })
     return held
 
 
@@ -255,18 +267,38 @@ def initialize_grid(job: dict, carried: list = None) -> bool:
         return False
 
     levels = build_levels(lower, upper, grid_pct)
+
+    # 초기 시장가 매수 1건 — 그리드가 하락만 기다리면 가격이 계속 오르기만
+    # 하는 장에서 지정가 매수가 영원히 체결 안 될 수 있어(2026-08-28
+    # 사용자 리포트), 이월물량이 없을 때만(중복매수 방지) 현재가 부근에서
+    # 즉시 1건 매수해 최소 1건은 보유하고 시작한다.
+    will_init_buy = not carried
     buy_candidates = [l for l in levels if l < cur_price]
-    remaining_active = max(0, max_active - len(carried))
+    remaining_active = max(0, max_active - len(carried) - (1 if will_init_buy else 0))
     active_buy_set = set(buy_candidates[-remaining_active:]) if remaining_active else set()
 
     logger.info("그리드 초기화 %s: 격자 %d개 현재가 %s원 (이월물량 %d건, 활성상한 %d)",
                 ticker, len(levels), f"{cur_price:,}", len(carried), max_active)
 
     grids = []
+    step_ratio = (1 + grid_pct / 100) ** REBALANCE_GRID_STEPS
 
     # 이월 보유물량 — 매도 주문 재등록 (재초기화로 인한 고아물량 방지)
     for h in carried:
         qty, buy_price, sell_price = h["qty"], h["buy_price"], h["sell_price"]
+        # 2026-08-27 코인 그리드 실사고(seed_held_inventory가 실제 평균매수가를
+        # 그대로 반영하다 시장이 이미 그보다 3격자 넘게 하락한 상태여서
+        # _rebalance_grid가 지정가 체결을 기다리지도 않고 즉시 시장가
+        # 손절해버림, 리플 101개분 -9,543원 손실)와 동일 위험 방지 — 이미
+        # 3격자 이상 하락한 실제 취득가를 그대로 쓰면 재초기화 직후 첫
+        # 사이클에 바로 손절될 수 있어, 그 경우 현재가 기준 근사가로 대체
+        # (손익 통계는 실제보다 보수적으로 잡힘 — 안전을 위한 트레이드오프).
+        # 과거엔 이월 sell_price 기준으로 근사했으나 낙폭이 그보다 더 크면
+        # 여전히 오탐할 수 있어, 현재가에 직접 앵커링해 드리프트와 무관하게
+        # 항상 안전하도록 수정.
+        if cur_price <= buy_price / step_ratio:
+            buy_price  = kis_api.round_price(cur_price)
+            sell_price = kis_api.round_price(cur_price * (1 + grid_pct / 100))
         grid = {"level": buy_price, "state": "sell_waiting", "order_no": "", "org_no": "",
                 "qty": qty, "last_buy_price": buy_price, "last_sell_price": sell_price,
                 "order_date": str(datetime.now(KST).date())}
@@ -280,6 +312,25 @@ def initialize_grid(job: dict, carried: list = None) -> bool:
         grids.append(grid)
     if carried:
         _invalidate_pending()
+
+    if will_init_buy:
+        qty0 = _buy_qty(krw_per_grid, cur_price)
+        try:
+            time.sleep(0.25)
+            r0 = kis_api.place_order(ticker, "BUY", qty0, order_type="market")
+            _invalidate_pending()
+            above = [l for l in levels if l > cur_price]
+            sell_price0 = above[0] if above else kis_api.round_price(cur_price * (1 + grid_pct / 100))
+            time.sleep(0.25)
+            r1 = kis_api.place_order(ticker, "SELL", qty0, sell_price0, "limit")
+            grids.append({"level": cur_price, "state": "sell_waiting",
+                          "order_no": r1["order_no"], "org_no": r1.get("org_no", ""),
+                          "qty": qty0, "last_buy_price": cur_price, "last_sell_price": sell_price0,
+                          "order_date": str(datetime.now(KST).date())})
+            _invalidate_pending()
+            logger.info("  초기 시장가매수 %s원 %d주 -> 매도등록 %s원", f"{cur_price:,}", qty0, f"{sell_price0:,}")
+        except Exception as e:
+            logger.error("  초기 시장가매수 실패(지정가 사다리만으로 시작): %s", e)
 
     funds_exhausted = False
     for level in levels:
@@ -495,6 +546,37 @@ def process_grid(job: dict, cur_price: int = None) -> bool:
                     logger.info("↻이월물량 매도재시도등록 %s원 %d주", f"{sell_price:,}", qty)
                 except Exception as e:
                     logger.error("이월물량 매도재시도실패 %s원: %s", f"{sell_price:,}", e)
+
+        elif state == "idle" and grid.get("qty", 0) > 0:
+            # 매도등록실패/재매수실패 등으로 idle 상태에 수량만 남아 방치된
+            # "고아물량" 자동 복구 — 원래 재초기화(_extract_held_inventory)
+            # 때만 회수됐는데 그 함수가 idle 상태를 아예 안 봐서 재초기화가
+            # 없으면 영구 방치되는 버그였음(2026-08-28 사용자 리포트로 발견,
+            # 034020 두산에너빌리티 1주가 실제로 이렇게 방치돼 있었음).
+            # 재초기화를 기다리지 않고 매 사이클 재시도해서 즉시 복구한다.
+            qty        = grid.get("qty", 0)
+            buy_price  = grid.get("last_buy_price") or level
+            sell_price = grid.get("last_sell_price") or kis_api.round_price(buy_price * (1 + grid_pct / 100))
+            # 2026-08-27 코인 그리드 실사고와 동일 위험 방지 — 이미 3격자
+            # 이상 하락한 채로 재등록하면 다음 사이클에 _rebalance_grid가
+            # 바로 시장가 손절할 수 있어, 그 경우 한 격자 아래 근사가로 대체
+            if cur_price:
+                step_ratio = (1 + grid_pct / 100) ** REBALANCE_GRID_STEPS
+                if cur_price <= buy_price / step_ratio:
+                    buy_price  = kis_api.round_price(cur_price)
+                    sell_price = kis_api.round_price(cur_price * (1 + grid_pct / 100))
+            if market_open and qty > 0 and sell_price > 0:
+                try:
+                    time.sleep(0.25)
+                    r = kis_api.place_order(ticker, "SELL", qty, sell_price, "limit")
+                    grid.update(state="sell_waiting", order_no=r["order_no"], org_no=r.get("org_no", ""),
+                                last_buy_price=buy_price, last_sell_price=sell_price, order_date=today_str)
+                    changed = True
+                    _invalidate_pending()
+                    logger.info("↻고아물량 매도재등록 %s원 %d주 (매수가 %s원)",
+                                f"{sell_price:,}", qty, f"{buy_price:,}")
+                except Exception as e:
+                    logger.error("고아물량 매도재등록실패 %s원: %s", f"{sell_price:,}", e)
 
     # 드리프트로 격자 level이 바뀌었을 수 있어 배열을 다시 가격순 정렬 —
     # 매수체결 시 "상위 격자" 판단이 grids[i+1] 인덱스 인접성에 의존하므로

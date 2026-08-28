@@ -303,13 +303,48 @@ def initialize_grid(job: dict) -> bool:
 
     levels = build_levels(lower, upper, grid_pct)
 
+    # 초기 시장가 매수 1건 — 그리드가 하락만 기다리면 가격이 계속 오르기만
+    # 하는 장에서 지정가 매수가 영원히 체결 안 될 수 있어(2026-08-28 사용자
+    # 리포트), 기존 보유물량이 없을 때만(재초기화 등으로 이미 보유 중이면
+    # _sync_orphan_coins()가 별도 회수하므로 중복매수 방지) 현재가에 즉시
+    # 1건 매수해 최소 1건은 보유하고 시작한다.
+    already_holding = float(job.get("grid_owned_qty", 0)) > 1e-8
+
     # 현재가 이하 레벨 중 가장 가까운 MAX_ACTIVE_BUYS 개만 활성화 (나머지는 idle)
     buy_candidates = [l for l in levels if l < cur_price]
-    active_buy_set = set(buy_candidates[-MAX_ACTIVE_BUYS:])
+    max_ladder_buys = MAX_ACTIVE_BUYS - (0 if already_holding else 1)
+    active_buy_set = set(buy_candidates[-max_ladder_buys:]) if max_ladder_buys > 0 else set()
     logger.info("그리드 초기화 %s: 격자 %d개, 현재가 %s원, 매수등록 최대 %d개",
-                ticker, len(levels), f"{cur_price:,.0f}", min(len(buy_candidates), MAX_ACTIVE_BUYS))
+                ticker, len(levels), f"{cur_price:,.0f}", min(len(buy_candidates), max_ladder_buys))
 
     grids = []
+
+    if not already_holding:
+        try:
+            time.sleep(0.12)
+            r0 = upbit_api.place_order(market=ticker, side="bid", ord_type="price", price=krw_per_grid)
+            time.sleep(0.3)
+            fill = upbit_api.get_order(r0["uuid"])
+            coin_qty_exec  = float(fill.get("executed_volume") or 0)
+            avg_price_exec = float(fill.get("avg_price") or cur_price)
+            if coin_qty_exec > 0:
+                above = [l for l in levels if l > cur_price]
+                sell_price0 = upbit_api.round_ask_price(above[0] if above else cur_price * (1 + grid_pct / 100))
+                time.sleep(0.12)
+                r1 = upbit_api.place_order(market=ticker, side="ask", ord_type="limit",
+                                            price=sell_price0, volume=coin_qty_exec)
+                grids.append({"level": cur_price, "state": "sell_waiting",
+                              "buy_uuid": "", "sell_uuid": r1["uuid"],
+                              "coin_qty": coin_qty_exec, "last_buy_price": avg_price_exec,
+                              "last_sell_price": sell_price0})
+                job["grid_owned_qty"] = round(job.get("grid_owned_qty", 0) + coin_qty_exec, 8)
+                logger.info("  초기 시장가매수 %s원 %.8f개 -> 매도등록 %s원",
+                            f"{avg_price_exec:,.0f}", coin_qty_exec, f"{sell_price0:,.0f}")
+            else:
+                logger.warning("  초기 시장가매수 체결수량 0 — 지정가 사다리만으로 시작")
+        except Exception as e:
+            logger.error("  초기 시장가매수 실패(지정가 사다리만으로 시작): %s", e)
+
     funds_exhausted = False
     for level in levels:
         grid = {
@@ -395,6 +430,39 @@ def process_grid(job: dict) -> bool:
         if state == "buy_waiting":
             buy_uuid = grid.get("buy_uuid", "")
             if not buy_uuid:
+                # 매도등록 실패 등으로 buy_uuid가 비었는데 코인은 이미 매수
+                # 체결돼 보유 중인 "고아물량" — 원래는 다음 사이클에도 이
+                # 분기가 매번 조용히 건너뛰기만 해서 재초기화 전까지 영구
+                # 방치됐음(2026-08-28, 주식 그리드에서 동일 패턴 버그 발견
+                # 후 코인도 점검해 같은 문제 확인, 같이 수정).
+                coin_qty = grid.get("coin_qty", 0)
+                if coin_qty > 0:
+                    buy_price = grid.get("last_buy_price") or level
+                    sell_price = grid.get("last_sell_price") or buy_price * (1 + grid_pct / 100)
+                    if i + 1 < len(grids):
+                        sell_price = max(sell_price, grids[i + 1]["level"])
+                    sell_price = upbit_api.round_ask_price(sell_price)
+                    # 2026-08-27 실사고(seed_held_inventory가 실제 평균매수가를
+                    # 그대로 반영하다 3격자 넘게 하락한 상태여서 _rebalance_grid가
+                    # 지정가 체결도 안 기다리고 즉시 시장가 손절, 리플 101개분
+                    # -9,543원 손실) 재발방지 — 이미 3격자 이상 하락했으면
+                    # 현재가에 직접 앵커링해 대체(드리프트와 무관하게 항상
+                    # 안전, 손익 통계는 보수적으로 잡힘)
+                    if cur_price:
+                        step_ratio = (1 + grid_pct / 100) ** REBALANCE_GRID_STEPS
+                        if cur_price <= buy_price / step_ratio:
+                            buy_price  = upbit_api.round_bid_price(cur_price)
+                            sell_price = upbit_api.round_ask_price(cur_price * (1 + grid_pct / 100))
+                    try:
+                        r = upbit_api.place_order(market=ticker, side="ask", ord_type="limit",
+                                                   price=sell_price, volume=coin_qty)
+                        grid.update(state="sell_waiting", sell_uuid=r["uuid"],
+                                    last_buy_price=buy_price, last_sell_price=sell_price)
+                        changed = True
+                        logger.info("↻고아물량 매도재등록 %s원 %.8f개 UUID:%s",
+                                    f"{sell_price:,.0f}", coin_qty, r["uuid"][:8])
+                    except Exception as e:
+                        logger.error("고아물량 매도재등록실패 %s원: %s", f"{sell_price:,.0f}", e)
                 continue
             try:
                 order = upbit_api.get_order(buy_uuid)
