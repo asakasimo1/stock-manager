@@ -3,7 +3,6 @@
  * GET    /api/transactions         → { records: [...] }
  * GET    /api/transactions?etf_id= → { records: [...] }
  * POST   /api/transactions         → body: { record } → { ok, record }
- * POST   /api/transactions         → body: { records: [...] } → { ok, records } (일괄 가져오기, 2026-08-28)
  * DELETE /api/transactions?id=     → { ok }
  *
  * JSONBin에 transactions 키가 없으면 Gist의 transactions.json에서 자동 이전 (1회)
@@ -68,21 +67,7 @@ export default async function handler(req, res) {
     }
 
     if (req.method === 'POST') {
-      const { record, records: bulkRecords } = req.body;
-      // 일괄 가져오기(과거 거래내역 붙여넣기) — 여러 건을 한 번의 readBin/writeBin으로 처리
-      if (Array.isArray(bulkRecords)) {
-        if (!bulkRecords.length) return res.status(400).json({ error: 'records 배열이 비어있음' });
-        const data = await readBin(binId, key, true);
-        const records = data.transactions ?? [];
-        const saved = bulkRecords.map((r, i) => {
-          if (!r.id) r.id = Date.now() + i; // 같은 밀리초에 여러 건 들어와도 id 겹치지 않도록
-          records.push(r);
-          return r;
-        });
-        await writeBin(binId, key, { ...data, transactions: records });
-        return res.status(200).json({ ok: true, records: saved });
-      }
-
+      const { record } = req.body;
       if (!record) return res.status(400).json({ error: 'record 필요' });
       const data = await readBin(binId, key, true); // 쓰기 전 fresh 읽기
       const records = data.transactions ?? [];
