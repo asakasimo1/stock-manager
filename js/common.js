@@ -564,15 +564,18 @@ function _buildFillMarkers(job, candles) {
 
   const markers = [];
   for (const h of hist) {
+    // lightweight-charts v4 마커는 테두리(외곽선) 옵션이 없어(색 1개만
+    // 지정 가능), size를 줄이고 채도 높은 진한 색으로 대체해 "진하게"
+    // 보이도록 함(2026-08-30 — 점이 너무 크고 흐리다는 피드백).
     if (h.sell_price != null) {
       const t = toCandleTime(h.date, h.time);
-      if (t != null) markers.push({ time: t, position: 'aboveBar', color: '#ef4444', shape: 'circle' });
+      if (t != null) markers.push({ time: t, position: 'aboveBar', color: '#b91c1c', shape: 'circle', size: 0.7 });
     }
     // 매수 체결(같은 사이클의 시작) — buy_time은 같은 날짜 기준(HH:MM:SS)으로
     // 가정, 그리드 특성상 매수·매도가 다른 날 걸쳐 일어날 수 있어 근사치임
     if (h.buy_price != null && h.buy_time) {
       const t = toCandleTime(h.date, h.buy_time);
-      if (t != null) markers.push({ time: t, position: 'belowBar', color: '#3b82f6', shape: 'circle' });
+      if (t != null) markers.push({ time: t, position: 'belowBar', color: '#1d4ed8', shape: 'circle', size: 0.7 });
     }
   }
 
