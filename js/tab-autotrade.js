@@ -1436,12 +1436,21 @@ function agRenderJobs() {
       </div>`;
     }
 
-    // 이탈 자동재설정 이력 — 최근 3건만 요약으로 표시(2026-08-26 사용자 요청,
-    // "몇시 몇분에 어떻게 조정되었는지"). 전체 이력은 job.reinit_history에
-    // 최근 20건까지 쌓이지만 카드가 너무 길어지지 않게 최근 것만.
-    const reinitHist = job.reinit_history || [];
-    const reinitHtml = reinitHist.length ? `<div style="font-size:10px;color:var(--muted);margin-top:4px">
-        🔄 재설정 이력: ${reinitHist.slice(-3).reverse().map(h => `${h.ts?.slice(11,16) || '?'} ${h.old_range}→${h.new_range}`).join(' · ')}
+    // 이탈 자동재설정 이력 — 최근 1건만 보여주고 나머지는 접어서 표시
+    // (2026-08-26 최근 3건 요약 → 2026-08-30 재초기화가 짧은 간격으로 여러 번
+    // 겹치면 한 줄에 다 나열돼 산만하다는 사용자 피드백으로 축소). 전체
+    // 이력은 job.reinit_history에 최근 20건까지 쌓임.
+    const reinitHist   = job.reinit_history || [];
+    const reinitLatest = reinitHist[reinitHist.length - 1];
+    const reinitOlder  = reinitHist.slice(0, -1).reverse();
+    const reinitHtml = reinitLatest ? `<div style="font-size:10px;color:var(--muted);margin-top:4px">
+        🔄 재설정: ${reinitLatest.ts?.slice(11,16) || '?'} ${reinitLatest.old_range}→${reinitLatest.new_range}
+        ${reinitOlder.length ? `<button onclick="agToggleReinitHist('${job.ticker}')" id="ag-reinit-toggle-${job.ticker}"
+            data-label="이전 ${reinitOlder.length}건 ▾"
+            style="background:none;border:none;color:var(--muted);font-size:10px;text-decoration:underline;cursor:pointer;padding:0;margin-left:6px">이전 ${reinitOlder.length}건 ▾</button>
+          <div id="ag-reinit-hist-${job.ticker}" style="display:none;margin-top:3px">
+            ${reinitOlder.map(h => `${h.ts?.slice(11,16) || '?'} ${h.old_range}→${h.new_range}`).join('<br>')}
+          </div>` : ''}
       </div>` : '';
 
     return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px">
@@ -1671,6 +1680,15 @@ function atRenderDailyCard(data, idx) {
   `;
 }
 
+function agToggleReinitHist(ticker) {
+  const el  = document.getElementById(`ag-reinit-hist-${ticker}`);
+  const btn = document.getElementById(`ag-reinit-toggle-${ticker}`);
+  if (!el) return;
+  const open = el.style.display === 'none';
+  el.style.display = open ? 'block' : 'none';
+  if (btn) btn.textContent = open ? '접기 ▲' : (btn.dataset.label || '이전 기록 ▾');
+}
+
 function atToggleDayDetail(idx) {
   const el  = document.getElementById(`at-day-detail-${idx}`);
   const btn = document.getElementById(`at-day-toggle-${idx}`);
@@ -1681,25 +1699,33 @@ function atToggleDayDetail(idx) {
 }
 
 function atLoadToday() {
-  const kstNow = new Date(Date.now() + 9 * 3600 * 1000);
-  const dates  = [null];
-  for (let i = 1; i <= 2; i++) {
-    const d = new Date(kstNow.getTime() - i * 86400000);
-    dates.push(d.toISOString().slice(0, 10));
+  const kstNow  = new Date(Date.now() + 9 * 3600 * 1000);
+  const todayStr = kstNow.toISOString().slice(0, 10);
+  const DOW = ['일', '월', '화', '수', '목', '금', '토'];
+
+  // 장이 열린 날(주말·공휴일)만 최근 3거래일을 모은다 — 예전엔 달력상
+  // 최근 3일(오늘/어제/그제)을 그대로 썼는데, 주말이 끼면 애초에 거래 자체가
+  // 없는 날에 "체결 없음" 카드만 뜨는 문제가 있었음(2026-08-30 사용자 요청).
+  // isHoliday()는 tab-dashboard.js의 KR_HOLIDAYS 기준 전역 함수(공휴일+주말).
+  const dates = [];
+  const cursor = new Date(kstNow);
+  while (dates.length < 3) {
+    const key = cursor.toISOString().slice(0, 10);
+    if (typeof isHoliday !== 'function' || !isHoliday(key)) dates.push(key);
+    cursor.setDate(cursor.getDate() - 1);
   }
-  const mm = String(kstNow.getMonth() + 1).padStart(2, '0');
-  const dd = String(kstNow.getDate()).padStart(2, '0');
-  const labels = [`오늘 (${mm}/${dd})`];
-  for (let i = 1; i <= 2; i++) {
-    const d = new Date(kstNow.getTime() - i * 86400000);
-    const m = String(d.getMonth()+1).padStart(2,'0');
-    const day = String(d.getDate()).padStart(2,'0');
-    labels.push(`${i===1?'어제':'그제'} (${m}/${day})`);
-  }
+
+  // 상대 표현("어제"/"그제")은 주말을 건너뛰면 실제 날짜와 어긋나므로
+  // (예: 월요일 기준 직전 거래일은 "어제"가 아니라 지난 금요일) 요일을
+  // 붙인 날짜로 표시 — 오늘만 예외적으로 "오늘" 라벨 유지.
+  const labels = dates.map(d => {
+    const dt = new Date(d + 'T00:00:00');
+    const md = `${String(dt.getMonth() + 1).padStart(2, '0')}/${String(dt.getDate()).padStart(2, '0')}`;
+    return d === todayStr ? `오늘 (${md})` : `${md} (${DOW[dt.getDay()]})`;
+  });
 
   const wrap = document.getElementById('at-daily-wrap');
   if (!wrap) return;
-  const todayStr = kstNow.toISOString().slice(0, 10);
   wrap.innerHTML = dates.map((_, i) => `
     <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px">
       <div style="font-size:10px;font-weight:700;color:var(--muted);margin-bottom:10px;display:flex;justify-content:space-between;align-items:center">
@@ -1710,8 +1736,7 @@ function atLoadToday() {
   `).join('');
 
   dates.forEach((date, i) => {
-    const targetDate = date === null ? todayStr : date;
-    const dayData = atCalcDayProfit(targetDate);
+    const dayData = atCalcDayProfit(date);
     atRenderDailyCard(dayData, i);
   });
 }
