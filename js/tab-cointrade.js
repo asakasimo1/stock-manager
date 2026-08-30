@@ -1071,12 +1071,15 @@ function ctRenderGridJobs() {
     const reinitLatest = reinitHist[reinitHist.length - 1];
     const reinitOlder  = reinitHist.slice(0, -1).reverse();
     const reinitHtml = reinitLatest ? `<div style="font-size:10px;color:var(--muted);margin-bottom:6px">
-        🔄 재설정: ${reinitLatest.ts?.slice(11,16) || '?'} ${reinitLatest.old_range}→${reinitLatest.new_range}
-        ${reinitOlder.length ? `<button onclick="ctToggleReinitHist('${j.id}')" id="ct-reinit-toggle-${j.id}"
-            data-label="이전 ${reinitOlder.length}건 ▾"
-            style="background:none;border:none;color:var(--muted);font-size:10px;text-decoration:underline;cursor:pointer;padding:0;margin-left:6px">이전 ${reinitOlder.length}건 ▾</button>
-          <div id="ct-reinit-hist-${j.id}" style="display:none;margin-top:3px">
-            ${reinitOlder.map(h => `${h.ts?.slice(11,16) || '?'} ${h.old_range}→${h.new_range}`).join('<br>')}
+        <div style="display:flex;align-items:center;gap:4px">
+          <span>🔄 재설정</span>
+          ${reinitOlder.length ? `<button onclick="ctToggleReinitHist('${j.id}')" id="ct-reinit-toggle-${j.id}"
+              data-label="이전 ${reinitOlder.length}건 ▾"
+              style="background:none;border:none;color:var(--muted);font-size:10px;text-decoration:underline;cursor:pointer;padding:0">이전 ${reinitOlder.length}건 ▾</button>` : ''}
+        </div>
+        ${formatReinitRow(reinitLatest)}
+        ${reinitOlder.length ? `<div id="ct-reinit-hist-${j.id}" style="display:none;margin-top:2px">
+            ${reinitOlder.map(h => formatReinitRow(h)).join('')}
           </div>` : ''}
       </div>` : '';
 

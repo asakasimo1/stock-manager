@@ -786,3 +786,29 @@ async function renderGridChart(containerId, job, curPrice, qtyField, ticker, isC
   chart.timeScale().fitContent();
 }
 
+// ── 그리드 재설정(reinit_history) 한 줄 렌더링 — 코인/주식 공용 ──────────
+// {ts, trigger_price, old_range, new_range} 항목 하나를 시간·범위가 줄 맞춰
+// 정렬되고 상단/하단 이탈 여부가 우측에 색으로 표시되는 grid row로 렌더링.
+// old_range는 "1,878.0~1,936.0" 형식 문자열 — trigger_price와 비교해
+// 상단 돌파(가격 상승)인지 하단 이탈(가격 하락)인지 판정한다(2026-08-30
+// 사용자 요청 — 시간/금액 줄이 안 맞아 시인성이 떨어진다는 피드백으로 grid
+// 정렬 추가 + 이탈 방향 색상 표기 추가).
+function formatReinitRow(h) {
+  const time = h.ts?.slice(11, 16) || '?';
+  const [oldLowerStr, oldUpperStr] = (h.old_range || '').split('~');
+  const oldLower = parseFloat((oldLowerStr || '').replace(/,/g, ''));
+  const oldUpper = parseFloat((oldUpperStr || '').replace(/,/g, ''));
+  const trigger  = Number(h.trigger_price);
+  let dirLabel = '', dirColor = 'var(--muted)';
+  if (isFinite(trigger) && isFinite(oldLower) && trigger < oldLower) {
+    dirLabel = '하단이탈 🔻'; dirColor = '#3b82f6';
+  } else if (isFinite(trigger) && isFinite(oldUpper) && trigger > oldUpper) {
+    dirLabel = '상단돌파 🔺'; dirColor = '#ef4444';
+  }
+  return `<div style="display:grid;grid-template-columns:34px 1fr auto;gap:8px;align-items:center;font-variant-numeric:tabular-nums;padding:1px 0">
+      <span>${time}</span>
+      <span>${h.old_range}→${h.new_range}</span>
+      <span style="color:${dirColor};font-weight:700;white-space:nowrap;text-align:right">${dirLabel}</span>
+    </div>`;
+}
+
