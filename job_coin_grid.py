@@ -225,8 +225,57 @@ def _fill_one_idle(grids: list, ticker: str, cur_price: float, krw_per_grid: flo
 # 초기화
 # ─────────────────────────────────────────
 
-def initialize_grid(job: dict) -> bool:
-    """그리드 초기화: 현재가 이하 격자 중 가장 가까운 MAX_ACTIVE_BUYS 개만 매수 등록"""
+def _extract_held_inventory(job: dict) -> list:
+    """재초기화 전, 실제 보유 중인(매수 체결된) 물량을 회수한다.
+    stop_grid()는 미체결 주문만 취소할 뿐 이미 매수 체결되어 보유 중인
+    코인은 계좌에 그대로 남는데, initialize_grid()가 grids 배열을 통째로
+    새로 만들면 그 물량(과 매수원가)이 추적에서 빠져 고아가 된다.
+
+    2026-08-30 — 이게 "일별 손익현황엔 손실이 안 잡히는데 계좌 총액은
+    줄었다"는 사용자 리포트의 근본원인이었음: 원래는 _sync_orphan_coins()가
+    사후에 이 고아물량을 찾아 매도 재등록했지만 last_buy_price를 0으로
+    남겨서, 나중에 그 매도가 체결될 때 매수원가 0 기준으로 손익이 계산돼
+    (거의 매도금액 전체가 "수익"으로) 프론트엔드가 buy_price=0을 이상값으로
+    보고 null 처리 — 결과적으로 그 거래의 실제 손익(수익이든 손실이든)이
+    일별 화면에서 통째로 사라졌음. job_stock_grid.py의 동일 패턴
+    (_extract_held_inventory + initialize_grid의 carried 인자)을 그대로
+    이식해, 재초기화 직전에 원가를 회수해 새 grids로 이어붙인다."""
+    held = []
+    for g in job.get("grids", []):
+        state    = g.get("state")
+        coin_qty = g.get("coin_qty", 0)
+        if coin_qty <= 0:
+            continue
+        level = float(g["level"])
+        if state == "sell_waiting":
+            held.append({
+                "qty":        coin_qty,
+                "buy_price":  g.get("last_buy_price") or level,
+                "sell_price": g.get("last_sell_price") or 0,
+            })
+        elif state == "buy_waiting" and not g.get("buy_uuid"):
+            # 매도등록 실패 등으로 buy_uuid가 비었는데 코인은 이미 매수
+            # 체결돼 보유 중인 "고아물량" — process_grid()의 동일 분기
+            # (buy_uuid 빈 채로 coin_qty>0)와 동일 조건.
+            held.append({
+                "qty":        coin_qty,
+                "buy_price":  g.get("last_buy_price") or level,
+                "sell_price": g.get("last_sell_price") or 0,
+            })
+        elif state == "idle":
+            # 매도등록/재매수 실패 후 idle로 남으며 수량만 남은 고아물량.
+            held.append({
+                "qty":        coin_qty,
+                "buy_price":  g.get("last_buy_price") or level,
+                "sell_price": g.get("last_sell_price") or 0,
+            })
+    return held
+
+
+def initialize_grid(job: dict, carried: list = None) -> bool:
+    """그리드 초기화: 현재가 이하 격자 중 가장 가까운 MAX_ACTIVE_BUYS 개만 매수 등록.
+    carried(재초기화 시 이월된 보유물량, _extract_held_inventory() 참고)가
+    있으면 매도 주문으로 우선 등록해 원가를 이어받는다."""
     ticker       = job["ticker"]
     grid_pct     = float(job["grid_pct"])
     lower        = float(job["lower_price"])
@@ -239,23 +288,54 @@ def initialize_grid(job: dict) -> bool:
         logger.error("그리드 초기화 현재가 조회 실패 %s: %s", ticker, e)
         return False
 
-    levels = build_levels(lower, upper, grid_pct)
+    levels  = build_levels(lower, upper, grid_pct)
+    carried = carried or []
 
     # 초기 시장가 매수 1건 — 그리드가 하락만 기다리면 가격이 계속 오르기만
     # 하는 장에서 지정가 매수가 영원히 체결 안 될 수 있어(2026-08-28 사용자
-    # 리포트), 기존 보유물량이 없을 때만(재초기화 등으로 이미 보유 중이면
-    # _sync_orphan_coins()가 별도 회수하므로 중복매수 방지) 현재가에 즉시
+    # 리포트), 이월물량(carried)이 없을 때만(중복매수 방지) 현재가에 즉시
     # 1건 매수해 최소 1건은 보유하고 시작한다.
-    already_holding = float(job.get("grid_owned_qty", 0)) > 1e-8
+    already_holding = bool(carried)
 
     # 현재가 이하 레벨 중 가장 가까운 MAX_ACTIVE_BUYS 개만 활성화 (나머지는 idle)
-    buy_candidates = [l for l in levels if l < cur_price]
-    max_ladder_buys = MAX_ACTIVE_BUYS - (0 if already_holding else 1)
-    active_buy_set = set(buy_candidates[-max_ladder_buys:]) if max_ladder_buys > 0 else set()
-    logger.info("그리드 초기화 %s: 격자 %d개, 현재가 %s원, 매수등록 최대 %d개",
-                ticker, len(levels), f"{cur_price:,.0f}", min(len(buy_candidates), max_ladder_buys))
+    # — 이월물량(carried)만큼도 슬롯을 미리 차감해둔다.
+    buy_candidates  = [l for l in levels if l < cur_price]
+    max_ladder_buys = max(0, MAX_ACTIVE_BUYS - len(carried) - (0 if already_holding else 1))
+    active_buy_set  = set(buy_candidates[-max_ladder_buys:]) if max_ladder_buys > 0 else set()
+    logger.info("그리드 초기화 %s: 격자 %d개, 현재가 %s원, 이월물량 %d건, 매수등록 최대 %d개",
+                ticker, len(levels), f"{cur_price:,.0f}", len(carried),
+                min(len(buy_candidates), max_ladder_buys))
 
     grids = []
+
+    # 이월 보유물량(재초기화 직전 _extract_held_inventory()로 회수한 것) —
+    # 매도 주문 재등록해 새 grids에도 원가를 이어서 추적(고아물량/원가유실 방지).
+    if carried:
+        step_ratio = (1 + grid_pct / 100) ** REBALANCE_GRID_STEPS
+        for h in carried:
+            qty, buy_price, sell_price = h["qty"], h["buy_price"], h["sell_price"]
+            # 2026-08-27 실사고(원래 원가를 그대로 반영하다 이미 3격자 넘게
+            # 하락한 상태여서 재초기화 직후 바로 시장가 손절돼버린 사고) 재발
+            # 방지 — process_grid()의 고아물량 재등록 분기와 동일한 안전장치.
+            if cur_price and cur_price <= buy_price / step_ratio:
+                buy_price  = upbit_api.round_bid_price(cur_price)
+                sell_price = upbit_api.round_ask_price(cur_price * (1 + grid_pct / 100))
+            else:
+                sell_price = upbit_api.round_ask_price(sell_price or buy_price * (1 + grid_pct / 100))
+            grid = {"level": buy_price, "state": "sell_waiting",
+                    "buy_uuid": "", "sell_uuid": "",
+                    "coin_qty": qty, "last_buy_price": buy_price, "last_sell_price": sell_price}
+            try:
+                time.sleep(0.12)
+                r = upbit_api.place_order(market=ticker, side="ask", ord_type="limit",
+                                           price=sell_price, volume=qty)
+                grid.update(sell_uuid=r["uuid"])
+                logger.info("  이월물량 매도재등록 %s원 %.8f개 UUID:%s",
+                            f"{sell_price:,.0f}", qty, r["uuid"][:8])
+            except Exception as e:
+                logger.error("  이월물량 매도등록실패 %s원 (다음 사이클 _sync_orphan_coins가 재시도): %s",
+                              f"{sell_price:,.0f}", e)
+            grids.append(grid)
 
     if not already_holding:
         try:
@@ -1067,9 +1147,10 @@ def main():
 
         elif status == "reinit":
             logger.info("그리드 재초기화: %s", name)
+            carried = _extract_held_inventory(job)  # stop_grid 전에 보유물량 원가 회수
             stop_grid(job)          # 기존 주문 전부 취소
             job["status"] = "init"  # stop_grid 가 stopped 로 바꾼 것을 init 으로 재설정
-            if initialize_grid(job):
+            if initialize_grid(job, carried=carried):
                 changed = True
                 if _sync_orphan_coins(job):
                     changed = True
@@ -1089,9 +1170,10 @@ def main():
 
             if job.get("status") == "reinit":
                 logger.info("그리드 재초기화 실행: %s", name)
+                carried = _extract_held_inventory(job)
                 stop_grid(job)
                 job["status"] = "init"
-                if initialize_grid(job):
+                if initialize_grid(job, carried=carried):
                     changed = True
                     if _sync_orphan_coins(job):
                         changed = True
@@ -1127,9 +1209,10 @@ def main():
             # reinit 전환된 경우 즉시 처리
             if job.get("status") == "reinit":
                 logger.info("그리드 재초기화 실행 (이탈 자동 재설정): %s", name)
+                carried = _extract_held_inventory(job)
                 stop_grid(job)
                 job["status"] = "init"
-                if initialize_grid(job):
+                if initialize_grid(job, carried=carried):
                     changed = True
                     if _sync_orphan_coins(job):
                         changed = True
