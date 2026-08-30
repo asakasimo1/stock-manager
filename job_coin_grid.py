@@ -439,6 +439,16 @@ def process_grid(job: dict) -> bool:
     if _rebalance_grid(job, grids, cur_price):
         changed = True
 
+    # 고아 코인(미세 잔여물량) 정리 — 원래는 재초기화 시점에만 호출돼서
+    # (main()의 4개 reinit 분기 참고) 재초기화 사이 기간에 남는 미세 잔여
+    # 코인(라운딩 오차, 또는 idle 격자 부족으로 그때 등록 못 하고 넘어간
+    # 잔여분)이 다음 재초기화 전까지 영구히 방치됐음(2026-08-30 사용자
+    # 리포트 — "다음번 트레이딩시 포함해서 매도되게 해달라"). 매 사이클
+    # 호출해도 안전 — 함수 자체가 ledger_orphan이 없으면 API 호출 없이
+    # 바로 반환하므로(_sync_orphan_coins 앞부분 참고) 평상시 부하 없음.
+    if _sync_orphan_coins(job):
+        changed = True
+
     for i, grid in enumerate(grids):
         state = grid.get("state", "idle")
         level = float(grid["level"])
@@ -957,8 +967,10 @@ def _sync_orphan_coins(job: dict) -> bool:
     ledger_qty    = float(job.get("grid_owned_qty", 0))
     ledger_orphan = ledger_qty - tracked_qty
     if ledger_orphan < 1e-8:
-        logger.info("고아 코인 없음(그리드 장부 기준) %s: 장부보유 %.8f개 = 추적 %.8f개",
-                    ticker, ledger_qty, tracked_qty)
+        # 2026-08-30부터 매 사이클(30초) 호출돼서 info면 로그가 계속 쌓임 —
+        # "고아 없음"(가장 흔한 정상 상태)은 debug로 낮춤.
+        logger.debug("고아 코인 없음(그리드 장부 기준) %s: 장부보유 %.8f개 = 추적 %.8f개",
+                     ticker, ledger_qty, tracked_qty)
         return False
 
     try:

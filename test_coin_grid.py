@@ -180,5 +180,53 @@ class TestSellFillAfterCarry(unittest.TestCase):
         self.assertLess(abs(hist[0]["profit"]), 965.0 * 10.0)
 
 
+class TestDustSweepEveryCycle(unittest.TestCase):
+    """2026-08-30 — "미세 잔여 코인을 다음 트레이딩에 포함해서 매도해달라"는
+    요청 회귀 테스트. _sync_orphan_coins()는 원래 재초기화 시점에만 불려서,
+    재초기화 사이에 남는 미세 잔여물량이 다음 재초기화 전까지 방치됐음.
+    process_grid()가 매 사이클 _sync_orphan_coins()도 같이 호출하는지 확인."""
+
+    @patch.object(jcg, "upbit_api")
+    def test_leftover_dust_gets_registered_for_sale(self, mock_api):
+        mock_api.get_price.return_value = {"price": 1000.0}
+        mock_api.get_balance.return_value = {
+            "holdings": [{"symbol": "TEST", "qty": 0.05}]
+        }
+        mock_api.place_order.return_value = {"uuid": "dust-sell-uuid"}
+        mock_api.round_ask_price.side_effect = upbit_api.round_ask_price
+        mock_api.round_bid_price.side_effect = upbit_api.round_bid_price
+
+        job = make_job(grid_owned_qty=0.05, grids=[
+            {"level": 1050, "state": "idle", "buy_uuid": "", "sell_uuid": "",
+             "coin_qty": 0, "last_buy_price": 0, "last_sell_price": 0},
+        ])
+
+        changed = jcg.process_grid(job)
+        self.assertTrue(changed)
+
+        dust_grid = job["grids"][0]
+        self.assertEqual(dust_grid["state"], "sell_waiting")
+        self.assertAlmostEqual(dust_grid["coin_qty"], 0.05, places=8)
+        mock_api.place_order.assert_any_call(
+            market="KRW-TEST", side="ask", ord_type="limit",
+            price=upbit_api.round_ask_price(1050), volume=0.05,
+        )
+
+    @patch.object(jcg, "upbit_api")
+    def test_no_dust_makes_no_extra_calls(self, mock_api):
+        mock_api.get_price.return_value = {"price": 1000.0}
+        mock_api.round_ask_price.side_effect = upbit_api.round_ask_price
+        mock_api.round_bid_price.side_effect = upbit_api.round_bid_price
+
+        job = make_job(grid_owned_qty=0, grids=[
+            {"level": 1050, "state": "idle", "buy_uuid": "", "sell_uuid": "",
+             "coin_qty": 0, "last_buy_price": 0, "last_sell_price": 0},
+        ])
+
+        jcg.process_grid(job)
+        # 고아 수량이 없으면 잔고 조회 자체를 안 해야 함(불필요한 API 호출 방지)
+        mock_api.get_balance.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
