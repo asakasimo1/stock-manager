@@ -539,7 +539,10 @@ function _gridChartTfBarHtml(containerId, activeTf) {
 // 게 아니라 애초에 안 그리고 있었음). 코인 그리드 잡은 프론트에 체결
 // 내역을 안 내려줘서(trade_history 없음) 이 함수는 자연히 빈 배열을 반환
 // — 주식 그리드에만 해당.
-function _buildFillMarkers(job, candles, buyColor, sellColor) {
+//
+// 2026-08-30 — 화살표+가격 텍스트가 서로 겹쳐서 안 보인다는 피드백으로
+// 텍스트 없는 단색 점(매수=파랑/매도=빨강)만 찍도록 단순화.
+function _buildFillMarkers(job, candles) {
   const hist = Array.isArray(job.trade_history) ? job.trade_history : [];
   if (!hist.length || !candles.length) return [];
   const isDateAxis = typeof candles[0].time === 'string';
@@ -561,21 +564,18 @@ function _buildFillMarkers(job, candles, buyColor, sellColor) {
 
   const markers = [];
   for (const h of hist) {
+    // lightweight-charts v4 마커는 테두리(외곽선) 옵션이 없어(색 1개만
+    // 지정 가능), size를 줄이고 채도 높은 진한 색으로 대체해 "진하게"
+    // 보이도록 함(2026-08-30 — 점이 너무 크고 흐리다는 피드백).
     if (h.sell_price != null) {
       const t = toCandleTime(h.date, h.time);
-      if (t != null) markers.push({
-        time: t, position: 'aboveBar', color: sellColor, shape: 'arrowDown',
-        text: `매도 ${Math.round(h.sell_price).toLocaleString()}`,
-      });
+      if (t != null) markers.push({ time: t, position: 'aboveBar', color: '#b91c1c', shape: 'circle', size: 0.7 });
     }
     // 매수 체결(같은 사이클의 시작) — buy_time은 같은 날짜 기준(HH:MM:SS)으로
     // 가정, 그리드 특성상 매수·매도가 다른 날 걸쳐 일어날 수 있어 근사치임
     if (h.buy_price != null && h.buy_time) {
       const t = toCandleTime(h.date, h.buy_time);
-      if (t != null) markers.push({
-        time: t, position: 'belowBar', color: buyColor, shape: 'arrowUp',
-        text: `매수 ${Math.round(h.buy_price).toLocaleString()}`,
-      });
+      if (t != null) markers.push({ time: t, position: 'belowBar', color: '#1d4ed8', shape: 'circle', size: 0.7 });
     }
   }
 
@@ -713,7 +713,7 @@ async function renderGridChart(containerId, job, curPrice, qtyField, ticker, isC
   });
   if (candles.length) series.setData(candles);
 
-  const fillMarkers = _buildFillMarkers(job, candles, buyColor, sellColor);
+  const fillMarkers = _buildFillMarkers(job, candles);
   if (fillMarkers.length) series.setMarkers(fillMarkers);
 
   // 매수/매도 대기 기준가 — 실제 캔들 위에 바로 겹쳐서 "지금 가격 흐름 대비
@@ -784,5 +784,31 @@ async function renderGridChart(containerId, job, curPrice, qtyField, ticker, isC
   });
 
   chart.timeScale().fitContent();
+}
+
+// ── 그리드 재설정(reinit_history) 한 줄 렌더링 — 코인/주식 공용 ──────────
+// {ts, trigger_price, old_range, new_range} 항목 하나를 시간·범위가 줄 맞춰
+// 정렬되고 상단/하단 이탈 여부가 우측에 색으로 표시되는 grid row로 렌더링.
+// old_range는 "1,878.0~1,936.0" 형식 문자열 — trigger_price와 비교해
+// 상단 돌파(가격 상승)인지 하단 이탈(가격 하락)인지 판정한다(2026-08-30
+// 사용자 요청 — 시간/금액 줄이 안 맞아 시인성이 떨어진다는 피드백으로 grid
+// 정렬 추가 + 이탈 방향 색상 표기 추가).
+function formatReinitRow(h) {
+  const time = h.ts?.slice(11, 16) || '?';
+  const [oldLowerStr, oldUpperStr] = (h.old_range || '').split('~');
+  const oldLower = parseFloat((oldLowerStr || '').replace(/,/g, ''));
+  const oldUpper = parseFloat((oldUpperStr || '').replace(/,/g, ''));
+  const trigger  = Number(h.trigger_price);
+  let dirLabel = '', dirColor = 'var(--muted)';
+  if (isFinite(trigger) && isFinite(oldLower) && trigger < oldLower) {
+    dirLabel = '하단이탈 🔻'; dirColor = '#3b82f6';
+  } else if (isFinite(trigger) && isFinite(oldUpper) && trigger > oldUpper) {
+    dirLabel = '상단돌파 🔺'; dirColor = '#ef4444';
+  }
+  return `<div style="display:grid;grid-template-columns:34px 1fr auto;gap:8px;align-items:center;font-variant-numeric:tabular-nums;padding:1px 0">
+      <span>${time}</span>
+      <span>${h.old_range}→${h.new_range}</span>
+      <span style="color:${dirColor};font-weight:700;white-space:nowrap;text-align:right">${dirLabel}</span>
+    </div>`;
 }
 

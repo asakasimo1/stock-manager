@@ -147,6 +147,15 @@ function ctRenderDailyCard(data, idx) {
   `;
 }
 
+function ctToggleReinitHist(id) {
+  const el  = document.getElementById(`ct-reinit-hist-${id}`);
+  const btn = document.getElementById(`ct-reinit-toggle-${id}`);
+  if (!el) return;
+  const open = el.style.display === 'none';
+  el.style.display = open ? 'block' : 'none';
+  if (btn) btn.textContent = open ? '접기 ▲' : (btn.dataset.label || '이전 기록 ▾');
+}
+
 function ctToggleDayDetail(idx) {
   const el  = document.getElementById(`ct-day-detail-${idx}`);
   const btn = document.getElementById(`ct-day-toggle-${idx}`);
@@ -1065,10 +1074,23 @@ function ctRenderGridJobs() {
       </div>`;
     }
 
-    // 이탈 자동재설정 이력 — 최근 3건만 요약 표시(2026-08-26 사용자 요청).
-    const reinitHist = j.reinit_history || [];
-    const reinitHtml = reinitHist.length ? `<div style="font-size:10px;color:var(--muted);margin-bottom:6px">
-        🔄 재설정 이력: ${reinitHist.slice(-3).reverse().map(h => `${h.ts?.slice(11,16) || '?'} ${h.old_range}→${h.new_range}`).join(' · ')}
+    // 이탈 자동재설정 이력 — 최근 1건만 보여주고 나머지는 접어서 표시
+    // (2026-08-26 최근 3건 요약 → 2026-08-30 재초기화가 짧은 간격으로 여러 번
+    // 겹치면 한 줄에 다 나열돼 산만하다는 사용자 피드백으로 축소).
+    const reinitHist  = j.reinit_history || [];
+    const reinitLatest = reinitHist[reinitHist.length - 1];
+    const reinitOlder  = reinitHist.slice(0, -1).reverse();
+    const reinitHtml = reinitLatest ? `<div style="font-size:10px;color:var(--muted);margin-bottom:6px">
+        <div style="display:flex;align-items:center;gap:4px">
+          <span>🔄 재설정</span>
+          ${reinitOlder.length ? `<button onclick="ctToggleReinitHist('${j.id}')" id="ct-reinit-toggle-${j.id}"
+              data-label="이전 ${reinitOlder.length}건 ▾"
+              style="background:none;border:none;color:var(--muted);font-size:10px;text-decoration:underline;cursor:pointer;padding:0">이전 ${reinitOlder.length}건 ▾</button>` : ''}
+        </div>
+        ${formatReinitRow(reinitLatest)}
+        ${reinitOlder.length ? `<div id="ct-reinit-hist-${j.id}" style="display:none;margin-top:2px">
+            ${reinitOlder.map(h => formatReinitRow(h)).join('')}
+          </div>` : ''}
       </div>` : '';
 
     return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px">
