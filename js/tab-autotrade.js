@@ -1520,8 +1520,30 @@ function agRenderJobs() {
     </div>`;
   };
 
+  // 2026-08-31 — 이 함수가 30초 폴링마다(atLoadAll → agRenderJobs) 리스트
+  // 전체를 innerHTML로 통째로 새로 그리는데, 그 순간 차트 캔버스도 같이
+  // 사라지고 빈 플레이스홀더 div로 교체됨. renderGridChart 자체는 "새 캔들
+  // fetch가 끝난 뒤에만 기존 차트를 지우고 새로 그리는" 방식이라 깜빡임이
+  // 없게 설계돼 있었는데, 그 앞단인 여기서 이미 차트를 지워버려서 매 폴링마다
+  // "리스트 재생성 순간 ~ renderGridChart의 캔들 fetch 완료" 사이(사용자
+  // 리포트로는 특히 KIS 응답이 느릴 때) 차트가 통째로 빈 화면이 됨(실측 —
+  // 캔버스에 아무 픽셀도 없는 완전 공백 스크린샷으로 확인). 교체 직전에
+  // "이미 차트가 그려져 있는" 컨테이너를 보관해뒀다가, 새 리스트 HTML에 생긴
+  // 같은 id의 빈 플레이스홀더를 그 기존 차트 DOM으로 되돌려놔서 폴링 중에도
+  // 이전 캔들이 계속 보이게 하고, renderGridChart가 새 데이터로 교체할 때만
+  // (자체적으로 깜빡임 없이) 바뀌게 한다.
+  const _savedCharts = {};
+  el.querySelectorAll('[id^="ag-grid-chart-"]').forEach(d => {
+    if (d.querySelector('.grid-chart-inner')) _savedCharts[d.id] = d;
+  });
+
   el.innerHTML = active.map(renderJob).join('') +
     (stopped.length ? `<div style="font-size:12px;color:var(--muted);margin-top:4px">종료된 잡</div>${stopped.map(renderJob).join('')}` : '');
+
+  for (const id in _savedCharts) {
+    const fresh = document.getElementById(id);
+    if (fresh) fresh.replaceWith(_savedCharts[id]);
+  }
 
   // 차트는 DOM에 컨테이너가 붙은 다음에만 그릴 수 있어 별도 루프로 처리
   // (fire-and-forget) — 중단된 잡은 제외(불필요한 KIS 분봉 호출 방지).

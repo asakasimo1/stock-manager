@@ -1013,6 +1013,16 @@ function ctRenderGridJobs() {
     return;
   }
 
+  // 2026-08-31 — agRenderJobs(주식)와 동일한 버그: 이 함수도 폴링마다 리스트를
+  // innerHTML로 통째로 새로 그려서 차트 캔버스가 빈 플레이스홀더로 교체되고,
+  // renderGridChart의 캔들 fetch가 끝날 때까지 차트가 완전히 비어 보임(실측).
+  // 기존에 이미 그려져 있던 차트 DOM을 보관했다가 같은 id의 새 빈 플레이스홀더
+  // 자리에 되돌려놔서 폴링 중에도 이전 캔들이 계속 보이게 한다.
+  const _savedCharts = {};
+  el.querySelectorAll('[id^="ct-grid-chart-"]').forEach(d => {
+    if (d.querySelector('.grid-chart-inner')) _savedCharts[d.id] = d;
+  });
+
   el.innerHTML = jobs.map(j => {
     const grids     = j.grids || [];
     const buyWait   = grids.filter(g => g.state === 'buy_waiting').length;
@@ -1144,6 +1154,11 @@ function ctRenderGridJobs() {
       </div>` : ''}
     </div>`;
   }).join('');
+
+  for (const id in _savedCharts) {
+    const fresh = document.getElementById(id);
+    if (fresh) fresh.replaceWith(_savedCharts[id]);
+  }
 
   // 차트는 실제 DOM에 컨테이너가 붙은 다음(innerHTML 대입 후)에만 그릴 수
   // 있어 별도 루프로 처리 — fire-and-forget(각 차트가 개별적으로 캔들을
