@@ -20,7 +20,7 @@ env:
 
 defaults:
   run:
-    working-directory: 04_개발/소스코드/trader
+    working-directory: trader
 
 jobs:
   report:
@@ -32,12 +32,12 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: pip-${{ hashFiles('04_개발/소스코드/trader/requirements.txt') }}
+          key: pip-${{ hashFiles('trader/requirements.txt') }}
           restore-keys: pip-
       - name: KIS 토큰 캐시 복원 (문자 알림 최소화 — 유효기간 내면 재발급 안 함)
         uses: actions/cache@v4
         with:
-          path: 04_개발/소스코드/trader/.token_cache.json
+          path: trader/.token_cache.json
           key: kis-token-${{ github.run_id }}
           restore-keys: |
             kis-token-
