@@ -1,0 +1,41 @@
+name: 일간 리포트
+permissions:
+  contents: read
+on:
+  schedule:
+    - cron: '35 6 * * 1-5'   # 15:35 KST — 일간 리포트
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  KIS_APP_KEY:           ${{ secrets.KIS_APP_KEY }}
+  KIS_APP_SECRET:        ${{ secrets.KIS_APP_SECRET }}
+  KIS_ACCOUNT_NO:        ${{ secrets.KIS_ACCOUNT_NO }}
+  PAPER_TRADE:           ${{ secrets.PAPER_TRADE }}
+  STRATEGY:              ${{ secrets.STRATEGY }}
+  TELEGRAM_BOT_TOKEN:    ${{ secrets.TELEGRAM_BOT_TOKEN }}
+  TELEGRAM_CHAT_ID:      ${{ secrets.TELEGRAM_CHAT_ID }}
+  GIST_ID:               ${{ secrets.GIST_ID }}
+  GH_TOKEN:              ${{ secrets.GH_TOKEN }}
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: pip-
+      - name: KIS 토큰 캐시 복원 (문자 알림 최소화 — 유효기간 내면 재발급 안 함)
+        uses: actions/cache@v4
+        with:
+          path: .token_cache.json
+          key: kis-token-${{ github.run_id }}
+          restore-keys: |
+            kis-token-
+      - run: pip install -r requirements.txt
+      - run: python job_report.py
