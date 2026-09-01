@@ -1,4 +1,34 @@
-# stock-trader (Oracle VM 자동매매 백엔드)
+# trader (Oracle VM 자동매매 백엔드 — 옛 stock-trader 저장소)
+
+## ⚠️ 2026-09-01 통합 이관 — 반드시 먼저 읽을 것
+
+이 디렉토리는 원래 별도 GitHub 저장소 `asakasimo1/stock-trader`였다. 사용자
+요청으로 `git subtree`(이력 보존)를 통해 이 저장소(`stock-manager`)의
+`trader/` 하위로 통합 이관했고, **stock-trader 저장소는 이후 사용자가 직접
+삭제할 예정**이다(이 저장소가 유일한 소스).
+
+**바뀐 것**:
+- VM 코드 경로: `/home/ubuntu/stock-trader` → `/home/ubuntu/stock-manager/trader`
+  (systemd 유닛 3개 — coin-daemon/stock-daemon/scalp-daemon — 전부 이 새 경로로
+  수정 완료, 서비스명 자체는 안 바뀜)
+- GitHub Actions: 기존 5개 워크플로우(factor_rebalance/report/cleanup_logs/
+  trader(수동)/ipo-crawl)를 이 저장소 루트 `.github/workflows/`로
+  `trader-*.yml` 이름으로 이관, 실행 경로만 `trader/`로 수정
+- self-hosted GHA runner(VM에 설치된 `vnic-trader`)를 `asakasimo1/stock-trader`
+  에서 `asakasimo1/stock-manager`로 재등록 완료
+- **부수 수정**: 이 저장소의 `coin-runner.yml`(5분 cron으로 `/api/coin-runner`
+  호출 — Upbit 실주문 실행)이 이 아래 `daemon_coin.py`(30초 폴링, 같은 Gist
+  잡 파일 처리)와 락 없이 동시 실행되며 중복주문 위험이 있던 걸 발견해서,
+  cron 트리거 제거하고 `workflow_dispatch`(VM 다운 시 비상용)만 남김.
+
+**안 바뀐 것**: Gist 기반 상태저장 구조, KIS/Upbit API 연동, 데몬 3개의 동작
+로직 자체는 전혀 안 건드림 — 순수 위치 이전 + 인프라 재배선만 수행.
+
+아래 "핵심 아키텍처"부터는 원래 stock-trader/CLAUDE.md 내용을 그대로
+가져온 것으로, 경로만 새 위치로 갱신했고 나머지 설명·운영 로그는 원문 그대로
+유지(역사적 기록 가치).
+
+---
 
 ## ⚠️ 핵심 아키텍처 — 수정 전 반드시 읽을 것
 
@@ -27,8 +57,8 @@
 sudo systemctl status coin-daemon stock-daemon
 
 # 로그 확인
-tail -f /home/ubuntu/stock-trader/daemon_coin.log
-tail -f /home/ubuntu/stock-trader/daemon_stock.log
+tail -f /home/ubuntu/stock-manager/trader/daemon_coin.log
+tail -f /home/ubuntu/stock-manager/trader/daemon_stock.log
 
 # 재시작
 sudo systemctl restart stock-daemon
