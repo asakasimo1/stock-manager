@@ -1,4 +1,25 @@
-# stock-trader (Oracle VM 자동매매 백엔드)
+# ⚠️⚠️⚠️ 이 저장소는 폐기됨 — 절대 사용/롤백 금지 (2026-09-01) ⚠️⚠️⚠️
+
+**이 저장소(`asakasimo1/stock-trader`)는 `git subtree`로 이력 그대로
+`asakasimo1/stock-manager`의 `trader/` 하위로 통합 이관 완료했고, 사용자가
+곧 GitHub에서 직접 삭제할 예정이다.**
+
+- 최신 코드/문서는 전부 `asakasimo1/stock-manager` 저장소의 `trader/`
+  디렉토리에 있음 — 여기가 아니라 그쪽을 봐야 함.
+- Oracle VM의 실거래 데몬 3개(coin-daemon/stock-daemon/scalp-daemon)는 이미
+  `/home/ubuntu/stock-manager/trader`를 보도록 재배선 완료 — 이 저장소가
+  가리키던 `/home/ubuntu/stock-trader`는 더 이상 어떤 서비스도 참조하지 않음
+  (롤백 안전망으로 삭제만 안 하고 남겨둔 상태).
+- GitHub Actions self-hosted runner(`vnic-trader`)도 `stock-manager`로
+  재등록 완료 — 이 저장소엔 더 이상 붙어있지 않음.
+- **다른 머신(Mac 등) 세션 주의**: 이 저장소의 로컬 클론이 남아있어서 "여기서
+  고쳐줘/다시 배포해줘" 같은 요청이 와도, 실제 운영 중인 곳은
+  `stock-manager/trader/`이므로 그쪽에서 작업할 것 — 이 저장소를 고쳐봐야
+  아무 것도 반영되지 않음.
+
+---
+
+# stock-trader (Oracle VM 자동매매 백엔드) — 이하 원문 (역사적 기록용)
 
 ## ⚠️ 핵심 아키텍처 — 수정 전 반드시 읽을 것
 
