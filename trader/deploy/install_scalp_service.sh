@@ -1,13 +1,13 @@
 #!/bin/bash
 # Oracle Cloud VM — scalp-daemon systemd 서비스 설치 (초단타 스캘핑, 기존 coin-daemon/stock-daemon과 별도 프로세스)
-# 실행: sudo bash /home/ubuntu/stock-trader/deploy/install_scalp_service.sh
+# 실행: sudo bash /home/ubuntu/stock-manager/trader/deploy/install_scalp_service.sh
 #
-# 실제 배포 경로는 /home/ubuntu/stock-trader (venv 없이 시스템 python3 사용) —
+# 실제 배포 경로는 /home/ubuntu/stock-manager/trader (venv 없이 시스템 python3 사용) —
 # coin-daemon.service / stock-daemon.service 와 동일한 구성을 따른다.
 
 set -e
 
-APP_DIR="/home/ubuntu/stock-trader"
+APP_DIR="/home/ubuntu/stock-manager/trader"
 PYTHON="/usr/bin/python3"
 SERVICE_FILE="/etc/systemd/system/scalp-daemon.service"
 SERVICE_USER="${SUDO_USER:-ubuntu}"

@@ -545,7 +545,7 @@ async function atSellNow(ticker, name, qty) {
           'GitHub Actions에서 수동 실행이 필요합니다.\n' +
           '지금 GitHub Actions 페이지를 여시겠습니까?'
         );
-        if (proceed) window.open('https://github.com/asakasimo1/stock-trader/actions', '_blank');
+        if (proceed) window.open('https://github.com/asakasimo1/stock-manager/actions', '_blank');
       } else {
         if (btn) { btn.textContent = '✓ 요청완료'; btn.style.background = '#16a34a'; btn.style.color = '#fff'; }
       }
@@ -789,7 +789,7 @@ async function abRegister() {
       msg.style.color = 'var(--green)';
       if (cond === 'market' && d.triggered === false) {
         msg.innerHTML = `✅ 등록 완료 — <span style="color:var(--red)">즉시 트리거 실패 (GH_TOKEN workflow 권한 확인)</span>
-          <a href="https://github.com/asakasimo1/stock-trader/actions" target="_blank"
+          <a href="https://github.com/asakasimo1/stock-manager/actions" target="_blank"
              style="color:var(--primary);margin-left:6px;font-size:11px">수동 실행 →</a>`;
       } else {
         msg.textContent = `✅ ${name}(${ticker}) 매수 잡 등록 — ${condLabel}${cond==='market'?' (즉시 실행 요청됨)':''}`;

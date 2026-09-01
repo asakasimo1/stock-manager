@@ -1,5 +1,11 @@
 #!/bin/bash
-# Oracle Cloud VM — daemon_coin systemd 서비스 설치
+# ⚠️ 2026-09-01: 이 스크립트는 이관 전(stock-trader 저장소 시절) 기준으로
+# 작성돼 실제 배포 경로(venv 없이 시스템 python3, /home/ubuntu/stock-trader)와도
+# 이미 어긋나 있던 상태였고, 지금은 /home/ubuntu/stock-manager/trader로 이관까지
+# 됐음 — 그대로 실행하지 말 것. 신규 VM 재구축 시엔 이 파일을 참고만 하고
+# 실제 배포/재시작은 trader/deploy/deploy_pull.sh 사용할 것.
+#
+# Oracle Cloud VM — daemon_coin systemd 서비스 설치 (구버전, 참고용)
 # 실행: sudo bash /opt/stock-trader/deploy/install_service.sh
 
 set -e

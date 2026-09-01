@@ -1,4 +1,4 @@
-# stock-trader 프로젝트
+# trader (구 stock-trader 프로젝트, 2026-09-01 stock-manager로 통합)
 
 ## ⚠️ 핵심 아키텍처 — 반드시 먼저 읽을 것
 
@@ -26,24 +26,25 @@ ssh ubuntu@158.180.84.109
 sudo systemctl status coin-daemon
 
 # 실시간 로그
-tail -f /home/ubuntu/stock-trader/daemon_coin.log
+tail -f /home/ubuntu/stock-manager/trader/daemon_coin.log
 ```
 
 ### Oracle VM 경로
 
 | 항목 | 경로 |
 |------|------|
-| 코드 | `/home/ubuntu/stock-trader/` |
-| 환경변수 | `/home/ubuntu/stock-trader/.env` |
-| 코인 데몬 로그 | `/home/ubuntu/stock-trader/daemon_coin.log` |
+| 코드 | `/home/ubuntu/stock-manager/trader/` |
+| 환경변수 | `/home/ubuntu/stock-manager/trader/.env` |
+| 코인 데몬 로그 | `/home/ubuntu/stock-manager/trader/daemon_coin.log` |
 | 서비스 파일 | `/etc/systemd/system/coin-daemon.service` |
 
 ### 코드 업데이트 방법
 
 ```bash
-# Oracle VM에서
-cd /home/ubuntu/stock-trader && git pull
-sudo systemctl restart coin-daemon
+# Oracle VM에서 (trader/는 이제 독립 저장소가 아니라 stock-manager의 하위
+# 디렉토리라 git pull은 stock-manager 루트에서 해야 함 — 또는 그냥
+# trader/deploy/deploy_pull.sh 실행)
+bash /home/ubuntu/stock-manager/trader/deploy/deploy_pull.sh
 ```
 
 ## 로컬 경로

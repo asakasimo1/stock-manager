@@ -161,7 +161,7 @@ async function handleStockJobs(req, res, url, gistId, ghToken) {
 
 async function triggerGHAction(ghToken, jobName) {
   const r = await fetch(
-    'https://api.github.com/repos/asakasimo1/stock-trader/actions/workflows/trader.yml/dispatches',
+    'https://api.github.com/repos/asakasimo1/stock-manager/actions/workflows/trader-manual.yml/dispatches',
     {
       method: 'POST',
       headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'stock-analyzer',
