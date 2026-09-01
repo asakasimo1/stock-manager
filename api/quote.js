@@ -7,16 +7,6 @@
 /** KIS API 토큰 캐시 (Naver API 실패 시 폴백용) */
 let _kisTokenCache = null;
 
-// 그리드 매매 분봉 차트용 — 시장(KRX/NXT)별 원본 1분봉 캐시. warm 인스턴스
-// 간 재사용(위 _kisTokenCache와 동일 패턴). "ticker:interval:market" → { bars, fetchedAt }.
-const _marketBarsCache = {};
-// 프론트(tab-autotrade.js)가 30초마다 폴링하는데 10분봉 TTL이 45초라 매
-// 폴링의 절반이 캐시 히트로 낭비되며 콜드 상태에서 목표범위(180분)까지
-// 점진적 백필이 필요 이상으로 느렸음(2026-08-28 사용자 리포트 — "차트
-// 기간이 너무 짧다", 배포 직후 서버 캐시가 리셋된 콜드 상태였음). 폴링
-// 주기보다 짧게 낮춰 매 폴링이 항상 백필 1페이지씩 진행하도록 함.
-const CANDLE_CACHE_TTL_MS = { '1m': 20_000, '10m': 25_000, '1h': 90_000 };
-
 // 실계좌: openapi.koreainvestment.com:9443
 // 모의투자: openapivts.koreainvestment.com:29443 (PAPER_TRADE=true 시)
 // 실계좌 우선 시도 → 403 시 모의투자 자동 폴백
@@ -268,233 +258,30 @@ export default async function handler(req, res) {
   }
 
   // ── 분봉 차트 데이터 (?chart=1&interval=1m|10m|1h) — 그리드 매매 현황용 ──
-  // KIS "주식당일분봉조회"(FHKST03010200)는 1분봉만 주고 호출당 최대 30건이라
-  // (당일 데이터만 제공) FID_INPUT_HOUR_1을 뒤로 이동시키며 페이징해서
-  // 1분봉을 모은다. interval에 따라 목표 범위·페이지 수·집계 단위만 다르고
-  // 로직은 동일 — 1분봉은 최근 2시간(가벼운 페이지 수), 10분봉은 최근
-  // 6시간(기존), 1시간봉은 장중 전체(약 7시간)까지 모은 뒤 bucketMin 단위로
-  // 집계(1분봉은 집계 없이 그대로).
+  // 2026-09-01: KIS 페이징 수집 로직을 Oracle VM(coin-runner)으로 이전하고
+  // 여기선 프록시만 함. 사유 두 가지:
+  //  (1) Vercel 서버리스는 트래픽이 뜸하면 인스턴스가 죽어 인메모리 캐시가
+  //      사라지고, 그때마다 KIS를 처음부터 재수집하다 함수 기본 타임아웃
+  //      (10초)에 걸려 차트가 빈 채로 내려오는 문제가 있었음.
+  //  (2) 더 심각한 버그: 장 시작 직후처럼 당일 데이터가 페이지(30건)를 못
+  //      채우면 KIS가 전일 데이터로 패딩해서 주는데, 그 전일 시:분을 다음
+  //      페이지 앵커로 재사용하면 "오늘 그 시각"으로 재해석되어 미래 시각을
+  //      조회하게 됨 — KIS가 그 미래 슬롯을 마지막 종가로 채운 평평한 가짜
+  //      봉으로 채워 응답해서, 실제 데이터가 차트 좌측 끝 좁은 폭으로 밀려나
+  //      사실상 안 보이는 증상이 매일 장 시작 직후 100% 재현됐음(두산에너빌리티
+  //      034020 그리드 차트 미표시로 발견). coin-runner(PM2 상시구동, 콜드스타트
+  //      없음)에 날짜 경계를 인지하는 버전으로 옮기며 같이 수정함
+  //      (자세한 원인 설명은 coin-runner/stock_candles.js 상단 주석 참고).
   if (req.query.chart === '1' && ['1m', '10m', '1h'].includes(req.query.interval)) {
-    const ivl = req.query.interval;
-    const bucketMin = ivl === '1m' ? 1 : ivl === '10m' ? 10 : 60;
-    // 10분봉은 KRX+NXT 둘 다 콜드 스타트 시 처음부터 백필해야 해서(Redis/KV
-    // 없이는 서버리스 인스턴스가 식으면 캐시가 사라짐, 2026-08-25 사용자와
-    // 상의) 목표 범위를 6시간→3시간으로 줄여 콜드 로딩 시간을 절반으로
-    // 낮춤(17~20초 → 8~10초 예상, 사용자 승인: "3시간으로 축소").
-    const targetMin  = ivl === '1m' ? 120 : ivl === '10m' ? 180 : 420;
-    const maxPages   = ivl === '1m' ? 5 : ivl === '10m' ? 6 : 14;
-
-    const appKey = process.env.KIS_APP_KEY, appSecret = process.env.KIS_APP_SECRET;
-    if (!appKey || !appSecret) return res.status(500).json({ error: 'KIS API 키 미설정' });
+    const oracleUrl = process.env.ORACLE_CANDLES_URL, oracleKey = process.env.ORACLE_DATA_KEY;
+    if (!oracleUrl || !oracleKey) return res.status(500).json({ error: 'ORACLE_CANDLES_URL/ORACLE_DATA_KEY 미설정' });
     try {
-      if (!_kisTokenCache || _kisTokenCache.expires <= Date.now() + 60_000) {
-        let base = kisBase(), token;
-        try { token = await _kisToken(base, appKey, appSecret); }
-        catch (e) {
-          if (e.message.includes('403') && base !== kisBasePaper()) { base = kisBasePaper(); token = await _kisToken(base, appKey, appSecret); }
-          else throw e;
-        }
-        _kisTokenCache = { token, base, expires: Date.now() + 86_400_000 };
-      }
-      const { token, base } = _kisTokenCache;
-
-      // 시장 하나(KRX 'J' 또는 NXT 'NX')분 1분봉을 페이징 수집.
-      // KIS 분봉조회(FHKST03010200)는 초당 호출 한도가 낮아서, 지연 없이 연속
-      // 페이징하면 3번째 호출부터 HTTP 500이 떨어져 6시간 목표(targetMin)의
-      // 극히 일부(약 1시간)만 모으고 조용히 중단됐음(2026-08-25 debug 계측으로
-      // 확인: page 0/1은 정상, page 2에서 httpBreak:500). 페이지 사이 텀을 둬서
-      // 회피.
-      // startHour1을 넘기면 "지금 시각"이 아니라 그 시점부터 과거로 페이징
-      // 시작 — 점진적 백필(아래 getMarketBarsCached)이 기존 캐시의 가장 오래된
-      // 봉 이전부터 이어서 파고들 때 씀.
-      async function fetchMarketBars(market, pages = maxPages, startHour1 = null) {
-        let hour1 = startHour1;
-        if (!hour1) {
-          const kst = new Date(Date.now() + 9 * 3600 * 1000);
-          const nowMin = kst.getUTCHours() * 60 + kst.getUTCMinutes();
-          // KRX('J')는 15:30 마감 이후 "지금 시각"으로 조회하면 output2가 아예
-          // 빈 채로 와서(2026-08-25 실측: NXT 애프터마켓 중 KRX 쪽 통째로 유실,
-          // 화면엔 정규장 캔들이 하나도 안 보였음) 정규장 데이터를 못 모음 —
-          // hour1을 정규장 마감(15:30) 이내로 고정해 항상 실제 데이터가 있는
-          // 시점부터 페이징을 시작한다.
-          const anchorMin = (market === 'J' && nowMin > 15 * 60 + 30) ? 15 * 60 + 30 : nowMin;
-          hour1 = String(Math.floor(anchorMin / 60)).padStart(2, '0') + String(anchorMin % 60).padStart(2, '0') + '00';
-        }
-        const bars = [];
-        const seenHours = new Set();
-        for (let page = 0; page < pages; page++) {
-          if (page > 0) await new Promise(r => setTimeout(r, 250));
-          const params = new URLSearchParams({
-            FID_COND_MRKT_DIV_CODE: market, FID_INPUT_ISCD: ticker,
-            FID_INPUT_HOUR_1: hour1, FID_PW_DATA_INCU_YN: 'Y', FID_ETC_CLS_CODE: '',
-          });
-          let r = await fetch(`${base}/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice?${params}`, {
-            headers: {
-              'content-type': 'application/json; charset=utf-8',
-              authorization: `Bearer ${token}`, appkey: appKey, appsecret: appSecret,
-              tr_id: 'FHKST03010200', custtype: 'P',
-            },
-          });
-          if (!r.ok) {
-            // 순간적인 초당 한도 초과일 수 있으니 한 번은 더 쉬고 재시도.
-            await new Promise(res => setTimeout(res, 400));
-            r = await fetch(`${base}/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice?${params}`, {
-              headers: {
-                'content-type': 'application/json; charset=utf-8',
-                authorization: `Bearer ${token}`, appkey: appKey, appsecret: appSecret,
-                tr_id: 'FHKST03010200', custtype: 'P',
-              },
-            });
-            if (!r.ok) break;
-          }
-          const d = await r.json();
-          if (d.rt_cd !== '0' || !Array.isArray(d.output2) || !d.output2.length) break;
-          let earliest = null;
-          for (const row of d.output2) {
-            const t = row.stck_cntg_hour; // HHMMSS
-            if (seenHours.has(t)) continue;
-            seenHours.add(t);
-            bars.push({
-              date: row.stck_bsop_date, time: t,
-              open: Number(row.stck_oprc), high: Number(row.stck_hgpr),
-              low: Number(row.stck_lwpr), close: Number(row.stck_prpr),
-            });
-            if (earliest === null || t < earliest) earliest = t;
-          }
-          if (bars.length >= targetMin || !earliest || earliest === hour1) break;
-          // 다음 페이지는 이번 페이지의 가장 이른 시각 1분 전부터
-          const h = Number(earliest.slice(0, 2)), m = Number(earliest.slice(2, 4));
-          const totalMin = h * 60 + m - 1;
-          if (totalMin < 0) break; // 자정 이전 — 더 갈 데 없음
-          hour1 = String(Math.floor(totalMin / 60)).padStart(2, '0') + String(totalMin % 60).padStart(2, '0') + '00';
-        }
-        return bars;
-      }
-
-      // KRX 정규장 + NXT(프리/애프터마켓) 통합 차트 — 그리드 매매가 NXT
-      // 시간대에도 계속 도는데(job_stock_grid.py의 market_open 판정 참고)
-      // 차트는 KRX('J')만 조회해서 15:30 이후 캔들이 아예 안 그려지던 문제
-      // (2026-08-25 사용자 리포트: NXT장에서 등록한 그리드의 체결 흐름이 차트에
-      // 하나도 안 보임) — NX 마켓도 같이 모아서 시간순으로 합친다. 두 세션은
-      // 거래시간이 거의 겹치지 않아(KRX 09:00~15:30, NXT 08:00~08:50/15:30~20:00)
-      // 같은 분에 양쪽 다 봉이 있는 경우는 드물지만, 겹치면 KRX를 우선한다
-      // (더 유동성이 큰 기준가로 간주).
-      // 코인 차트는 Upbit가 캔들을 한 번에 통째로 주는 반면, 이쪽은 매 요청마다
-      // KRX+NXT 각각 최대 12페이지(0.25~0.65초 텀 포함)를 처음부터 다시 훑어서
-      // 10초 넘게 걸림(2026-08-25 사용자 리포트) — 대부분의 과거 구간은 직전
-      // 요청과 달라질 게 없는데도 매번 통째로 재수집하고 있던 게 원인. 모듈
-      // 스코프 캐시(warm 인스턴스 간 재사용, _kisTokenCache와 동일 패턴)에
-      // 시장별 원본 1분봉을 보관해뒀다가, TTL 이내면 KIS 호출 없이 즉시
-      // 반환한다.
-      //
-      // 콜드 상태(캐시 자체가 없음 — 서버 재시작 직후 등)일 땐 목표 범위
-      // 전체(targetMin, 최대 12페이지)를 한 번에 채우려면 여전히 몇 초~십몇
-      // 초가 걸려서(2026-08-26 사용자 리포트: "3시간으로 줄여도 여전히 느림")
-      // 최초 응답은 1페이지(최근 ~30분)만 빠르게 받아 즉시 내려주고, 목표
-      // 범위에 못 미치는 동안은 매 갱신(TTL 만료)마다 (a) 최신 구간 1페이지
-      // 갱신 + (b) 캐시에 있는 가장 오래된 봉 이전부터 1페이지를 추가로 받아
-      // 과거 방향으로 넓혀간다 — 화면은 "최근 30분 → 점점 과거로 늘어나는"
-      // 모양으로 몇 번의 자동 새로고침(수십 초~수 분) 안에 목표 범위까지
-      // 자연스럽게 채워진다. 목표 범위에 도달한 뒤엔 최신 구간 1페이지만
-      // 갱신하는 기존 방식으로 돌아간다.
-      async function getMarketBarsCached(market) {
-        const cacheKey = `${ticker}:${ivl}:${market}`;
-        const ttlMs = CANDLE_CACHE_TTL_MS[ivl] || 30_000;
-        const cached = _marketBarsCache[cacheKey];
-        if (cached && (Date.now() - cached.fetchedAt) < ttlMs) return cached.bars;
-
-        if (!cached) {
-          // 콜드 상태에서 1페이지(최근 ~30분)만 받고 이후 사이클마다 조금씩
-          // 백필하는 방식이었는데, 이번 세션에서 배포를 여러 번 반복하며
-          // 서버 캐시가 계속 리셋되다 보니(2026-08-28 사용자 리포트 3회
-          // 반복: "아직도 30분밖에 안 나온다") 실사용 조건에서 목표범위까지
-          // 도달하는 게 너무 느렸다. maxPages(6페이지) 전체를 한 번에
-          // 받아보니 KRX+NXT 두 시장을 콜드 상태에서 동시에 채우느라
-          // 실측 9초 이상 걸려(2026-08-28 재측정 — 이전에 "3시간으로
-          // 줄여도 여전히 느림"이라던 리포트와 같은 증상) 오히려 로딩만
-          // 길어지는 역효과가 남. 절반(첫 로드 즉시 ~1.5시간 확보)만 콜드
-          // 페칭하고, 나머지는 클라이언트 누적(_gridCandleHistLoad/Save,
-          // common.js)이 몇 번의 자동 새로고침 안에 채우도록 균형을 맞춤.
-          const coldPages = Math.max(1, Math.ceil(maxPages / 2));
-          const bars = await fetchMarketBars(market, coldPages);
-          _marketBarsCache[cacheKey] = { bars, fetchedAt: Date.now() };
-          return bars;
-        }
-
-        const fresh = await fetchMarketBars(market, 1);
-        const merged = [...cached.bars];
-        const seen = new Set(merged.map(b => b.date + b.time));
-        for (const bar of fresh) {
-          const key = bar.date + bar.time;
-          if (seen.has(key)) continue;
-          seen.add(key);
-          merged.push(bar);
-        }
-
-        if (merged.length < targetMin && merged.length) {
-          merged.sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
-          const oldest = merged[0];
-          const h = Number(oldest.time.slice(0, 2)), m = Number(oldest.time.slice(2, 4));
-          const totalMin = h * 60 + m - 1;
-          if (totalMin >= 0) {
-            const startHour1 = String(Math.floor(totalMin / 60)).padStart(2, '0') + String(totalMin % 60).padStart(2, '0') + '00';
-            const older = await fetchMarketBars(market, 1, startHour1);
-            for (const bar of older) {
-              const key = bar.date + bar.time;
-              if (seen.has(key)) continue;
-              seen.add(key);
-              merged.push(bar);
-            }
-          }
-        }
-
-        merged.sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
-        const bars = merged.length > targetMin * 2 ? merged.slice(-targetMin * 2) : merged;
-        _marketBarsCache[cacheKey] = { bars, fetchedAt: Date.now() };
-        return bars;
-      }
-
-      // 순차 호출 — KIS 초당 호출 한도 때문에(위 fetchMarketBars 주석 참고) 두
-      // 시장을 동시에 페이징하면 합산 호출 빈도가 배로 늘어 같은 500 문제가
-      // 재발할 수 있어 병렬(Promise.all) 대신 순차로 처리한다. 캐시 적중 시엔
-      // 어차피 KIS 호출이 아예 없어 순차 여부가 무의미해짐.
-      const krxBars = await getMarketBarsCached('J');
-      const nxtBars = await getMarketBarsCached('NX');
-      const oneMin = [...krxBars];
-      const seenKey = new Set(krxBars.map(b => b.date + b.time));
-      for (const bar of nxtBars) {
-        const key = bar.date + bar.time;
-        if (seenKey.has(key)) continue;
-        seenKey.add(key);
-        oneMin.push(bar);
-      }
-
-      // 시간 오름차순 정렬 후 bucketMin 단위로 집계(1분봉은 사실상 그대로 통과)
-      oneMin.sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
-      const buckets = new Map(); // "YYYYMMDDHHMM0"(버킷 키) → candle
-      for (const bar of oneMin) {
-        const h = bar.time.slice(0, 2), m = bar.time.slice(2, 4);
-        const bucketMinStr = String(Math.floor(Number(m) / bucketMin) * bucketMin).padStart(2, '0');
-        const key = `${bar.date}${h}${bucketMinStr}`;
-        if (!buckets.has(key)) {
-          buckets.set(key, { key, open: bar.open, high: bar.high, low: bar.low, close: bar.close });
-        } else {
-          const b = buckets.get(key);
-          b.high = Math.max(b.high, bar.high);
-          b.low  = Math.min(b.low, bar.low);
-          b.close = bar.close; // 1분봉이 시간 오름차순이므로 마지막 값이 종가
-        }
-      }
-      const candles = [...buckets.values()]
-        .sort((a, b) => a.key.localeCompare(b.key))
-        .map(b => {
-          const y = b.key.slice(0, 4), mo = b.key.slice(4, 6), d = b.key.slice(6, 8), h = b.key.slice(8, 10), mi = b.key.slice(10, 12);
-          const utcMs = Date.parse(`${y}-${mo}-${d}T${h}:${mi}:00+09:00`);
-          return { time: Math.floor(utcMs / 1000), open: b.open, high: b.high, low: b.low, close: b.close };
-        });
-
+      const r = await fetch(`${oracleUrl}?ticker=${encodeURIComponent(ticker)}&interval=${encodeURIComponent(req.query.interval)}`, {
+        headers: { 'x-api-key': oracleKey },
+      });
+      const d = await r.json();
       res.setHeader('Cache-Control', 'no-store');
-      return res.status(200).json({ candles });
+      return res.status(r.ok ? 200 : 500).json(d);
     } catch (e) {
       return res.status(500).json({ error: e.message });
     }
