@@ -71,7 +71,7 @@ sudo systemctl restart coin-daemon
 
 | 이름 | 역할 | 상태 |
 |------|------|------|
-| `coin-runner` | Upbit API HTTP 서버 (port 3000) — Vercel 프론트엔드 fallback | online |
+| `coin-runner` | Upbit API HTTP 서버 (port 3000) — Vercel 프론트엔드 fallback + 국내주식 분봉 캔들 캐시(`/api/stock-candles`, 2026-09-01 추가) | online |
 | `cycle-runner` | (구) 주식 사이클 데몬 — 사이클 트레이딩 기능 자체가 삭제되어 대상 스크립트(`job_cycle_cloud.py`) 없음 | **stopped** |
 
 > **`cycle-runner` 재시작 금지** — 대상 스크립트가 삭제되어 실행 불가 (VM에서 `pm2 delete cycle-runner` 로 정리 권장)
@@ -220,3 +220,44 @@ sudo systemctl restart coin-daemon
   패턴의 근본원인(캐시 무효화 타이밍?) 미조사 상태 — 재발 시 조사 필요.
   같은 시점에 격자편집 재저장 시 재초기화가 반복 발동하던 문제는 60초
   쿨다운 추가로 별도 차단함(프론트: stock-manager 레포 api/coin.js).
+- [2026-09-01 08:3x] 두산에너빌리티 034020 — **고아 물량(장부 밖) 재발, KIS 실주문
+  + Gist 수동 보정**. 사용자 리포트("매도가 왜 안 걸려있지")로 발견: 실계좌엔
+  1주(평단 82,800원, 매도가능) 보유 중인데 `stock_grid_jobs.json`의 활성 격자
+  2개(82,000/82,800원)가 전부 `buy_waiting`(신규 매수 대기, 미체결)이라 이
+  1주를 추적하는 격자가 아예 없었음(idle+qty>0 자동복구 대상도 아닌, 8/28보다
+  더 빠진 케이스 — 근본원인 미조사). 조치: 83,600원에 SELL 1주 지정가 신규
+  등록(주문번호 0001942600) → Gist의 idle 상태이던 83,600원 격자 항목을
+  `state=sell_waiting, qty=1, last_buy_price=82800, last_sell_price=83600,
+  order_no=0001942600`로 갱신(82,000/82,800원 격자의 기존 매수 대기 주문은
+  건드리지 않음 — 별개 사이클). 조치 후 미체결 목록 재조회로 신규 매도주문
+  정상 등록 확인함. **후속 조치 필요**: 이 물량이 어느 시점에 장부에서
+  빠졌는지(체결감지 타이밍? 8/31 09:46 재초기화 시 `_extract_held_inventory`
+  누락?) 근본원인 미조사 상태 — 재발 시 조사 필요.
+- [2026-09-01 09:xx] **stock-manager 그리드 매매 분봉 차트 미표시(재발 빈도
+  높음) — 근본원인 2가지 확인 후 coin-runner로 이전**. 사용자가 스크린샷으로
+  리포트: 두산에너빌리티 그리드 차트에 캔들이 안 보임(가격선/마커만 표시).
+  원인 (1) `stock-manager/api/quote.js`가 Vercel 서버리스에서 KIS 분봉을
+  인메모리로만 캐싱해서, 트래픽이 뜸해 인스턴스가 죽을 때마다(콜드스타트)
+  캐시가 사라져 KIS를 처음부터 재수집 — Vercel 함수 기본 타임아웃(10초)에
+  자주 걸림. (2) **더 결정적인 버그**: KIS 분봉조회(FHKST03010200)의
+  FID_INPUT_HOUR_1엔 날짜 개념이 없어 항상 "오늘" 기준으로 해석되는데,
+  장 시작 직후처럼 당일 데이터가 한 페이지(30건)를 못 채우면 KIS가 전일
+  데이터로 패딩해서 줌 — 그 전일 시:분을 다음 페이지 앵커로 그대로 재사용하면
+  "오늘 그 시각"으로 재해석되어 미래 시각을 조회하게 되고, KIS가 그 미래
+  슬롯을 마지막 종가로 채운 평평한 가짜 봉들로 채워 응답 → 실제 데이터가
+  차트 좌측 끝 좁은 폭으로 밀려나 사실상 안 보임. 장 시작 직후(KRX 09:00,
+  NXT 08:00) 매번 100% 재현되는 버그라 "재발 빈도가 매우 높다"던 사용자
+  체감과 일치. **조치**: KIS 페이징 수집 로직 전체를 `coin-runner/
+  stock_candles.js`(신규)로 이전 — PM2 상시구동이라 콜드스타트 자체가
+  없어지고, 날짜 경계를 인지하도록 재작성(미래시각 패딩 행 버림 + 페이지
+  내 날짜가 바뀌면 그 페이지로 페이징 중단). `coin-runner/server.js`에
+  `GET /api/stock-candles?ticker=&interval=1m|10m|1h`(x-api-key 인증) 추가,
+  `coin-runner/.env`에 `KIS_APP_KEY`/`KIS_APP_SECRET` 추가(stock-trader와 동일
+  앱키 재사용 — 토큰 24시간 캐시라 발급 경합 없음, 실측으로 확인됨).
+  `stock-manager/api/quote.js`의 해당 분기는 이 VM 엔드포인트로 프록시만
+  하도록 축소(관련 KIS 직접호출 코드 전체 삭제). Vercel 환경변수
+  `ORACLE_CANDLES_URL` 추가(기존 `ORACLE_DATA_KEY` 인증키 재사용). VM
+  `pm2 restart coin-runner --update-env` + Vercel `vercel --prod` 배포 완료,
+  1m/10m/1h 전부 실측으로 미래시각 없음 확인.
+  **일/주/월봉(1d/1w/1M) 분기는 그대로 Vercel에 남음** — 네이버 fchart 단일
+  호출이라 이 문제 대상 아님.
