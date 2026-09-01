@@ -1,8 +1,13 @@
-name: 코인 자동매매 실행
+name: 코인 자동매매 실행 (수동 전용 — 비상용)
 
+# 2026-09-01: 5분 cron 트리거 제거. /api/coin-runner는 Upbit에 실주문(매수/매도)을
+# 직접 넣는데, 상시 실행되는 VM의 daemon_coin.py(30초 폴링)와 같은 Gist 잡 파일
+# (coin_buy_jobs.json/coin_sell_jobs.json)을 락 없이 동시에 처리하고 있어 중복
+# 주문 위험이 있었음(이 저장소 CLAUDE.md 자체가 "VM 다운 시 보조 수단"이라고
+# 문서화해놓고 실제로는 조건 없이 상시 실행 중이던 모순). 이 프로젝트에 이미
+# 확립된 원칙("VM daemon이 처리하는 잡은 GHA 크론을 절대 활성화하지 않는다")을
+# 그대로 적용 — VM이 정말 다운됐을 때만 workflow_dispatch로 수동 실행할 것.
 on:
-  schedule:
-    - cron: '*/5 * * * *'   # 5분마다
   workflow_dispatch:
     inputs:
       mode:

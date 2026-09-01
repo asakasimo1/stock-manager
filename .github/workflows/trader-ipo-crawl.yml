@@ -1,0 +1,33 @@
+name: "[trader] IPO 데이터 자동 갱신"
+
+# 2026-09-01: stock-trader 저장소에서 이관. 이 저장소의 ipo_fetch.yml(Python,
+# 38커뮤니케이션 크롤링 → JSONBin)과 대상 JSONBin bin이 겹쳐서 기능이 중복돼
+# 보이지만, 이쪽은 Gist의 ipo.json도 별도로 동기화하고 있어 실제 소비처를
+# 아직 확정 못해 일단 그대로 이관함 — 안 쓰는 게 확인되면 별도로 정리할 것.
+
+on:
+  schedule:
+    - cron: '0 1 * * *'   # 매일 10:00 KST (UTC+9)
+  workflow_dispatch:       # 수동 실행
+
+defaults:
+  run:
+    working-directory: 04_개발/소스코드/trader
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: IPO 크롤링 및 Gist/JSONBin 업데이트
+        env:
+          GH_TOKEN:       ${{ secrets.GH_TOKEN }}
+          GIST_ID:        ${{ secrets.GIST_ID }}
+          JSONBIN_BIN_ID: ${{ secrets.JSONBIN_BIN_ID }}
+          JSONBIN_KEY:    ${{ secrets.JSONBIN_KEY }}
+        run: node scripts/ipo_crawl.mjs
