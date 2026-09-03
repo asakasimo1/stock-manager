@@ -4,6 +4,8 @@
  * GET /api/stock?ticker={ticker}          → 현재가 조회 { ticker, name, price, chg, chgPct }
  */
 
+import { getSharedKisToken } from './_kis-token.js';
+
 // NXT 시간대 판단 (프리마켓 08:05~08:50, 애프터마켓 15:35~20:00 KST, 평일만)
 function isNxtTime() {
   const kst = new Date(Date.now() + 9 * 3600 * 1000);
@@ -13,28 +15,15 @@ function isNxtTime() {
   return (t >= 8 * 60 + 5 && t < 8 * 60 + 50) || (t >= 15 * 60 + 35 && t < 20 * 60);
 }
 
-// KIS API 토큰 캐시 (NXT 조회용)
-let _nxtTokenCache = null;
-
 // NXT 실시간 현재가 조회 — NXT 비대상 종목이면 null 반환
 async function getNxtPrice(ticker) {
   const appKey    = process.env.KIS_APP_KEY;
   const appSecret = process.env.KIS_APP_SECRET;
   if (!appKey || !appSecret) return null;
   try {
-    const now = Date.now();
-    if (!_nxtTokenCache || _nxtTokenCache.expires <= now + 60_000) {
-      const base = 'https://openapi.koreainvestment.com:9443';
-      const tr = await fetch(`${base}/oauth2/tokenP`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ grant_type: 'client_credentials', appkey: appKey, appsecret: appSecret }),
-      });
-      if (!tr.ok) return null;
-      const td = await tr.json();
-      _nxtTokenCache = { token: td.access_token, base, expires: now + 86_400_000 };
-    }
-    const { token, base } = _nxtTokenCache;
+    // 2026-09-03: 이 함수 자체 발급 대신 Oracle(coin-runner)의 공유 토큰
+    // 캐시를 우선 재사용 — 배경은 _kis-token.js 참고
+    const { token, base } = await getSharedKisToken(appKey, appSecret);
     const params = new URLSearchParams({ FID_COND_MRKT_DIV_CODE: 'NX', FID_INPUT_ISCD: ticker });
     const doFetch = () => fetch(
       `${base}/uapi/domestic-stock/v1/quotations/inquire-price?${params}`,
