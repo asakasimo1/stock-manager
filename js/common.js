@@ -554,18 +554,34 @@ function _buildFillMarkers(job, candles) {
   if (!hist.length || !candles.length) return [];
   const isDateAxis = typeof candles[0].time === 'string';
 
+  // 캔들 사이 정상 간격(초) — 장중 실제 간격의 최솟값을 기준으로 삼는다.
+  // 장 마감~다음 개장(또는 NXT 세션 사이) 같은 빈 시간대에 체결된 거래를
+  // "가장 가까운 캔들"에 무조건 매칭시키면, 실제로는 몇 시간 떨어진 캔들에
+  // 점이 찍히거나 여러 체결이 세션 경계의 같은 캔들 하나에 몰려 실제와
+  // 다르게 보이는 문제가 있었음(2026-09-09 사용자 리포트 "매수매도 점이
+  // 실제와 다른 것 같다"). 정상 간격보다 멀리 떨어진 매칭은 버린다.
+  let normalGap = Infinity;
+  if (!isDateAxis) {
+    for (let i = 1; i < candles.length; i++) {
+      const gap = candles[i].time - candles[i - 1].time;
+      if (gap > 0 && gap < normalGap) normalGap = gap;
+    }
+    if (!isFinite(normalGap)) normalGap = 600;
+  }
+
   const toCandleTime = (dateStr, timeStr) => {
     if (!dateStr) return null;
     if (isDateAxis) return candles.some(c => c.time === dateStr) ? dateStr : null; // 일/주/월봉
     const epoch = Math.floor(Date.parse(`${dateStr}T${(timeStr || '00:00:00')}+09:00`) / 1000);
     if (!isFinite(epoch)) return null;
     const first = candles[0].time, last = candles[candles.length - 1].time;
-    if (epoch < first - 600 || epoch > last + 600) return null; // 현재 보이는 구간 밖 체결은 스킵
+    if (epoch < first - normalGap || epoch > last + normalGap) return null; // 보이는 구간 밖 체결은 스킵
     let best = null, bestDiff = Infinity;
     for (const c of candles) {
       const diff = Math.abs(c.time - epoch);
       if (diff < bestDiff) { bestDiff = diff; best = c.time; }
     }
+    if (bestDiff > normalGap) return null; // 장 마감~다음 개장 사이 등 빈 시간대 체결 — 억지 매칭 방지
     return best;
   };
 
