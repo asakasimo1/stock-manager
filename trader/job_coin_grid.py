@@ -542,6 +542,41 @@ def process_grid(job: dict) -> bool:
         elif state == "sell_waiting":
             sell_uuid = grid.get("sell_uuid", "")
             if not sell_uuid:
+                # 재초기화 이월물량 매도등록 실패 등으로 sell_uuid가 비었는데
+                # state는 sell_waiting으로 남아있는 "무방비 고아물량" — 위
+                # buy_waiting 분기(고아물량 매도재등록)와 대칭되는 버그였음:
+                # 이 분기가 매 사이클 조용히 건너뛰기만 하고, _sync_orphan_coins()도
+                # state만 보고("sell_waiting이면 이미 추적중") sell_uuid 존재
+                # 여부는 확인 안 해서 절대 못 잡아냈음 — 결과적으로 실거래소엔
+                # 매도 주문이 전혀 없는데 프론트 차트엔 그때 남은 stale
+                # last_sell_price가 영구히 표시되는 버그로 이어짐(2026-09-09
+                # 사용자 리포트: "차트에 현재가보다 낮은가격에 매도로 표기됨" —
+                # 실측: XRP 그리드 2개 격자가 sell_uuid="" 상태로 방치, 현재가
+                # 1922원인데 last_sell_price가 1887/1916원으로 표시). 여기서도
+                # buy_waiting 쪽과 동일한 안전장치(현재가가 목표가를 이미
+                # 넘었거나 3격자 이상 뒤처졌으면 현재가 앵커링)로 재등록한다.
+                coin_qty = grid.get("coin_qty", 0)
+                if coin_qty > 0:
+                    buy_price  = float(grid.get("last_buy_price") or 0) or level
+                    sell_price = float(grid.get("last_sell_price") or 0) or buy_price * (1 + grid_pct / 100)
+                    if cur_price:
+                        step_ratio = (1 + grid_pct / 100) ** REBALANCE_GRID_STEPS
+                        if buy_price > 0 and cur_price <= buy_price / step_ratio:
+                            sell_price = cur_price * (1 + grid_pct / 100)
+                        elif cur_price >= sell_price:
+                            # 이미 목표가를 넘어섰음(=진작 팔렸어야 할 상황을
+                            # 방치했던 것) — 더 뒤처지지 않게 현재가 기준으로 재설정
+                            sell_price = cur_price * (1 + grid_pct / 100)
+                    sell_price = upbit_api.round_ask_price(sell_price)
+                    try:
+                        r = upbit_api.place_order(market=ticker, side="ask", ord_type="limit",
+                                                   price=sell_price, volume=coin_qty)
+                        grid.update(sell_uuid=r["uuid"], last_sell_price=sell_price)
+                        changed = True
+                        logger.info("↻무방비 매도재등록 %s원 %.8f개 UUID:%s",
+                                    f"{sell_price:,.0f}", coin_qty, r["uuid"][:8])
+                    except Exception as e:
+                        logger.error("무방비 매도재등록실패 %s원: %s", f"{sell_price:,.0f}", e)
                 continue
             try:
                 order = upbit_api.get_order(sell_uuid)
@@ -959,9 +994,15 @@ def _sync_orphan_coins(job: dict) -> bool:
     grids        = job.get("grids", [])
     krw_per_grid = float(job.get("krw_per_grid", 0))
 
+    # sell_uuid가 실제로 있는(=거래소에 진짜 매도주문이 걸려있는) 격자만
+    # "추적중"으로 센다 — state만 보고 판단하면 위 process_grid()의
+    # sell_waiting/sell_uuid="" 무방비 상태(2026-09-09 버그 수정 참고)를
+    # "이미 추적중"으로 오판해 영원히 고아로 못 잡아내는 구멍이 있었음.
+    # process_grid()가 매 사이클 그 상태를 자체 복구하므로 평소엔 여기 안
+    # 걸리지만, 방어적으로 이 함수도 sell_uuid까지 확인하도록 맞춘다.
     tracked_qty = sum(
         float(g.get("coin_qty", 0))
-        for g in grids if g.get("state") == "sell_waiting"
+        for g in grids if g.get("state") == "sell_waiting" and g.get("sell_uuid")
     )
 
     ledger_qty    = float(job.get("grid_owned_qty", 0))
