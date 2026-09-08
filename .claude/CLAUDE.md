@@ -1,27 +1,37 @@
-# stock_analyzer (Vercel 프론트엔드)
+# stock_analyzer (Vercel 프론트엔드 + trader/ 실거래 백엔드)
 
 ## ⚠️ 핵심 아키텍처 — 반드시 먼저 읽을 것
 
-### 이 프로젝트는 UI 전용이다. 실제 매매는 Oracle VM에서 실행된다.
+### 2026-09-01: stock-trader 저장소를 이 저장소의 `trader/` 하위로 통합 이관함
+
+이전엔 이 저장소가 UI 전용이고 실제 매매 코드는 별도 저장소
+(`asakasimo1/stock-trader`)에 있었는데, `git subtree`(이력 보존)로 그
+저장소 전체를 이 저장소의 `trader/` 디렉토리 밑으로 흡수 이관했다.
+**`asakasimo1/stock-trader` 저장소는 삭제 예정/삭제됨** — 더 이상 참조하지
+말 것. Vercel 배포(`vercel.json`의 `builds`)는 트리 최상단 파일들만
+명시적으로 지정하므로 `trader/`가 추가돼도 프론트 빌드엔 영향 없음.
 
 ```
-[브라우저] ←→ [Vercel - stock_analyzer]
+[브라우저] ←→ [Vercel - stock_analyzer (이 저장소 최상단)]
                     ↕ Gist (상태 읽기/쓰기)
-[Oracle VM] → daemon_coin.py → Upbit API  ← 실제 매매 실행
+[Oracle VM] → trader/daemon_coin.py (이 저장소의 trader/ 하위 코드) → Upbit API  ← 실제 매매 실행
 ```
 
 ### 코인 자동매매 문제 발생 시
 
-**Vercel 코드를 먼저 보지 말 것. Oracle VM부터 확인.**
+**Vercel 코드(최상단 js/api)를 먼저 보지 말 것. Oracle VM부터 확인.**
 
 ```bash
 ssh ubuntu@158.180.84.109
 sudo systemctl status coin-daemon
-tail -f /home/ubuntu/stock-trader/daemon_coin.log
+tail -f /home/ubuntu/stock-manager/trader/daemon_coin.log
 ```
 
-Oracle VM 코드 위치: `/home/ubuntu/stock-trader/`
-Oracle VM 코드 저장소: `github.com/asakasimo1/stock-trader`
+Oracle VM 코드 위치: `/home/ubuntu/stock-manager/trader/`
+(구 경로 `/home/ubuntu/stock-trader/`는 더 이상 어떤 서비스도 참조 안 함 —
+롤백 안전망으로만 남겨둔 것, 조만간 정리 예정)
+저장소: `github.com/asakasimo1/stock-manager` (이 저장소 자체 — 더 이상 별도
+저장소 아님)
 
 ### 이 저장소(stock_analyzer)의 역할
 
@@ -76,8 +86,12 @@ cd /Users/macbook/projects/stock-manager/frontend
 
 ### 주의
 
-- `api/coin.js`의 `handleCoinRunner`는 **보조 수단** (Oracle VM 다운 시 앱에서 수동 트리거용)
-- 자동매매 로직 버그는 **stock-trader 저장소의 Python 코드**에서 수정해야 함
+- `api/coin.js`의 `handleCoinRunner`는 **보조 수단** (Oracle VM 다운 시에만 수동
+  트리거 — `coin-runner.yml`의 5분 자동 cron은 2026-09-01 제거함, VM 데몬과
+  같은 Gist 잡을 동시처리하며 Upbit 중복주문 위험이 있었기 때문. 이제
+  `workflow_dispatch`로만 실행됨)
+- 자동매매 로직 버그는 **이 저장소의 `trader/` 하위 Python 코드**에서 수정해야
+  함(예전엔 별도 stock-trader 저장소였음 — 2026-09-01 통합됨)
 - Vercel Hobby 플랜 → 1분 미만 cron 불가 (Oracle VM daemon이 대체)
 
 ---

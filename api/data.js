@@ -173,7 +173,7 @@ export default async function handler(req, res) {
     if (!ghToken) return res.status(500).json({ error: 'GH_TOKEN 미설정' });
     try {
       const r = await fetch(
-        'https://api.github.com/repos/asakasimo1/stock-trader/actions/workflows/trader.yml/dispatches',
+        'https://api.github.com/repos/asakasimo1/stock-manager/actions/workflows/trader-manual.yml/dispatches',
         {
           method: 'POST',
           headers: {

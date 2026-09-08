@@ -1,0 +1,239 @@
+name: 자동매매 봇 (수동 전용)
+permissions:
+  contents: write
+on:
+  # ── 코인 (Upbit) ──
+  # coin-daemon.service(systemd)가 30초 폴링으로 24/7 처리 → 크론 비활성화
+  # ── 주식 매수/청산/사이클/모니터링 ──
+  # signals/buy/close/cycle/monitor는 전부 Oracle VM stock-daemon
+  # (job_profit_buy_cloud/job_profit_sell_cloud/job_cycle_cloud/job_stock_grid,
+  # 30초 폴링 상시 실행)이 대체함 → 관련 워크플로우·수동 잡 전부 제거 (혼선 방지).
+  # signals.yml/buy.yml/close.yml 워크플로우 파일 자체도 삭제함.
+  #
+  # report.yml(일일 리포트) / factor_rebalance.yml(월간 팩터 리밸런싱) /
+  # cleanup_logs.yml(로그 정리)은 VM 데몬에 없는 기능이라 그대로 유지.
+  workflow_dispatch:
+    inputs:
+      job:
+        description: '실행할 job'
+        required: true
+        default: 'balance'
+        type: choice
+        options:
+          - balance
+          - monitor_036030
+          - force_done_submitted
+          - coin_buy
+          - coin_sell
+          - coin_balance
+          - sync_positions
+      force_done_ticker:
+        description: 'force_done_submitted 전용: 완료 처리할 종목명 또는 코드'
+        required: false
+        default: ''
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  KIS_APP_KEY:           ${{ secrets.KIS_APP_KEY }}
+  KIS_APP_SECRET:        ${{ secrets.KIS_APP_SECRET }}
+  KIS_ACCOUNT_NO:        ${{ secrets.KIS_ACCOUNT_NO }}
+  PAPER_TRADE:           ${{ secrets.PAPER_TRADE }}
+  STRATEGY:              ${{ secrets.STRATEGY }}
+  MAX_ORDER_AMOUNT:      ${{ secrets.MAX_ORDER_AMOUNT }}
+  MAX_DAILY_LOSS:        ${{ secrets.MAX_DAILY_LOSS }}
+  TELEGRAM_BOT_TOKEN:    ${{ secrets.TELEGRAM_BOT_TOKEN }}
+  TELEGRAM_CHAT_ID:      ${{ secrets.TELEGRAM_CHAT_ID }}
+  MAX_FACTOR_POSITIONS:  ${{ secrets.MAX_FACTOR_POSITIONS }}
+  FACTOR_ORDER_AMOUNT:   ${{ secrets.FACTOR_ORDER_AMOUNT }}
+  GIST_ID:               ${{ secrets.GIST_ID }}
+  GH_TOKEN:              ${{ secrets.GH_TOKEN }}
+  UPBIT_ACCESS_KEY:      ${{ secrets.UPBIT_ACCESS_KEY }}
+  UPBIT_SECRET_KEY:      ${{ secrets.UPBIT_SECRET_KEY }}
+
+jobs:
+
+  # ════════════════════════════════════════════════
+  # 수동 실행 전용 (workflow_dispatch)
+  # Oracle VM 데몬이 처리하지만 긴급 수동 실행 가능
+  # ════════════════════════════════════════════════
+
+  # ── 잔고 즉시 조회 ───────────────────────────
+  balance:
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'balance'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: pip-
+      - name: KIS 토큰 캐시 복원 (문자 알림 최소화 — 유효기간 내면 재발급 안 함)
+        uses: actions/cache@v4
+        with:
+          path: .token_cache.json
+          key: kis-token-${{ github.run_id }}
+          restore-keys: |
+            kis-token-
+      - run: pip install -r requirements.txt
+      - run: python job_balance.py
+
+  # ── 케이티알파 모니터링 (수동) ───────────────
+  monitor_036030:
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'monitor_036030'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: true
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: pip-
+      - name: KIS 토큰 캐시 복원 (문자 알림 최소화 — 유효기간 내면 재발급 안 함)
+        uses: actions/cache@v4
+        with:
+          path: .token_cache.json
+          key: kis-token-${{ github.run_id }}
+          restore-keys: |
+            kis-token-
+      - run: pip install -r requirements.txt
+      - run: python monitor_036030.py
+      - name: 로그 파일 커밋
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git pull --rebase origin main || true
+          git add monitor_036030.log
+          git diff --cached --quiet || git commit -m "logs: 036030 모니터링 $(date +'%Y-%m-%d %H:%M') KST [skip ci]"
+          git push origin HEAD:main
+
+  # ── submitted 잡 강제 완료 (수동) ────────────
+  force_done_submitted:
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'force_done_submitted'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: pip-
+      - run: pip install -r requirements.txt
+      - name: submitted 잡 완료 처리
+        run: |
+          python3 - <<'PYEOF'
+          import os
+          os.chdir(os.environ["GITHUB_WORKSPACE"])
+          import gist_writer, notify
+          from datetime import datetime, timezone, timedelta
+          KST = timezone(timedelta(hours=9))
+
+          target = os.environ.get("FORCE_DONE_TICKER", "").strip()
+          jobs = gist_writer._read_gist_file("profit_sell_jobs.json") or []
+          changed, done_list = False, []
+
+          for job in jobs:
+              if job.get("status") != "submitted":
+                  continue
+              name   = job.get("name", "")
+              ticker = job.get("ticker", "")
+              if target and target not in (name, ticker):
+                  continue
+              job["status"]      = "done"
+              job["executed_at"] = datetime.now(KST).strftime("%Y-%m-%d %H:%M")
+              job["force_done"]  = False
+              changed = True
+              done_list.append(f"{name}({ticker})")
+              print(f"✅ 완료 처리: {name}({ticker})")
+
+          if changed:
+              gist_writer._write_gist({"profit_sell_jobs.json": jobs})
+              msg = "✅ <b>수동 완료 처리</b>\n" + "\n".join(f"  • {d}" for d in done_list)
+              notify.send(msg)
+              print("Gist 업데이트 완료")
+          else:
+              print("처리할 submitted 잡 없음")
+          PYEOF
+        env:
+          FORCE_DONE_TICKER: ${{ github.event.inputs.force_done_ticker }}
+
+  # ── 코인 매수 (수동 — 상시 폴링은 coin-daemon 대체) ──────────
+  coin_buy:
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'coin_buy'
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: pip-
+      - run: pip install -r requirements.txt
+      - run: python job_coin_buy.py
+
+  # ── 코인 매도·사이클 (수동 — 상시 폴링은 coin-daemon 대체) ────────
+  coin_sell:
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'coin_sell'
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: pip-
+      - run: pip install -r requirements.txt
+      - run: python job_coin_sell.py
+
+  # ── state_db 포지션 동기화 (수동) ──────────
+  sync_positions:
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'sync_positions'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: pip-
+      - name: KIS 토큰 캐시 복원 (문자 알림 최소화 — 유효기간 내면 재발급 안 함)
+        uses: actions/cache@v4
+        with:
+          path: .token_cache.json
+          key: kis-token-${{ github.run_id }}
+          restore-keys: |
+            kis-token-
+      - run: pip install -r requirements.txt
+      - run: python job_balance.py
+
+  # ── 코인 잔고 현행화 (수동) ────────
+  coin_balance:
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'coin_balance'
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: pip-
+      - run: pip install -r requirements.txt
+      - run: python job_coin_balance.py
