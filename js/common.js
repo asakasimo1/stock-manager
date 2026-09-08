@@ -432,6 +432,13 @@ function _gridLevelsNormalize(job, qtyField) {
 // 코인(Upbit)은 어느 시간대든 단일 콜이라 부담 적고, 주식 1분/10분/1시간봉은
 // KIS 1분봉 페이징(최대 5~14콜)이 필요한 무거운 호출이라 짧은 TTL이 곧 방어막.
 const GRID_CHART_CACHE_MS = { '1m': 60000, '10m': 150000, '1h': 150000, '1d': 1800000, '1w': 10800000, '1M': 21600000 };
+// 분봉 누적 캐시가 여러 날에 걸쳐 최대 300개까지 쌓이는데(아래 _fetchGridCandles
+// 참고), 차트 기본 화면을 fitContent()로 그리면 누적분 전체를 항상 다 우겨넣어
+// 쌓일수록 캔들이 점점 좁게 눌려 보이는 문제가 있었음(2026-09-09 사용자 리포트
+// "캔들이 너무 좁은 공간에 몰려있음", 코인·주식 공용이라 둘 다 동일 증상).
+// 시간대별로 "원래 한 번에 조회하던 분량"만큼만 기본으로 보여주고, 사용자가
+// 직접 확대/축소해서 누적된 과거분까지 보는 건 그대로 가능하게 둔다.
+const GRID_DEFAULT_VISIBLE = { '1m': 120, '10m': 36, '1h': 48 };
 const GRID_TIMEFRAMES = [
   { key: '1m',  label: '1분' },
   { key: '10m', label: '10분' },
@@ -547,18 +554,34 @@ function _buildFillMarkers(job, candles) {
   if (!hist.length || !candles.length) return [];
   const isDateAxis = typeof candles[0].time === 'string';
 
+  // 캔들 사이 정상 간격(초) — 장중 실제 간격의 최솟값을 기준으로 삼는다.
+  // 장 마감~다음 개장(또는 NXT 세션 사이) 같은 빈 시간대에 체결된 거래를
+  // "가장 가까운 캔들"에 무조건 매칭시키면, 실제로는 몇 시간 떨어진 캔들에
+  // 점이 찍히거나 여러 체결이 세션 경계의 같은 캔들 하나에 몰려 실제와
+  // 다르게 보이는 문제가 있었음(2026-09-09 사용자 리포트 "매수매도 점이
+  // 실제와 다른 것 같다"). 정상 간격보다 멀리 떨어진 매칭은 버린다.
+  let normalGap = Infinity;
+  if (!isDateAxis) {
+    for (let i = 1; i < candles.length; i++) {
+      const gap = candles[i].time - candles[i - 1].time;
+      if (gap > 0 && gap < normalGap) normalGap = gap;
+    }
+    if (!isFinite(normalGap)) normalGap = 600;
+  }
+
   const toCandleTime = (dateStr, timeStr) => {
     if (!dateStr) return null;
     if (isDateAxis) return candles.some(c => c.time === dateStr) ? dateStr : null; // 일/주/월봉
     const epoch = Math.floor(Date.parse(`${dateStr}T${(timeStr || '00:00:00')}+09:00`) / 1000);
     if (!isFinite(epoch)) return null;
     const first = candles[0].time, last = candles[candles.length - 1].time;
-    if (epoch < first - 600 || epoch > last + 600) return null; // 현재 보이는 구간 밖 체결은 스킵
+    if (epoch < first - normalGap || epoch > last + normalGap) return null; // 보이는 구간 밖 체결은 스킵
     let best = null, bestDiff = Infinity;
     for (const c of candles) {
       const diff = Math.abs(c.time - epoch);
       if (diff < bestDiff) { bestDiff = diff; best = c.time; }
     }
+    if (bestDiff > normalGap) return null; // 장 마감~다음 개장 사이 등 빈 시간대 체결 — 억지 매칭 방지
     return best;
   };
 
@@ -783,7 +806,14 @@ async function renderGridChart(containerId, job, curPrice, qtyField, ticker, isC
     },
   });
 
-  chart.timeScale().fitContent();
+  const defaultVisible = GRID_DEFAULT_VISIBLE[timeframe];
+  if (defaultVisible && candles.length > defaultVisible) {
+    // 누적 캐시가 많이 쌓여 있어도 기본 화면은 최근 구간만 — 확대/축소는 그대로 가능.
+    const from = Math.max(0, candles.length - defaultVisible);
+    chart.timeScale().setVisibleLogicalRange({ from, to: candles.length - 1 });
+  } else {
+    chart.timeScale().fitContent();
+  }
 }
 
 // ── 그리드 재설정(reinit_history) 한 줄 렌더링 — 코인/주식 공용 ──────────
