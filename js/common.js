@@ -824,7 +824,10 @@ async function renderGridChart(containerId, job, curPrice, qtyField, ticker, isC
 // 사용자 요청 — 시간/금액 줄이 안 맞아 시인성이 떨어진다는 피드백으로 grid
 // 정렬 추가 + 이탈 방향 색상 표기 추가).
 function formatReinitRow(h) {
-  const time = h.ts?.slice(11, 16) || '?';
+  // h.ts = "YYYY-MM-DD HH:MM" — 예전엔 시:분만 잘라 써서(slice(11,16)) 날짜가
+  // 다른 항목끼리도 구분이 안 됐음(2026-09-09 사용자 리포트 "시간만 있고
+  // 날짜가 없어"). MM/DD HH:MM로 날짜까지 표시.
+  const time = h.ts ? `${h.ts.slice(5, 10)} ${h.ts.slice(11, 16)}` : '?';
   const [oldLowerStr, oldUpperStr] = (h.old_range || '').split('~');
   const oldLower = parseFloat((oldLowerStr || '').replace(/,/g, ''));
   const oldUpper = parseFloat((oldUpperStr || '').replace(/,/g, ''));
@@ -835,7 +838,7 @@ function formatReinitRow(h) {
   } else if (isFinite(trigger) && isFinite(oldUpper) && trigger > oldUpper) {
     dirLabel = '상단돌파 🔺'; dirColor = '#ef4444';
   }
-  return `<div style="display:grid;grid-template-columns:34px 1fr auto;gap:8px;align-items:center;font-variant-numeric:tabular-nums;padding:1px 0">
+  return `<div style="display:grid;grid-template-columns:70px 1fr auto;gap:8px;align-items:center;font-variant-numeric:tabular-nums;padding:1px 0">
       <span>${time}</span>
       <span>${h.old_range}→${h.new_range}</span>
       <span style="color:${dirColor};font-weight:700;white-space:nowrap;text-align:right">${dirLabel}</span>
