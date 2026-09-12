@@ -408,6 +408,35 @@ def initialize_grid(job: dict, carried: list = None) -> bool:
 # 사이클 처리
 # ─────────────────────────────────────────
 
+def _write_off_phantom_qty(job: dict, phantom_qty: float):
+    """장부(grid_owned_qty)에서 실제 계좌엔 없는 수량만큼 차감(유령 물량 정리)."""
+    if phantom_qty <= 0:
+        return
+    job["grid_owned_qty"] = round(max(0, job.get("grid_owned_qty", 0) - phantom_qty), 8)
+
+
+def _sellable_qty(ticker: str, tracked_qty: float, price_for_min_check: float) -> tuple:
+    """장부상 수량(tracked_qty) 중 실제로 매도 가능한 몫만 반환.
+    (sellable, phantom) — phantom은 tracked_qty 중 실계좌에 없는 몫.
+    2026-09-12 실사고 재발방지: 고아물량/무방비물량 재등록 분기가 장부값을
+    그대로 믿고 매도 주문을 넣다가, 장부와 실계좌가 어긋나면(원인 불명 —
+    체결 오판/타이밍 등) insufficient_funds_ask로 영원히 실패만 반복하며
+    해당 격자를 buy_waiting/sell_waiting 상태로 계속 묶어둬 그리드 전체가
+    13시간 넘게 멈춘 사고 발생. 재시도 전에 실제 잔고를 확인해서, 진짜 없는
+    몫은 장부만 정리(idle 전환)하고, 일부만 있으면 있는 만큼만 매도 등록해
+    그리드가 계속 돌아가게 한다."""
+    currency = ticker.split("-")[-1]
+    try:
+        available = upbit_api.get_currency_balance(currency)
+    except Exception:
+        return tracked_qty, 0  # 잔고조회 자체가 실패하면 판단 보류 — 기존처럼 전량으로 시도
+    sellable = min(tracked_qty, available)
+    if sellable * price_for_min_check < UPBIT_MIN_ORDER:
+        sellable = 0  # 최소주문금액 미달이면 사실상 매도 불가 — 있어도 없는 셈
+    phantom = round(max(0, tracked_qty - sellable), 8)
+    return sellable, phantom
+
+
 def process_grid(job: dict) -> bool:
     ticker       = job["ticker"]
     grid_pct     = float(job["grid_pct"])
@@ -480,14 +509,30 @@ def process_grid(job: dict) -> bool:
                         if cur_price <= buy_price / step_ratio:
                             buy_price  = upbit_api.round_bid_price(cur_price)
                             sell_price = upbit_api.round_ask_price(cur_price * (1 + grid_pct / 100))
+                    sellable, phantom = _sellable_qty(ticker, coin_qty, sell_price)
+                    if sellable <= 0:
+                        # 실계좌에 없는 유령 물량 — 재시도해봐야 영원히 실패만
+                        # 반복하며 이 격자를 buy_waiting에 묶어둘 뿐이므로 장부를
+                        # 정리하고 idle로 되돌려 그리드가 계속 돌게 함.
+                        _write_off_phantom_qty(job, phantom)
+                        grid.update(state="idle", buy_uuid="", sell_uuid="", coin_qty=0,
+                                    last_buy_price=0, last_sell_price=0, buy_time="")
+                        changed = True
+                        logger.warning("고아물량 %.8f개(매수가 %s원) 실계좌에 없음 → 장부 정리(idle 전환)",
+                                        coin_qty, f"{buy_price:,.0f}")
+                        continue
                     try:
                         r = upbit_api.place_order(market=ticker, side="ask", ord_type="limit",
-                                                   price=sell_price, volume=coin_qty)
-                        grid.update(state="sell_waiting", sell_uuid=r["uuid"],
+                                                   price=sell_price, volume=sellable)
+                        if phantom > 0:
+                            _write_off_phantom_qty(job, phantom)
+                            logger.warning("고아물량 %.8f개 중 %.8f개는 실계좌에 없어 장부만 정리, "
+                                           "나머지 %.8f개만 매도재등록", coin_qty, phantom, sellable)
+                        grid.update(state="sell_waiting", sell_uuid=r["uuid"], coin_qty=sellable,
                                     last_buy_price=buy_price, last_sell_price=sell_price)
                         changed = True
                         logger.info("↻고아물량 매도재등록 %s원 %.8f개 UUID:%s",
-                                    f"{sell_price:,.0f}", coin_qty, r["uuid"][:8])
+                                    f"{sell_price:,.0f}", sellable, r["uuid"][:8])
                     except Exception as e:
                         logger.error("고아물량 매도재등록실패 %s원: %s", f"{sell_price:,.0f}", e)
                 continue
@@ -568,13 +613,26 @@ def process_grid(job: dict) -> bool:
                             # 방치했던 것) — 더 뒤처지지 않게 현재가 기준으로 재설정
                             sell_price = cur_price * (1 + grid_pct / 100)
                     sell_price = upbit_api.round_ask_price(sell_price)
+                    sellable, phantom = _sellable_qty(ticker, coin_qty, sell_price)
+                    if sellable <= 0:
+                        _write_off_phantom_qty(job, phantom)
+                        grid.update(state="idle", buy_uuid="", sell_uuid="", coin_qty=0,
+                                    last_buy_price=0, last_sell_price=0)
+                        changed = True
+                        logger.warning("무방비물량 %.8f개(매수가 %s원) 실계좌에 없음 → 장부 정리(idle 전환)",
+                                        coin_qty, f"{buy_price:,.0f}")
+                        continue
                     try:
                         r = upbit_api.place_order(market=ticker, side="ask", ord_type="limit",
-                                                   price=sell_price, volume=coin_qty)
-                        grid.update(sell_uuid=r["uuid"], last_sell_price=sell_price)
+                                                   price=sell_price, volume=sellable)
+                        if phantom > 0:
+                            _write_off_phantom_qty(job, phantom)
+                            logger.warning("무방비물량 %.8f개 중 %.8f개는 실계좌에 없어 장부만 정리, "
+                                           "나머지 %.8f개만 매도재등록", coin_qty, phantom, sellable)
+                        grid.update(sell_uuid=r["uuid"], last_sell_price=sell_price, coin_qty=sellable)
                         changed = True
                         logger.info("↻무방비 매도재등록 %s원 %.8f개 UUID:%s",
-                                    f"{sell_price:,.0f}", coin_qty, r["uuid"][:8])
+                                    f"{sell_price:,.0f}", sellable, r["uuid"][:8])
                     except Exception as e:
                         logger.error("무방비 매도재등록실패 %s원: %s", f"{sell_price:,.0f}", e)
                 continue

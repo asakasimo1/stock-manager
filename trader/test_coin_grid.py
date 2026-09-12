@@ -228,5 +228,98 @@ class TestDustSweepEveryCycle(unittest.TestCase):
         mock_api.get_balance.assert_not_called()
 
 
+class TestPhantomQtyWriteOff(unittest.TestCase):
+    """2026-09-12 실사고 재발방지 회귀 테스트 — 리플 그리드 격자 1개가
+    buy_uuid="" 상태로 장부상 54.9개를 보유한 것처럼 남았는데 실계좌엔
+    없어서(원인 불명) insufficient_funds_ask로 13시간 넘게 30초마다 무한
+    재시도하며 그리드 전체(나머지 idle 격자 포함)가 멈춘 사고. 재시도 전에
+    실제 잔고를 확인해 진짜 없는 몫은 장부만 정리(idle 전환)하고, 일부만
+    있으면 있는 만큼만 매도 등록하도록 수정한 것을 검증한다."""
+
+    def test_sellable_qty_full_phantom(self):
+        with patch.object(jcg.upbit_api, "get_currency_balance", return_value=0.0):
+            sellable, phantom = jcg._sellable_qty("KRW-XRP", 54.9, 1900)
+        self.assertEqual(sellable, 0)
+        self.assertAlmostEqual(phantom, 54.9, places=8)
+
+    def test_sellable_qty_partial_phantom(self):
+        with patch.object(jcg.upbit_api, "get_currency_balance", return_value=20.0):
+            sellable, phantom = jcg._sellable_qty("KRW-XRP", 54.9, 1900)
+        self.assertAlmostEqual(sellable, 20.0, places=8)
+        self.assertAlmostEqual(phantom, 34.9, places=8)
+
+    def test_sellable_qty_below_min_order_treated_as_phantom(self):
+        # 실잔고가 미세하게 있어도(예: 라운딩 잔여) 최소주문금액(5,000원)
+        # 미달이면 어차피 매도 불가 — 있어도 없는 셈으로 취급해야 함.
+        with patch.object(jcg.upbit_api, "get_currency_balance", return_value=0.001):
+            sellable, phantom = jcg._sellable_qty("KRW-XRP", 54.9, 1900)
+        self.assertEqual(sellable, 0)
+        self.assertAlmostEqual(phantom, 54.9, places=8)
+
+    def test_sellable_qty_sufficient_balance_passthrough(self):
+        with patch.object(jcg.upbit_api, "get_currency_balance", return_value=999.0):
+            sellable, phantom = jcg._sellable_qty("KRW-XRP", 54.9, 1900)
+        self.assertAlmostEqual(sellable, 54.9, places=8)
+        self.assertEqual(phantom, 0)
+
+    def test_write_off_phantom_qty_floors_at_zero(self):
+        job = make_job(grid_owned_qty=10.0)
+        jcg._write_off_phantom_qty(job, 30.0)  # 장부보다 큰 유령분 정리 시도
+        self.assertEqual(job["grid_owned_qty"], 0)
+
+    @patch.object(jcg, "upbit_api")
+    def test_buy_waiting_orphan_full_phantom_resets_to_idle(self, mock_api):
+        """실계좌에 전혀 없는 고아물량 — 재시도 없이 즉시 장부 정리 + idle
+        전환돼야 하고, 매도 주문 시도(place_order) 자체를 하면 안 된다."""
+        mock_api.get_price.return_value = {"price": 1850.0}
+        mock_api.get_currency_balance.return_value = 1e-08  # 사실상 0(먼지)
+        mock_api.round_ask_price.side_effect = upbit_api.round_ask_price
+        mock_api.round_bid_price.side_effect = upbit_api.round_bid_price
+
+        job = make_job(grid_owned_qty=0, grids=[
+            {"level": 1821, "state": "buy_waiting", "buy_uuid": "", "sell_uuid": "",
+             "coin_qty": 54.91488194, "last_buy_price": 1821.0, "last_sell_price": 0,
+             "buy_time": "19:41"},
+        ])
+
+        changed = jcg.process_grid(job)
+        self.assertTrue(changed)
+
+        grid = job["grids"][0]
+        self.assertEqual(grid["state"], "idle")
+        self.assertEqual(grid["coin_qty"], 0)
+        self.assertEqual(grid["buy_uuid"], "")
+        self.assertEqual(grid["sell_uuid"], "")
+        mock_api.place_order.assert_not_called()
+
+    @patch.object(jcg, "upbit_api")
+    def test_sell_waiting_orphan_partial_phantom_sells_available_only(self, mock_api):
+        """일부만 실계좌에 있는 무방비물량 — 있는 만큼만 매도 등록하고
+        차액은 장부에서 정리, 그리드는 sell_waiting으로 정상 진행돼야 한다."""
+        mock_api.get_price.return_value = {"price": 1850.0}
+        mock_api.get_currency_balance.return_value = 20.0  # 장부(54.9)보다 적음
+        mock_api.place_order.return_value = {"uuid": "partial-sell-uuid"}
+        mock_api.round_ask_price.side_effect = upbit_api.round_ask_price
+        mock_api.round_bid_price.side_effect = upbit_api.round_bid_price
+
+        job = make_job(grid_owned_qty=54.9, grids=[
+            {"level": 1821, "state": "sell_waiting", "buy_uuid": "", "sell_uuid": "",
+             "coin_qty": 54.9, "last_buy_price": 1821.0, "last_sell_price": 1848.0},
+        ])
+
+        changed = jcg.process_grid(job)
+        self.assertTrue(changed)
+
+        grid = job["grids"][0]
+        self.assertEqual(grid["state"], "sell_waiting")
+        self.assertAlmostEqual(grid["coin_qty"], 20.0, places=8)
+        self.assertEqual(grid["sell_uuid"], "partial-sell-uuid")
+        mock_api.place_order.assert_called_once()
+        _, kwargs = mock_api.place_order.call_args
+        self.assertAlmostEqual(kwargs["volume"], 20.0, places=8)
+        # 34.9개 유령분은 장부(grid_owned_qty)에서 차감돼야 함
+        self.assertAlmostEqual(job["grid_owned_qty"], 20.0, places=8)
+
+
 if __name__ == "__main__":
     unittest.main()
