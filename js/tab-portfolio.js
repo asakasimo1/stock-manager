@@ -151,6 +151,8 @@ const fmtK = v => {
   return sign + Math.round(abs).toLocaleString() + '원';
 };
 const signFmt = v => (v > 0 ? '+' : '') + fmtK(v);
+// 원 단위(반올림 없이 만원 단위로 뭉개지 않음) — 공모주·배당금 누적 카드 전용
+const signFmtWon = v => (v > 0 ? '+' : v < 0 ? '-' : '') + Math.round(Math.abs(v)).toLocaleString() + '원';
 
 // ── KPI ────────────────────────────────────────────────────
 // 2026-08-28 — 차트 아래 4개 KPI 박스(개별주/ETF 평가손익, 공모주·배당
@@ -831,8 +833,17 @@ function _withinPeriod(dateStr, period, customStart, customEnd) {
     return !!(customStart || customEnd);
   }
   const cutoff = new Date();
-  if (period === '1m') cutoff.setMonth(cutoff.getMonth() - 1);
-  else if (period === '1y') cutoff.setFullYear(cutoff.getFullYear() - 1);
+  if (period === '1m') {
+    // setMonth()를 바로 쓰면 말일(29~31일) 기준일 때 JS Date가 다음 달로
+    // 오버플로해 한 달보다 짧게 계산되는 버그가 있어(예: 3/31 → setMonth(-1)
+    // 시도 시 2/31이 존재하지 않아 3/3으로 튐), 항상 실제 -30~-31일이 되도록
+    // 1일로 클램프 후 계산 → 원래 일자로 복원(단, 이전 달 말일을 넘지 않게 clamp).
+    const day = cutoff.getDate();
+    cutoff.setDate(1);
+    cutoff.setMonth(cutoff.getMonth() - 1);
+    const lastDay = new Date(cutoff.getFullYear(), cutoff.getMonth() + 1, 0).getDate();
+    cutoff.setDate(Math.min(day, lastDay));
+  } else if (period === '1y') cutoff.setFullYear(cutoff.getFullYear() - 1);
   return d >= cutoff;
 }
 
@@ -948,7 +959,7 @@ function _renderIpoDivByStock() {
   const list = rows.length ? rows.map(r => `
     <div style="display:flex;align-items:center;gap:8px;font-size:12px;padding:7px 0;border-bottom:1px solid var(--border)">
       <span style="flex:1;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.name}</span>
-      <span style="font-weight:600;color:${valColor(r.amount)}">${signFmt(r.amount)}</span>
+      <span style="font-weight:600;color:${valColor(r.amount)}">${signFmtWon(r.amount)}</span>
     </div>`).join('')
     : `<div style="color:var(--muted);font-size:12px;text-align:center;padding-top:${(IPO_DIV_LIST_HEIGHT-40)/2}px">해당 기간 데이터 없음</div>`;
 
@@ -957,7 +968,7 @@ function _renderIpoDivByStock() {
     ${customPicker}
     <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px;padding-bottom:10px;border-bottom:1px solid var(--border)">
       <span style="font-size:12px;color:var(--muted);font-weight:700">${mode === 'div' ? '세후 배당 합계' : '공모주 수익 합계'}</span>
-      <span style="font-size:16px;font-weight:700;color:${valColor(total)}">${signFmt(total)}</span>
+      <span style="font-size:16px;font-weight:700;color:${valColor(total)}">${signFmtWon(total)}</span>
     </div>
     <div style="height:${IPO_DIV_LIST_HEIGHT}px;overflow-y:auto">${list}</div>`;
 }
