@@ -1536,6 +1536,7 @@ let _portEtf       = [];
 let _portIpo       = [];
 let _portDiv       = [];
 let _portCash      = 0;
+let _portTransactions = []; // 매수/매도 거래 내역(JSONBin bundle) — 청산 종목 비교 카드용
 let _stockMdDown   = null;
 
 async function saveCash() {

@@ -204,6 +204,16 @@
       </div>
     </div>
 
+    <!-- 청산 종목 "안 팔았다면?" 비교 (완전매도한 종목이 있을 때만 표시) -->
+    <div id="port-closed-card" class="port-card" style="margin-bottom:16px;display:none">
+      <div class="port-card-title collapsible collapsed" id="port-closed-toggle" onclick="togglePortSection('closed')">
+        <span>🔍 매도 판단 돌아보기</span><i class="port-collapse-icon">▼</i>
+      </div>
+      <!-- 합계: 항상 표시 -->
+      <div id="port-closed-summary"></div>
+      <div id="port-closed-body" class="port-card-body collapsed"></div>
+    </div>
+
   </div>
 </div><!-- /tab-portfolio -->
 

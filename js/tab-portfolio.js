@@ -19,6 +19,7 @@ async function initPortfolio() {
     _portEtf      = bundleData.etf       ?? [];
     _portIpo      = ipoRes.records       || [];
     _portDiv      = bundleData.dividends ?? [];
+    _portTransactions = bundleData.transactions ?? [];
     _stockRecords = (bundleData.stocks   ?? []).map(r => ({ ...r, current_price: null, chg: null, chgPct: null }));
     _portCash     = (metaRes.portfolio_meta || {}).cash || 0;
     const ci = document.getElementById('cash-input');
@@ -137,6 +138,7 @@ function renderPortfolio() {
   _renderPortEtf();
   _renderPortIpo();
   _renderPortStock();
+  _renderPortClosed();
 }
 
 // ── 금액 포맷 (자산현황·수익배분 도넛 차트용: 만원 단위) ─────
@@ -277,6 +279,154 @@ async function clearIpoSale(id) {
     if (!(await res.json()).ok) throw new Error('저장 실패');
     await initPortfolio();
   } catch(e) { alert('오류: ' + e.message); }
+}
+
+// ── 매도 판단 돌아보기: "안 팔았다면?" 비교 ──────────────────
+// 2026-09-28 요청 — 특정 사유(예: 금리상승·지정학 리스크)로 여러 날에
+// 걸쳐 분할매도한 종목이, 그 매도분을 실제로는 팔지 않고 계속 보유했을
+// 경우 지금 기준으로 더 유리했을지 비교. 완전 청산(qty=0)뿐 아니라
+// 일부만 판 뒤 나머지는 계속 보유 중인 경우도 포함한다(실사용 사례—
+// 한미반도체·코스닥ETF를 일부만 분할매도하고 잔여 물량은 보유 중이었음,
+// qty=0만 대상으로 하면 이런 케이스를 놓침). "매도한 수량분"만 떼어
+// 실현금액과 "보유했다면"(현재가 × 매도수량)을 비교하며, 잔여 보유수량과는
+// 무관하게 독립적으로 계산한다. 매도 사유는 종목 레코드에 exit_note로
+// 저장해 다음에도 왜 팔았는지 남겨둘 수 있게 함.
+function _computeClosedPositions() {
+  const positions = [];
+  const addFrom = (records, idField, kind, apiPath) => {
+    (records || []).forEach(r => {
+      const sells = (_portTransactions || [])
+        .filter(t => t.type === 'sell' && String(t[idField]) === String(r.id))
+        .sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+      if (!sells.length) return; // 매도 이력이 있는 종목만 대상
+      const totalQty = sells.reduce((s, t) => s + (t.qty_change || 0), 0);
+      const proceeds = sells.reduce((s, t) => s + (t.qty_change || 0) * (t.price || 0), 0);
+      if (!totalQty) return;
+      positions.push({
+        key: `${kind}-${r.id}`, kind, id: r.id, apiPath,
+        name: r.name || r.ticker || '-', ticker: r.ticker || '',
+        remainingQty: r.qty || 0, // 0보다 크면 "일부매도, 잔여 보유중"
+        sells, totalQty, proceeds,
+        sellAvg: proceeds / totalQty,
+        currentPrice: r.current_price || null,
+        exitNote: r.exit_note || '',
+      });
+    });
+  };
+  addFrom(_stockRecords, 'stock_id', 'stock', '/api/stocks');
+  addFrom(_portEtf,      'etf_id',   'etf',   '/api/etf');
+  // 최근에 매도한 순(마지막 매도일 기준)으로 정렬
+  positions.sort((a, b) => {
+    const da = a.sells[a.sells.length - 1]?.date || '';
+    const db = b.sells[b.sells.length - 1]?.date || '';
+    return db.localeCompare(da);
+  });
+  return positions;
+}
+
+function toggleClosedSells(key) {
+  const el = document.getElementById(`closed-sells-${key}`);
+  if (!el) return;
+  el.style.display = el.style.display === 'none' ? '' : 'none';
+}
+
+async function saveClosedExitNote(kind, id, apiPath, key) {
+  const input = document.getElementById(`closed-note-${key}`);
+  if (!input) return;
+  const note = input.value.trim();
+  const list  = kind === 'stock' ? _stockRecords : _portEtf;
+  const rec   = list.find(r => String(r.id) === String(id));
+  if (!rec) return;
+  rec.exit_note = note;
+  const btn = document.getElementById(`closed-note-save-${key}`);
+  if (btn) { btn.disabled = true; btn.textContent = '저장 중...'; }
+  try {
+    const body = kind === 'stock' ? { record: rec } : { records: _portEtf };
+    await fetch(apiPath, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    _invalidateBinCache();
+    if (btn) { btn.textContent = '✓ 저장됨'; setTimeout(() => { btn.textContent = '저장'; btn.disabled = false; }, 1200); }
+  } catch (e) {
+    alert('저장 실패: ' + e.message);
+    if (btn) { btn.disabled = false; btn.textContent = '저장'; }
+  }
+}
+
+function _renderPortClosed() {
+  const card = document.getElementById('port-closed-card');
+  if (!card) return;
+  const positions = _computeClosedPositions();
+  if (!positions.length) { card.style.display = 'none'; return; }
+  card.style.display = '';
+
+  let sumProceeds = 0, sumHypo = 0, hasCur = false;
+  const cards = positions.map(p => {
+    const hasPrice  = p.currentPrice != null;
+    const hypo      = hasPrice ? p.currentPrice * p.totalQty : null;
+    const delta     = hasPrice ? hypo - p.proceeds : null;
+    const deltaPct  = (hasPrice && p.sellAvg) ? (p.currentPrice - p.sellAvg) / p.sellAvg * 100 : null;
+    sumProceeds += p.proceeds;
+    if (hasPrice) { sumHypo += hypo; hasCur = true; }
+    // 보유했다면 더 좋았을 경우(delta>0) = 매도가 아쉬웠던 선택 → 경고색(red)
+    // 보유했다면 더 나빴을 경우(delta<0) = 매도가 유리했던 선택 → 긍정색(green)
+    // .up/.dn 클래스는 .port-table 안에서만 색이 적용되므로(css/main.css:588-589)
+    // 테이블 바깥인 이 카드 헤더에선 인라인 색상을 직접 지정한다.
+    const dc = delta == null ? 'var(--muted)' : delta > 0 ? 'var(--red)' : 'var(--green)';
+    const verdict = delta == null ? ''
+      : delta > 0 ? '📉 보유했다면 더 유리했음'
+      : delta < 0 ? '📈 매도가 유리한 선택이었음' : '변동 없음';
+    const lastDate = p.sells[p.sells.length - 1]?.date || '';
+    const sellRows = p.sells.map(t => `<tr>
+        <td style="color:var(--muted);font-size:11px">${(t.date||'').slice(2).replace(/-/g,'.')}</td>
+        <td style="text-align:right">${(t.qty_change||0).toLocaleString()}주</td>
+        <td style="text-align:right">${(t.price||0).toLocaleString()}원</td>
+        <td style="text-align:right">${((t.qty_change||0)*(t.price||0)).toLocaleString()}원</td>
+      </tr>`).join('');
+    return `<div class="port-card" style="margin-bottom:10px;padding:12px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;cursor:pointer" onclick="toggleClosedSells('${p.key}')">
+        <div>
+          <div style="font-weight:700;font-size:13px">${p.name}${p.ticker ? `<span style="font-weight:400;color:var(--muted);font-size:11px;margin-left:4px">${p.ticker}</span>` : ''}${p.remainingQty > 0 ? `<span style="font-weight:600;color:var(--primary);font-size:10px;margin-left:6px;padding:1px 6px;border:1px solid var(--primary);border-radius:4px">일부매도</span>` : ''}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px">매도 ${p.totalQty.toLocaleString()}주(${p.sells.length}회) · 매도평단 ${Math.round(p.sellAvg).toLocaleString()}원 · 최종매도 ${lastDate.slice(2).replace(/-/g,'.')}${p.remainingQty > 0 ? ` · 잔여 ${p.remainingQty.toLocaleString()}주 보유중` : ''}</div>
+        </div>
+        <div style="text-align:right;white-space:nowrap">
+          ${hasPrice ? `<div style="color:${dc};font-weight:700;font-size:13px">${delta>=0?'+':''}${Math.round(delta).toLocaleString()}원${deltaPct!=null?` (${deltaPct>=0?'+':''}${deltaPct.toFixed(1)}%)`:''}</div>
+          <div style="font-size:10px;color:var(--muted)">${verdict}</div>` : `<div style="color:var(--muted);font-size:11px">현재가 조회 중...</div>`}
+        </div>
+      </div>
+      <div id="closed-sells-${p.key}" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
+        <div class="port-table-wrap">
+          <table class="port-table">
+            <thead><tr><th>매도일</th><th style="text-align:right">수량</th><th style="text-align:right">단가</th><th style="text-align:right">금액</th></tr></thead>
+            <tbody>${sellRows}</tbody>
+          </table>
+        </div>
+        ${hasPrice ? `<div style="display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-top:8px">
+          <span>실현금액 ${Math.round(p.proceeds).toLocaleString()}원</span>
+          <span>보유했다면 ${Math.round(hypo).toLocaleString()}원(현재가 ${p.currentPrice.toLocaleString()}원 기준)</span>
+        </div>` : ''}
+        <div style="display:flex;gap:6px;margin-top:10px" onclick="event.stopPropagation()">
+          <input id="closed-note-${p.key}" type="text" value="${(p.exitNote||'').replace(/"/g,'&quot;')}" placeholder="매도 사유 메모 (예: 국채금리 급등 + 지정학 리스크)"
+            style="flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:12px;box-sizing:border-box">
+          <button id="closed-note-save-${p.key}" onclick="saveClosedExitNote('${p.kind}','${p.id}','${p.apiPath}','${p.key}')"
+            style="background:var(--primary);color:#fff;border:none;border-radius:6px;padding:6px 12px;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap">저장</button>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  const sumDelta = hasCur ? sumHypo - sumProceeds : null;
+  const stc = sumDelta == null ? 'var(--muted)' : sumDelta > 0 ? 'var(--red)' : 'var(--green)';
+  const summary = document.getElementById('port-closed-summary');
+  if (summary) {
+    summary.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--border);font-weight:700;font-size:13px">
+      <span>합계 <span style="font-weight:400;color:var(--muted);font-size:11px">(${positions.length}종목)</span></span>
+      <span style="color:${stc}">${sumDelta==null ? '조회 중...' : `${sumDelta>=0?'+':''}${Math.round(sumDelta).toLocaleString()}원`}</span>
+    </div>`;
+  }
+  const body = document.getElementById('port-closed-body');
+  if (body) body.innerHTML = cards;
 }
 
 // ── 개별주 보유현황 ────────────────────────────────────────
