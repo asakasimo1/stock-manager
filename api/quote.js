@@ -278,15 +278,21 @@ export default async function handler(req, res) {
   }
 
   try {
-    const url = `https://m.stock.naver.com/api/etf/${ticker}/basic`;
-    const r = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Referer': 'https://m.stock.naver.com/',
-        'Accept': 'application/json, */*',
-      },
+    const headers = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      'Referer': 'https://m.stock.naver.com/',
+      'Accept': 'application/json, */*',
+    };
+    let r = await fetch(`https://m.stock.naver.com/api/etf/${ticker}/basic`, {
+      headers, signal: AbortSignal.timeout(5000),
     });
-
+    // Non-ETF stocks return 409 StockConflict from the ETF endpoint.
+    // Portfolio and scalp callers also use this API; retry the stock endpoint.
+    if (r.status === 409) {
+      r = await fetch(`https://m.stock.naver.com/api/stock/${ticker}/basic`, {
+        headers, signal: AbortSignal.timeout(5000),
+      });
+    }
     if (!r.ok) throw new Error(`Naver API ${r.status}`);
     const d = await r.json();
 
