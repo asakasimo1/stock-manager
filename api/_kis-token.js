@@ -31,7 +31,12 @@ async function _fetchFromOracle() {
   if (!dataUrl) return null;
   try {
     const base = dataUrl.trim().replace(/\/api\/stock-data.*$/, '');
-    const r = await fetch(`${base}/api/kis-token`, { headers: { 'x-api-key': (key || '').trim() } });
+    // 2026-11-10: 타임아웃 필수 — 10/31 VM 방화벽에서 3000 포트가 닫혔을 때 이 fetch가
+    // 응답 없이 매달려 /api/stock이 14초씩 지연되고 NXT 시세가 사라졌음(아래 폴백 발급도 실패)
+    const r = await fetch(`${base}/api/kis-token`, {
+      headers: { 'x-api-key': (key || '').trim() },
+      signal: AbortSignal.timeout(3000),
+    });
     if (!r.ok) return null;
     const d = await r.json();
     if (!d.token) return null;

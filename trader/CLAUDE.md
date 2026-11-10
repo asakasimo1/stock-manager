@@ -291,6 +291,16 @@ sudo systemctl restart coin-daemon
   1m/10m/1h 전부 실측으로 미래시각 없음 확인.
   **일/주/월봉(1d/1w/1M) 분기는 그대로 Vercel에 남음** — 네이버 fchart 단일
   호출이라 이 문제 대상 아님.
+- **2026-11-10 — Oracle 접속 경로를 `:3000` 직접 → HTTPS(nginx `/coin/`)로 변경**:
+  10/31 VM 방화벽(rules.v4)에서 3000/3001/8765 ACCEPT가 제거되면서 Vercel→coin-runner
+  접속이 막혀 `/api/kis-token` 공유가 실패 → Vercel이 KIS 토큰을 직접 발급하다
+  1분 제한에 걸려 NXT 현재가가 안 나오고 네이버 값으로 폴백됨(NXT 화면 먹통).
+  3000 포트를 다시 열지 않고 `nginx(sites-enabled/brain)`에 `location /coin/ →
+  127.0.0.1:3000/` 프록시를 추가(인증은 coin-runner의 x-api-key 그대로).
+  Vercel `ORACLE_DATA_URL`=`https://hskadvisor.duckdns.org/coin/api/stock-data`,
+  `ORACLE_CANDLES_URL`=`https://hskadvisor.duckdns.org/coin/api/stock-candles`로 변경.
+  `_kis-token.js`/`quote.js` Oracle fetch에 타임아웃(3s/8s) 추가. 백업:
+  VM `/etc/nginx/brain.bak-20261110`. **3000은 닫힌 상태 유지**(되돌리지 말 것).
 - [2026-09-09 08:5x] `coin_grid_jobs.json` (Gist) — 리플(KRW-XRP) 그리드
   격자 2개(1868/1897원 레벨) `sell_waiting`+`sell_uuid=""`(무방비 유령
   물량) 상태를 `idle`로 수동 초기화. 근본원인: 재초기화 이월물량 매도

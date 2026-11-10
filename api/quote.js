@@ -242,6 +242,7 @@ export default async function handler(req, res) {
     try {
       const r = await fetch(`${oracleUrl}?ticker=${encodeURIComponent(ticker)}&interval=${encodeURIComponent(req.query.interval)}`, {
         headers: { 'x-api-key': oracleKey },
+        signal: AbortSignal.timeout(8000), // Oracle 장애 시 무한 대기 방지
       });
       const d = await r.json();
       res.setHeader('Cache-Control', 'no-store');
