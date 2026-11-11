@@ -158,14 +158,28 @@ export default async function handler(req, res) {
   }
 
   // ── 코인 runner 트리거 (coin-runner 서버사이드 호출) ─────────
+  // 2026-11-11: Vercel이 업비트를 직접 호출하지 않도록 변경. Vercel 서버 IP는 요청마다
+  // 바뀌어서 업비트 허용 IP(VM 고정 IP)에 못 들어가고, 새로고침 때마다 "미등록 IP 접근"
+  // 알림만 발생했음. 이제 Vercel은 gist에 "갱신 요청"만 남기고, VM의 daemon_coin.py가
+  // 30초 주기로 이 요청을 확인해 잔고를 즉시 갱신한다. (주문 실행도 VM 데몬 전담)
   if (mode === 'trigger_coin_runner' || mode === 'trigger_coin_balance') {
-    const host       = req.headers['x-forwarded-host'] || req.headers.host || '';
-    const proto      = req.headers['x-forwarded-proto'] || 'https';
-    const coinSecret = process.env.COIN_RUNNER_SECRET || '';
     const runnerMode = req.query.runner_mode || (mode === 'trigger_coin_balance' ? 'balance' : 'all');
-    const qs         = `mode=${runnerMode}${coinSecret ? `&secret=${encodeURIComponent(coinSecret)}` : ''}`;
-    fetch(`${proto}://${host}/api/coin-runner?${qs}`).catch(() => {});
-    return res.status(200).json({ ok: true, triggered: runnerMode });
+    if (runnerMode !== 'balance') {
+      return res.status(200).json({ ok: true, triggered: runnerMode, note: 'VM 데몬이 30초 주기로 처리' });
+    }
+    if (!ghToken) return res.status(500).json({ error: 'GH_TOKEN 미설정' });
+    try {
+      const body = { requested_at: Date.now() };
+      const r = await fetch(`https://api.github.com/gists/${gistId}`, {
+        method: 'PATCH',
+        headers: { ...ghHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ files: { 'coin_balance_request.json': { content: JSON.stringify(body) } } }),
+      });
+      if (!r.ok) return res.status(502).json({ error: `gist 쓰기 실패 HTTP ${r.status}` });
+      return res.status(200).json({ ok: true, triggered: 'balance', requested_at: body.requested_at });
+    } catch (e) {
+      return res.status(500).json({ error: e.message });
+    }
   }
 
   // ── GitHub Actions balance job 트리거 ────────────────────

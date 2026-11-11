@@ -237,25 +237,32 @@ async function ctLoadAll() {
 async function ctRefreshBalance() {
   const btn = document.getElementById('ct-balance-refresh-btn');
   if (btn) { btn.disabled = true; btn.textContent = '⟳ 조회중...'; }
+  const reset = () => { if (btn) { btn.disabled = false; btn.textContent = '⟳ 잔고 새로고침'; } };
   try {
+    // 2026-11-11: Vercel은 업비트를 직접 부르지 않고 VM 데몬에 "갱신 요청"만 남긴다.
+    // VM이 30초 주기로 확인해 갱신하므로, 갱신 시각(updated_at)이 바뀔 때까지 폴링한다.
+    const before = _ctAccount?.updated_at || '';
     const r = await fetch('/api/data?mode=trigger_coin_balance');
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    let sec = 30;
-    const tick = setInterval(() => {
-      if (btn) btn.textContent = `⟳ 조회중... (${--sec}초)`;
-      if (sec <= 0) {
-        clearInterval(tick);
-        fetch('/api/coin-account').then(res => res.json()).then(d => {
-          _ctAccount = d;
-          ctRenderAccount();
-          if (btn) { btn.disabled = false; btn.textContent = '⟳ 잔고 새로고침'; }
-        }).catch(() => {
-          if (btn) { btn.disabled = false; btn.textContent = '⟳ 잔고 새로고침'; }
-        });
+    let sec = 90;
+    const tick = setInterval(async () => {
+      sec--;
+      if (btn) btn.textContent = `⟳ 조회중... (${sec}초)`;
+      const timeout = sec <= 0;
+      if (!timeout && sec % 5 !== 0) return;   // 5초마다 확인
+      try {
+        const d = await (await fetch('/api/coin-account')).json();
+        if (timeout || (d && d.updated_at && d.updated_at !== before)) {
+          clearInterval(tick);
+          if (d && !d.error) { _ctAccount = d; ctRenderAccount(); }
+          reset();
+        }
+      } catch {
+        if (timeout) { clearInterval(tick); reset(); }
       }
     }, 1000);
   } catch {
-    if (btn) { btn.disabled = false; btn.textContent = '⟳ 잔고 새로고침'; }
+    reset();
   }
 }
 

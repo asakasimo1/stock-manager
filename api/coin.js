@@ -272,11 +272,8 @@ async function handleCoinJobs(req, res, url, gistId, ghToken) {
     const isSellUrl  = url.includes('coin-sell');
     const isMarket   = job.condition_type === 'market_krw' || job.condition_type === 'market';
 
-    // 즉시 coin-runner 실행 (fire-and-forget)
-    if (isSellUrl || (isBuyUrl && isMarket)) {
-      const mode = isBuyUrl ? 'buy' : 'sell';
-      triggerCoinRunner(req, mode);
-    }
+    // 2026-11-11: Vercel에서 즉시 실행하던 coin-runner 호출 제거 — 주문은 VM의
+    // daemon_coin.py(허용 IP)가 30초 주기로 gist 잡을 읽어 처리한다.
     return res.status(200).json({ ok: true, triggered: true });
   }
 
@@ -363,6 +360,12 @@ function sellTarget(buyPrice, takePct) {
 
 // ── 코인 실행 엔진 ────────────────────────────────────────
 async function handleCoinRunner(req, res, gistId, ghToken) {
+  // 2026-11-11: 비활성화. Vercel에서 업비트 비공개 API(잔고·주문)를 호출하던 경로.
+  // Vercel 서버 IP는 고정이 아니라 업비트 허용 IP에 못 들어가 "미등록 IP 접근" 알림만
+  // 유발했고, 허용 IP를 열면 VM 데몬과 이중 주문 위험이 있음. 잔고·주문은 모두 VM의
+  // daemon_coin.py가 전담한다. 아래 코드는 참고용으로 남겨 둠(UPBIT 키를 지워도 무방).
+  return res.status(410).json({ ok: false, disabled: true, reason: '코인 잔고·주문은 VM 데몬이 처리합니다' });
+  // eslint-disable-next-line no-unreachable
   const secret     = process.env.COIN_RUNNER_SECRET;
   const cronSecret = process.env.CRON_SECRET;
   const authHeader = req.headers['authorization'] || '';
