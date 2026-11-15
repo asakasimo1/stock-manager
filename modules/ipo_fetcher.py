@@ -16,6 +16,17 @@ _HEADERS = {
     )
 }
 
+
+def _get(url):
+    """38.co.kr은 서버 TLS 설정이 낡아 최신 OpenSSL(GitHub Actions 러너 등)에서 핸드셰이크가 실패한다
+    (SSLV3_ALERT_HANDSHAKE_FAILURE, 2026-11-10부터 매일 실패). https를 먼저 시도하고 SSLError면
+    http로 폴백한다 — 공개 청약 일정 페이지라 민감 정보가 없고 modules/ipo.py도 http를 쓴다."""
+    try:
+        return requests.get(url, headers=_HEADERS, timeout=15)
+    except requests.exceptions.SSLError:
+        print("[IPO] https 핸드셰이크 실패 → http로 재시도")
+        return requests.get(url.replace("https://", "http://", 1), headers=_HEADERS, timeout=15)
+
 # ──────────────────────────────────────────────────────────────
 # 점수 산출
 # ──────────────────────────────────────────────────────────────
@@ -371,7 +382,7 @@ def _fetch_demand_forecast() -> dict:
     url = "https://www.38.co.kr/html/fund/index.htm?o=r"
     result = {}
     try:
-        resp = requests.get(url, headers=_HEADERS, timeout=15)
+        resp = _get(url)
         resp.encoding = "euc-kr"
         text = resp.text
 
@@ -439,7 +450,7 @@ def fetch_ipo_schedule() -> list:
     """
     url = "https://www.38.co.kr/html/fund/index.htm?o=k"
     print(f"[IPO] 페이지 가져오는 중: {url}")
-    resp = requests.get(url, headers=_HEADERS, timeout=15)
+    resp = _get(url)
     resp.encoding = "euc-kr"
     page_text = resp.text
 
