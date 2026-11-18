@@ -84,6 +84,19 @@ cd /Users/macbook/projects/stock-manager/frontend
 ./deploy.sh
 ```
 
+### ⚠️ 38.co.kr 크롤링 TLS (2026-11-18 정리)
+
+38.co.kr은 **1024비트 DH 파라미터를 쓰는 낡은 TLS 설정**이다. OpenSSL 3.x 기본 보안수준(SECLEVEL=2)이
+이 DH 키 길이를 거부해서 Python `requests`가 `SSLV3_ALERT_HANDSHAKE_FAILURE`로 실패한다
+(`curl`/`openssl`로 보면 사유가 `dh key too small`로 보인다). 2026-10-27~11-15 사이
+`공모주 일정 자동 수집`(ipo_fetch.yml)이 매일 이 오류로 실패한 원인.
+
+- 38.co.kr 호출은 **`modules/http38.py`를 통해서만** 한다 — 이 호스트에만 `DEFAULT@SECLEVEL=1`
+  컨텍스트를 붙이고 인증서 검증·TLS 1.2 이상은 그대로 유지. 그래도 SSLError면 http 1회 폴백.
+- 새 코드에서 `requests.get("https://www.38.co.kr/...")`를 직접 쓰지 말 것(같은 오류 재발).
+  Node 쪽(`trader/scripts/ipo_crawl.mjs`, `api/ipo.js`)은 이 문제가 없어 그대로 둠.
+- 관련 커밋: `a03eaf6` (직전 임시조치 `5d96295`의 http 폴백을 https 근본 수정으로 교체).
+
 ### 주의
 
 - `api/coin.js`의 `handleCoinRunner`는 **보조 수단** (Oracle VM 다운 시에만 수동
