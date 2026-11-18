@@ -1,28 +1,26 @@
 """
 공모주 청약 일정 스크래퍼 (38커뮤니케이션)
 - 청약 일정 + 신규상장 일정 파싱
-- HTTP (SSL 미적용 사이트)
+- TLS: modules/http38 사용 (38.co.kr의 낡은 DH 파라미터 대응, 인증서 검증 유지)
 """
 import json
 import os
 import re
 from datetime import datetime, date
 
-import requests
-import urllib3
 from bs4 import BeautifulSoup
 
-urllib3.disable_warnings()
+from modules import http38
 
-_HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-_BASE = "http://www.38.co.kr/html/fund/index.htm"
+_HEADERS = http38.DEFAULT_HEADERS
+_BASE = f"{http38.BASE_URL}/html/fund/index.htm"
 _DATA_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "ipo_data.json")
 
 
 # ─────────────────────────── 스크래핑 ────────────────────────────
 
 def _get_soup(param: str) -> BeautifulSoup:
-    r = requests.get(f"{_BASE}?o={param}", headers=_HEADERS, verify=False, timeout=10)
+    r = http38.get(f"{_BASE}?o={param}", headers=_HEADERS, timeout=10)
     r.encoding = "euc-kr"
     return BeautifulSoup(r.text, "html.parser")
 

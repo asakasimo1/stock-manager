@@ -3,29 +3,19 @@
 Source: https://www.38.co.kr/html/fund/index.htm?o=k
 """
 import re
-import requests
 from datetime import datetime, date
+
+from modules.http38 import DEFAULT_HEADERS as _HEADERS, get as _get38, BASE_URL
 
 TODAY = date.today()
 
-_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/123.0.0.0 Safari/537.36"
-    )
-}
-
 
 def _get(url):
-    """38.co.kr은 서버 TLS 설정이 낡아 최신 OpenSSL(GitHub Actions 러너 등)에서 핸드셰이크가 실패한다
-    (SSLV3_ALERT_HANDSHAKE_FAILURE, 2026-11-10부터 매일 실패). https를 먼저 시도하고 SSLError면
-    http로 폴백한다 — 공개 청약 일정 페이지라 민감 정보가 없고 modules/ipo.py도 http를 쓴다."""
-    try:
-        return requests.get(url, headers=_HEADERS, timeout=15)
-    except requests.exceptions.SSLError:
-        print("[IPO] https 핸드셰이크 실패 → http로 재시도")
-        return requests.get(url.replace("https://", "http://", 1), headers=_HEADERS, timeout=15)
+    """38.co.kr은 서버 TLS 설정이 낡아(dh key too small) 최신 OpenSSL(GitHub Actions 러너 등)의
+    기본 보안수준에서 핸드셰이크가 실패한다(SSLV3_ALERT_HANDSHAKE_FAILURE).
+    modules/http38 이 이 호스트에만 SECLEVEL=1 TLS 컨텍스트를 붙여 https로 연결하고,
+    그래도 실패할 때만 http로 폴백한다."""
+    return _get38(url, headers=_HEADERS, timeout=15)
 
 # ──────────────────────────────────────────────────────────────
 # 점수 산출
@@ -379,7 +369,7 @@ def _fetch_demand_forecast() -> dict:
     수요예측 결과 페이지에서 종목별 기관경쟁률과 의무보유확약 비율을 읽어온다.
     Returns {name: {"inst_comp_rate": float, "lock_up_pct": float}}
     """
-    url = "https://www.38.co.kr/html/fund/index.htm?o=r"
+    url = f"{BASE_URL}/html/fund/index.htm?o=r"
     result = {}
     try:
         resp = _get(url)
@@ -448,7 +438,7 @@ def fetch_ipo_schedule() -> list:
     """
     38커뮤니케이션 공모주 청약 일정 페이지 크롤링 후 파싱된 공모주 리스트 반환.
     """
-    url = "https://www.38.co.kr/html/fund/index.htm?o=k"
+    url = f"{BASE_URL}/html/fund/index.htm?o=k"
     print(f"[IPO] 페이지 가져오는 중: {url}")
     resp = _get(url)
     resp.encoding = "euc-kr"
